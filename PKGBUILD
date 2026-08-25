@@ -19,17 +19,8 @@ check() {
 
   [[ $(<VERSION) == "$pkgver" ]]
 
-  local script
-  for script in bin/*; do
-    bash -n "$script"
-  done
-
-  [[ -x bin/cachyos-provision-agent-skills ]]
-  [[ -x bin/cachyos-agent-skills-update ]]
-  [[ -x bin/cachyos-agent-skills-check-upstreams ]]
-  [[ -f agents/skills/cachyos/SKILL.md ]]
-  grep -Eq '^name:[[:space:]]+cachyos$' agents/skills/cachyos/SKILL.md
-  grep -Eq '^description:' agents/skills/cachyos/SKILL.md
+  bash bin/cachyos-agent-skills-validate .
+  bash test/run-tests
 }
 
 package() {

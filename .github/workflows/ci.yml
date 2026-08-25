@@ -1,0 +1,35 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install check tools
+        run: pacman -Syu --noconfirm shellcheck namcap
+
+      - name: Shellcheck scripts
+        run: shellcheck bin/* test/run-tests
+
+      - name: Validate skill tree
+        run: ./bin/cachyos-agent-skills-validate
+
+      - name: Run isolated tests
+        run: ./test/run-tests
+
+      - name: Lint PKGBUILD
+        run: namcap PKGBUILD
