@@ -1,6 +1,6 @@
 pkgbase = cachyos-agent-system
 	pkgdesc = CachyOS-specific guidance for AI coding agents
-	pkgver = 0.1.0
+	pkgver = 0.1.1
 	pkgrel = 1
 	url = https://github.com/keiranhaax/CachyOS-Agent
 	install = cachyos-agent-system.install
@@ -9,7 +9,7 @@ pkgbase = cachyos-agent-system
 	makedepends = git
 	depends = bash
 	optdepends = git: update Git-backed checkouts and check reviewed CachyOS upstreams
-	source = cachyos-agent-system::git+https://github.com/keiranhaax/CachyOS-Agent.git#tag=v0.1.0
+	source = cachyos-agent-system::git+https://github.com/keiranhaax/CachyOS-Agent.git#tag=v0.1.1
 	b2sums = SKIP
 
 pkgname = cachyos-agent-system
