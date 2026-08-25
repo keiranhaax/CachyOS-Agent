@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install release tools
-        run: pacman -Syu --noconfirm git github-cli namcap
+        run: pacman -Syu --noconfirm git github-cli namcap shellcheck
 
       - name: Validate release identity
         shell: bash
@@ -38,6 +38,37 @@ jobs:
           [[ $GITHUB_REF_NAME == "v$version" ]]
           pkgbuild_version=$(bash -c 'source ./PKGBUILD; printf "%s" "$pkgver"')
           [[ $pkgbuild_version == "$version" ]]
+          if grep -q 'Signing key fingerprint:\*\* _not yet published' README.md; then
+            echo "README.md still carries the placeholder signing-key fingerprint." >&2
+            echo "Publish the real verified fingerprint before tagging a release." >&2
+            exit 1
+          fi
+
+      - name: Validate source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          shellcheck bin/* test/run-tests
+          ./bin/cachyos-agent-skills-validate
+          ./test/run-tests
+
+      - name: Import package signing key
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$PACKAGE_SIGNING_KEY" ]]; then
+            echo "PACKAGE_SIGNING_KEY secret is not configured." >&2
+            echo "Releases must be signed; see packaging/README.md for key setup." >&2
+            exit 1
+          fi
+          printf '%s\n' "$PACKAGE_SIGNING_KEY" | gpg --batch --import
+          fingerprint=$(gpg --batch --with-colons --list-secret-keys \
+            | awk -F: '/^fpr:/ {print $10; exit}')
+          [[ -n "$fingerprint" ]]
+          echo "SIGNING_KEY_FPR=$fingerprint" >> "$GITHUB_ENV"
+          gpg --armor --export "$fingerprint" > cachyos-agent-signing-key.asc
 
       - name: Build as an unprivileged user
         shell: bash
@@ -48,7 +79,7 @@ jobs:
           chown -R builder:builder "$GITHUB_WORKSPACE"
           runuser -u builder -- env HOME=/home/builder makepkg -Ccf --noconfirm
 
-      - name: Inspect package
+      - name: Inspect and sign package
         shell: bash
         run: |
           set -euo pipefail
@@ -56,7 +87,10 @@ jobs:
           [[ ${#packages[@]} -eq 1 ]]
           namcap PKGBUILD "${packages[0]}"
           bsdtar -tf "${packages[0]}" | sort
-          sha256sum "${packages[0]}" > SHA256SUMS.pkg
+          gpg --batch --yes --detach-sign --use-agent --no-armor \
+            --local-user "$SIGNING_KEY_FPR" "${packages[0]}"
+          gpg --verify "${packages[0]}.sig" "${packages[0]}"
+          sha256sum "${packages[0]}" "${packages[0]}.sig" > SHA256SUMS.pkg
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
@@ -66,14 +100,15 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          assets=("${packages[0]}" "${packages[0]}.sig" SHA256SUMS.pkg cachyos-agent-signing-key.asc)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-              --clobber "${packages[0]}" SHA256SUMS.pkg
+              --clobber "${assets[@]}"
           else
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "CachyOS Agent ${GITHUB_REF_NAME#v}" \
               --generate-notes \
-              "${packages[0]}" SHA256SUMS.pkg
+              "${assets[@]}"
           fi
 
       - name: Update pacman repository branch
@@ -96,18 +131,24 @@ jobs:
           fi
 
           install -d "$publish_dir/x86_64"
-          install -m644 "${packages[0]}" "$publish_dir/x86_64/"
+          install -m644 "${packages[0]}" "${packages[0]}.sig" "$publish_dir/x86_64/"
+          install -m644 cachyos-agent-signing-key.asc "$publish_dir/"
           cd "$publish_dir/x86_64"
-          repo-add -R cachyos-agent.db.tar.gz "$package_file"
-          rm -f cachyos-agent.db cachyos-agent.files
+          repo-add -R --sign --key "$SIGNING_KEY_FPR" \
+            cachyos-agent.db.tar.gz "$package_file"
+          rm -f cachyos-agent.db cachyos-agent.db.sig cachyos-agent.files cachyos-agent.files.sig
           cp cachyos-agent.db.tar.gz cachyos-agent.db
+          cp cachyos-agent.db.tar.gz.sig cachyos-agent.db.sig
           cp cachyos-agent.files.tar.gz cachyos-agent.files
+          cp cachyos-agent.files.tar.gz.sig cachyos-agent.files.sig
 
           cd "$publish_dir"
           printf '%s\n' \
             '# CachyOS Agent pacman repository' \
             '' \
             'This branch is generated from tagged releases. Do not edit it manually.' \
+            'Packages and the database are signed; the public key is' \
+            'cachyos-agent-signing-key.asc at the branch root.' \
             > README.md
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com

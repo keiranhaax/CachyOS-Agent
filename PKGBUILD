@@ -1,7 +1,7 @@
 # Maintainer: keiranhaax <widisberto@hotmail.com>
 
 pkgname=cachyos-agent-system
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='CachyOS-specific guidance for AI coding agents'
 arch=('any')
@@ -19,17 +19,8 @@ check() {
 
   [[ $(<VERSION) == "$pkgver" ]]
 
-  local script
-  for script in bin/*; do
-    bash -n "$script"
-  done
-
-  [[ -x bin/cachyos-provision-agent-skills ]]
-  [[ -x bin/cachyos-agent-skills-update ]]
-  [[ -x bin/cachyos-agent-skills-check-upstreams ]]
-  [[ -f agents/skills/cachyos/SKILL.md ]]
-  grep -Eq '^name:[[:space:]]+cachyos$' agents/skills/cachyos/SKILL.md
-  grep -Eq '^description:' agents/skills/cachyos/SKILL.md
+  bash bin/cachyos-agent-skills-validate .
+  bash test/run-tests
 }
 
 package() {
@@ -37,7 +28,7 @@ package() {
 
   local datadir="$pkgdir/usr/share/$pkgname"
   local docdir="$pkgdir/usr/share/doc/$pkgname"
-  local script
+  local script name
 
   install -d "$datadir/agents/skills"
   cp -a agents/skills/cachyos "$datadir/agents/skills/"
@@ -45,12 +36,21 @@ package() {
   install -Dm644 VERSION "$datadir/VERSION"
   install -Dm644 upstreams.tsv "$datadir/upstreams.tsv"
 
+  # AGENTS.md links bin/, MAINTENANCE.md, and (via MAINTENANCE.md) packaging/.
+  # Keep those references resolvable beside the data files with relative
+  # symlinks so the validator passes against the installed tree.
+  install -d "$datadir/bin"
   for script in bin/*; do
-    install -Dm755 "$script" "$pkgdir/usr/bin/${script##*/}"
+    name=${script##*/}
+    install -Dm755 "$script" "$pkgdir/usr/bin/$name"
+    ln -s "../../../bin/$name" "$datadir/bin/$name"
   done
 
   install -Dm644 README.md "$docdir/README.md"
   install -Dm644 MAINTENANCE.md "$docdir/MAINTENANCE.md"
-  install -Dm644 INSTALL_ON_CACHYOS_PROMPT.md "$docdir/INSTALL_ON_CACHYOS_PROMPT.md"
+  install -Dm644 packaging/README.md "$docdir/packaging/README.md"
+  install -Dm644 packaging/pacman/cachyos-agent.conf "$docdir/packaging/pacman/cachyos-agent.conf"
+  ln -s "../doc/$pkgname/MAINTENANCE.md" "$datadir/MAINTENANCE.md"
+  ln -s "../doc/$pkgname/packaging" "$datadir/packaging"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

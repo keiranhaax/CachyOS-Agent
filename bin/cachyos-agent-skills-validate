@@ -1,0 +1,177 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Validate the skill tree: frontmatter, relative links, index sync, scripts.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent-skills-validate [ROOT]
+
+Validate a source tree before provisioning or releasing:
+  - every agents/skills/<name>/ directory has SKILL.md with YAML frontmatter
+    whose name matches the directory and whose description is non-empty
+  - every relative markdown link in AGENTS.md, README.md, MAINTENANCE.md,
+    packaging/README.md, and the skill files resolves to an existing file
+  - the AGENTS.md skill index and the SKILL.md topic index each reference
+    every topic file, and reference nothing that does not exist
+  - every bin/ script is executable and passes bash -n
+
+ROOT defaults to the checkout containing this script or to
+/usr/share/cachyos-agent-system for a packaged installation.
+
+Exit status: 0 valid, 1 one or more problems found, 2 the check could not run.
+USAGE
+}
+
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+  usage
+  exit 0
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if (( $# == 1 )); then
+  ROOT=$1
+elif [[ -d "$SCRIPT_DIR/../agents/skills" ]]; then
+  ROOT=$SCRIPT_DIR/..
+elif [[ -d /usr/share/cachyos-agent-system/agents/skills ]]; then
+  ROOT=/usr/share/cachyos-agent-system
+else
+  echo "skill source not found beside the script or under /usr/share/cachyos-agent-system" >&2
+  exit 2
+fi
+ROOT=$(cd "$ROOT" && pwd)
+
+if [[ ! -d "$ROOT/agents/skills" ]]; then
+  echo "no agents/skills directory under $ROOT" >&2
+  exit 2
+fi
+
+problems=0
+problem() {
+  printf 'problem: %s\n' "$1" >&2
+  ((problems++)) || true
+}
+
+# --- Frontmatter -------------------------------------------------------------
+
+shopt -s nullglob
+skill_dirs=("$ROOT"/agents/skills/*/)
+if (( ${#skill_dirs[@]} == 0 )); then
+  echo "no skill subdirectories under $ROOT/agents/skills" >&2
+  exit 2
+fi
+
+for skill_dir in "${skill_dirs[@]}"; do
+  name=$(basename "${skill_dir%/}")
+  skill_md="$skill_dir/SKILL.md"
+  if [[ ! -f "$skill_md" ]]; then
+    problem "$name: missing SKILL.md"
+    continue
+  fi
+  if [[ $(head -n 1 "$skill_md") != '---' ]]; then
+    problem "$name: SKILL.md does not start with YAML frontmatter"
+    continue
+  fi
+  frontmatter=$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill_md")
+  if ! grep -Eq "^name:[[:space:]]*${name}[[:space:]]*$" <<<"$frontmatter"; then
+    problem "$name: frontmatter name does not match directory name"
+  fi
+  if ! grep -Eq '^description:' <<<"$frontmatter"; then
+    problem "$name: frontmatter has no description"
+  else
+    # Collect the description value: the rest of its line plus any indented
+    # continuation lines. The key itself must not count as content.
+    description=$(awk '
+      /^description:/ { grab = 1; sub(/^description:[[:space:]]*/, ""); print; next }
+      grab && /^[[:space:]]/ { print; next }
+      grab { exit }
+    ' <<<"$frontmatter")
+    # Ignore YAML block-scalar indicators when testing for real content.
+    if ! grep -Eq '[[:alnum:]]' <<<"${description//[>|+-]/}"; then
+      problem "$name: frontmatter description is empty"
+    fi
+  fi
+done
+
+# --- Relative links ----------------------------------------------------------
+
+doc_files=()
+for candidate in AGENTS.md README.md MAINTENANCE.md packaging/README.md; do
+  [[ -f "$ROOT/$candidate" ]] && doc_files+=("$ROOT/$candidate")
+done
+while IFS= read -r -d '' file; do
+  doc_files+=("$file")
+done < <(find "$ROOT/agents/skills" -name '*.md' -print0 | sort -z)
+
+for file in "${doc_files[@]}"; do
+  rel_file=${file#"$ROOT"/}
+  dir=$(dirname "$file")
+  # Strip fenced code blocks, then collect inline markdown link targets.
+  while IFS= read -r target; do
+    [[ -z "$target" ]] && continue
+    case $target in
+      http://*|https://*|mailto:*|\#*) continue ;;
+    esac
+    target=${target%%#*}
+    [[ -z "$target" ]] && continue
+    if [[ ! -e "$dir/$target" ]]; then
+      problem "$rel_file: broken link target: $target"
+    fi
+  done < <(awk '/^```/ {fence = !fence; next} !fence {print}' "$file" \
+             | grep -oE '\]\([^)]+\)' | sed -E 's/^\]\(//; s/\)$//' || true)
+done
+
+# --- Index sync --------------------------------------------------------------
+
+require_index() {
+  local index_file=$1 topic_dir=$2 rel_prefix=$3 topic rel_topic
+  local rel_index=${index_file#"$ROOT"/}
+  [[ -f "$index_file" ]] || { problem "missing index file: $rel_index"; return; }
+  for topic in "$topic_dir"/*.md; do
+    rel_topic="$rel_prefix$(basename "$topic")"
+    if ! grep -Fq "($rel_topic)" "$index_file"; then
+      problem "$rel_index: does not reference $rel_topic"
+    fi
+  done
+}
+
+for skill_dir in "${skill_dirs[@]}"; do
+  name=$(basename "${skill_dir%/}")
+  [[ -f "$skill_dir/SKILL.md" ]] || continue
+  if [[ -f "$ROOT/AGENTS.md" ]]; then
+    require_index "$ROOT/AGENTS.md" "${skill_dir%/}" "agents/skills/$name/"
+  fi
+  # SKILL.md must reference every sibling topic file.
+  for topic in "${skill_dir%/}"/*.md; do
+    base=$(basename "$topic")
+    [[ $base == SKILL.md ]] && continue
+    if ! grep -Fq "($base)" "$skill_dir/SKILL.md"; then
+      problem "agents/skills/$name/SKILL.md: does not reference $base"
+    fi
+  done
+done
+
+# --- Scripts -----------------------------------------------------------------
+
+if [[ -d "$ROOT/bin" ]]; then
+  for script in "$ROOT"/bin/*; do
+    rel_script=${script#"$ROOT"/}
+    [[ -f "$script" ]] || continue
+    if [[ ! -x "$script" ]]; then
+      problem "$rel_script: not executable"
+    fi
+    if ! bash -n "$script" 2>/dev/null; then
+      problem "$rel_script: bash -n failed"
+    fi
+  done
+fi
+
+if (( problems > 0 )); then
+  echo "$problems problem(s) found in $ROOT" >&2
+  exit 1
+fi
+echo "validated $ROOT: skill tree is consistent"

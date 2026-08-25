@@ -1,0 +1,188 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Isolated tests for the provisioner and validator. Never touches the real HOME.
+set -euo pipefail
+
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+PROVISION="$REPO_ROOT/bin/cachyos-provision-agent-skills"
+VALIDATE="$REPO_ROOT/bin/cachyos-agent-skills-validate"
+
+failures=0
+current_test=""
+
+begin() {
+  current_test=$1
+}
+
+fail() {
+  printf 'FAIL %s: %s\n' "$current_test" "$1" >&2
+  ((failures++)) || true
+}
+
+ok() {
+  printf 'ok   %s\n' "$current_test"
+}
+
+make_sandbox() {
+  SANDBOX=$(mktemp -d)
+  export HOME="$SANDBOX/home"
+  mkdir -p "$HOME"
+  SRC="$SANDBOX/src/agents/skills"
+  mkdir -p "$SRC/cachyos"
+  printf -- '---\nname: cachyos\ndescription: test skill\n---\n# body\n' > "$SRC/cachyos/SKILL.md"
+}
+
+cleanup_sandbox() {
+  rm -rf "$SANDBOX"
+}
+
+DEST_PARENTS=(.agents/skills .claude/skills .codex/skills .pi/agent/skills .gemini/config/skills)
+
+# ---- provisioner: links every harness path ---------------------------------
+begin "provision links all harness paths"
+make_sandbox
+"$PROVISION" "$SRC" >/dev/null
+for parent in "${DEST_PARENTS[@]}"; do
+  link="$HOME/$parent/cachyos"
+  if [[ ! -L "$link" ]]; then
+    fail "$link is not a symlink"
+  elif [[ $(readlink "$link") != "$SRC/cachyos" ]]; then
+    fail "$link points at $(readlink "$link")"
+  fi
+done
+ok
+cleanup_sandbox
+
+# ---- provisioner: idempotent re-run -----------------------------------------
+begin "provision is idempotent"
+make_sandbox
+"$PROVISION" "$SRC" >/dev/null
+"$PROVISION" "$SRC" >/dev/null
+[[ -L "$HOME/.claude/skills/cachyos" ]] || fail "second run broke the link"
+ok
+cleanup_sandbox
+
+# ---- provisioner: refuses regular directory without --force -----------------
+begin "provision skips regular dirs without --force"
+make_sandbox
+mkdir -p "$HOME/.claude/skills/cachyos"
+if "$PROVISION" "$SRC" >/dev/null 2>&1; then
+  fail "expected nonzero exit when a regular directory blocks a dest"
+fi
+[[ -d "$HOME/.claude/skills/cachyos" && ! -L "$HOME/.claude/skills/cachyos" ]] \
+  || fail "regular directory was replaced without --force"
+ok
+cleanup_sandbox
+
+# ---- provisioner: --force backs up a prior skill directory ------------------
+begin "provision --force backs up prior skill dirs"
+make_sandbox
+mkdir -p "$HOME/.claude/skills/cachyos"
+printf 'old\n' > "$HOME/.claude/skills/cachyos/SKILL.md"
+"$PROVISION" --force "$SRC" >/dev/null
+[[ -L "$HOME/.claude/skills/cachyos" ]] || fail "dest was not replaced by a symlink"
+backups=("$HOME"/.claude/skills/cachyos.backup.*)
+if [[ ! -e "${backups[0]:-}" ]]; then
+  fail "no timestamped backup was created"
+elif [[ $(<"${backups[0]}/SKILL.md") != old ]]; then
+  fail "backup does not contain the previous contents"
+fi
+ok
+cleanup_sandbox
+
+# ---- provisioner: --force refuses non-skill directories ---------------------
+begin "provision --force refuses non-skill dirs"
+make_sandbox
+mkdir -p "$HOME/.claude/skills/cachyos"
+printf 'data\n' > "$HOME/.claude/skills/cachyos/notes.txt"
+if "$PROVISION" --force "$SRC" >/dev/null 2>&1; then
+  fail "expected refusal for a directory without SKILL.md"
+fi
+[[ -f "$HOME/.claude/skills/cachyos/notes.txt" ]] || fail "non-skill directory was modified"
+ok
+cleanup_sandbox
+
+# ---- provisioner: refuses a source without SKILL.md -------------------------
+begin "provision refuses sources without SKILL.md"
+make_sandbox
+mkdir -p "$SANDBOX/src/agents/skills/broken"
+if "$PROVISION" "$SANDBOX/src/agents/skills" >/dev/null 2>&1; then
+  fail "expected refusal for a skill directory without SKILL.md"
+fi
+ok
+cleanup_sandbox
+
+# ---- validator: passes on the real tree -------------------------------------
+begin "validate accepts the repository tree"
+"$VALIDATE" "$REPO_ROOT" >/dev/null || fail "validator rejected the repository"
+ok
+
+# ---- validator: catches broken links and bad frontmatter --------------------
+begin "validate rejects a broken tree"
+SANDBOX=$(mktemp -d)
+cp -a "$REPO_ROOT/agents" "$REPO_ROOT/AGENTS.md" "$SANDBOX/"
+mkdir -p "$SANDBOX/bin"
+printf '[gone](missing-topic.md)\n' >> "$SANDBOX/agents/skills/cachyos/kernel.md"
+sed -i 's/^name: cachyos$/name: wrong/' "$SANDBOX/agents/skills/cachyos/SKILL.md"
+if "$VALIDATE" "$SANDBOX" >/dev/null 2>&1; then
+  fail "validator accepted broken links and mismatched frontmatter"
+fi
+rm -rf "$SANDBOX"
+ok
+
+# ---- validator: rejects empty descriptions -----------------------------------
+begin "validate rejects empty frontmatter descriptions"
+for empty_desc in 'description:' 'description: >'; do
+  SANDBOX=$(mktemp -d)
+  mkdir -p "$SANDBOX/agents/skills/cachyos"
+  printf -- '---\nname: cachyos\n%s\n---\n# body\n' "$empty_desc" \
+    > "$SANDBOX/agents/skills/cachyos/SKILL.md"
+  if "$VALIDATE" "$SANDBOX" >/dev/null 2>&1; then
+    fail "validator accepted '$empty_desc' as a description"
+  fi
+  rm -rf "$SANDBOX"
+done
+ok
+
+# ---- validator: folded descriptions with content still pass ------------------
+begin "validate accepts folded descriptions with content"
+SANDBOX=$(mktemp -d)
+mkdir -p "$SANDBOX/agents/skills/cachyos"
+printf -- '---\nname: cachyos\ndescription: >\n  Real trigger text.\n---\n# body\n' \
+  > "$SANDBOX/agents/skills/cachyos/SKILL.md"
+"$VALIDATE" "$SANDBOX" >/dev/null 2>&1 || fail "validator rejected a folded description"
+rm -rf "$SANDBOX"
+ok
+
+# ---- package layout: staged package() keeps AGENTS.md links resolvable ------
+begin "package layout passes validation"
+SANDBOX=$(mktemp -d)
+mkdir -p "$SANDBOX/build/cachyos-agent-system"
+for entry in agents bin packaging AGENTS.md README.md MAINTENANCE.md LICENSE VERSION upstreams.tsv PKGBUILD; do
+  cp -a "$REPO_ROOT/$entry" "$SANDBOX/build/cachyos-agent-system/"
+done
+if ! (cd "$SANDBOX/build" \
+      && bash -c 'set -euo pipefail
+                  source cachyos-agent-system/PKGBUILD
+                  pkgdir=$1
+                  package' _ "$SANDBOX/pkg" >/dev/null); then
+  fail "package() failed to stage the layout"
+else
+  staged="$SANDBOX/pkg/usr/share/cachyos-agent-system"
+  "$VALIDATE" "$staged" >/dev/null 2>&1 \
+    || fail "validator rejected the installed package layout"
+  [[ -x "$SANDBOX/pkg/usr/bin/cachyos-provision-agent-skills" ]] \
+    || fail "provisioner missing from /usr/bin"
+  [[ -f "$staged/MAINTENANCE.md" ]] \
+    || fail "MAINTENANCE.md is not resolvable beside AGENTS.md"
+  [[ -f "$staged/bin/cachyos-provision-agent-skills" ]] \
+    || fail "bin/cachyos-provision-agent-skills is not resolvable beside AGENTS.md"
+fi
+rm -rf "$SANDBOX"
+ok
+
+if (( failures > 0 )); then
+  echo "$failures test failure(s)" >&2
+  exit 1
+fi
+echo "all tests passed"
