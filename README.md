@@ -19,18 +19,26 @@ agents/skills/cachyos/            One shipped umbrella skill + topic files
 bin/cachyos-provision-agent-skills
 bin/cachyos-agent-skills-update
 bin/cachyos-agent-skills-check-upstreams
+bin/cachyos-agent-skills-validate
+test/run-tests                    Isolated provisioner and validator tests
 PKGBUILD                          Arch/CachyOS pacman package recipe
 packaging/                       Pacman repository template and release notes
-.github/workflows/release.yml    Tagged package/repository release automation
+.github/workflows/ci.yml         Shellcheck, validator, tests on every push/PR
+.github/workflows/release.yml    Tagged signed package/repository release automation
 ```
 
 `AGENTS.md` is repository-level guidance. The umbrella skill primarily manages a running CachyOS install and routes installation planning and packaging work to their dedicated topic files.
 
 ## Install with pacman
 
-Reviewed tags produce an architecture-independent `cachyos-agent-system` package. Once the repository has published a release, install the repository fragment, include it once from `/etc/pacman.conf`, and install normally:
+Reviewed tags produce an architecture-independent `cachyos-agent-system` package. Packages and the repository database are signed; import and locally sign the maintainer key first (fingerprint verification and key handling are documented in [`packaging/README.md`](packaging/README.md)). Then install the repository fragment, include it once from `/etc/pacman.conf`, and install normally:
 
 ```bash
+curl -fsSLO https://raw.githubusercontent.com/keiranhaax/CachyOS-Agent/repo/cachyos-agent-signing-key.asc
+gpg --show-keys cachyos-agent-signing-key.asc   # verify the fingerprint out of band
+sudo pacman-key --add cachyos-agent-signing-key.asc
+sudo pacman-key --lsign-key <fingerprint>
+
 sudo install -Dm644 packaging/pacman/cachyos-agent.conf /etc/pacman.d/cachyos-agent.conf
 grep -Fxq 'Include = /etc/pacman.d/cachyos-agent.conf' /etc/pacman.conf || \
   printf '\nInclude = /etc/pacman.d/cachyos-agent.conf\n' | sudo tee -a /etc/pacman.conf
@@ -70,7 +78,9 @@ There are two supported source models:
 - **Pacman package:** publish reviewed releases in a repository configured on the machine. `pacman -Syu` updates the canonical files under `/usr/share/cachyos-agent-system/`.
 - **Git checkout:** keep a clean checkout in a stable location and run `./bin/cachyos-agent-skills-update`. It only performs a fast-forward update and refuses dirty or divergent trees.
 
-Run `./bin/cachyos-agent-skills-check-upstreams` after a CachyOS system update or before publishing a release. It compares the reviewed commits in `upstreams.tsv` with the official repositories. A changed commit means **review is required**; it does not mean prose can be rewritten automatically. Do not use a root pacman hook to pull and execute arbitrary Git changes.
+Run `./bin/cachyos-agent-skills-check-upstreams` after a CachyOS system update or before publishing a release. It compares the reviewed commits in `upstreams.tsv` with the official repositories. Rows may scope that comparison to the upstream paths the guidance actually cites, so unrelated upstream churn does not raise review noise. An in-scope change means **review is required**; it does not mean prose can be rewritten automatically. Do not use a root pacman hook to pull and execute arbitrary Git changes.
+
+Run `./bin/cachyos-agent-skills-validate` before committing skill changes; it checks frontmatter, relative links, and index consistency between `AGENTS.md` and the skill files. `./test/run-tests` exercises the provisioner and validator in an isolated temporary home. CI runs both on every push and pull request.
 
 See [`MAINTENANCE.md`](MAINTENANCE.md) for the release checklist.
 
