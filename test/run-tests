@@ -26,6 +26,9 @@ ok() {
 make_sandbox() {
   SANDBOX=$(mktemp -d)
   export HOME="$SANDBOX/home"
+  # A HERMES_HOME leaked from the caller's environment would silently
+  # redirect the default-path assertions below.
+  unset HERMES_HOME
   mkdir -p "$HOME"
   SRC="$SANDBOX/src/agents/skills"
   mkdir -p "$SRC/cachyos"
@@ -36,7 +39,14 @@ cleanup_sandbox() {
   rm -rf "$SANDBOX"
 }
 
-DEST_PARENTS=(.agents/skills .claude/skills .codex/skills .pi/agent/skills .gemini/config/skills)
+DEST_PARENTS=(
+  .agents/skills
+  .claude/skills
+  .codex/skills
+  .pi/agent/skills
+  .gemini/config/skills
+  .hermes/skills
+)
 
 # ---- provisioner: links every harness path ---------------------------------
 begin "provision links all harness paths"
@@ -59,6 +69,23 @@ make_sandbox
 "$PROVISION" "$SRC" >/dev/null
 "$PROVISION" "$SRC" >/dev/null
 [[ -L "$HOME/.claude/skills/cachyos" ]] || fail "second run broke the link"
+ok
+cleanup_sandbox
+
+# ---- provisioner: honors Hermes profile home ---------------------------------
+begin "provision honors Hermes profile home"
+make_sandbox
+profile_home="$SANDBOX/hermes-profile"
+HERMES_HOME="$profile_home" "$PROVISION" "$SRC" >/dev/null
+link="$profile_home/skills/cachyos"
+if [[ ! -L "$link" ]]; then
+  fail "$link is not a symlink"
+elif [[ $(readlink "$link") != "$SRC/cachyos" ]]; then
+  fail "$link points at $(readlink "$link")"
+fi
+if [[ -e "$HOME/.hermes/skills/cachyos" ]]; then
+  fail "default Hermes path was linked despite HERMES_HOME override"
+fi
 ok
 cleanup_sandbox
 

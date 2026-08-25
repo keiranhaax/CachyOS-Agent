@@ -15,6 +15,7 @@ Symlink each subdirectory of agents/skills/ into:
   ~/.codex/skills/<name>
   ~/.pi/agent/skills/<name>
   ~/.gemini/config/skills/<name>
+  ${HERMES_HOME:-$HOME/.hermes}/skills/<name>
 
 SKILLS_DIR defaults to ../agents/skills relative to this script, the packaged
 /usr/share/cachyos-agent-system/agents/skills path, or $CACHYOS_SKILLS_SRC when
@@ -89,12 +90,17 @@ if [[ ! -d "$SRC" ]]; then
 fi
 SRC=$(cd "$SRC" && pwd)
 
+# Hermes scopes profiles through HERMES_HOME; the default profile lives at
+# ~/.hermes. Named profiles are provisioned by re-running with HERMES_HOME set.
+HERMES_PROFILE_HOME=${HERMES_HOME:-$HOME/.hermes}
+
 DESTS=(
   "$HOME/.agents/skills"
   "$HOME/.claude/skills"
   "$HOME/.codex/skills"
   "$HOME/.pi/agent/skills"
   "$HOME/.gemini/config/skills"
+  "$HERMES_PROFILE_HOME/skills"
 )
 
 shopt -s nullglob

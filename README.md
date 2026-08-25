@@ -72,10 +72,30 @@ The provisioner links each directory under `agents/skills/` into every supported
 | Codex | `~/.codex/skills/<name>` |
 | Pi | `~/.pi/agent/skills/<name>` |
 | Gemini | `~/.gemini/config/skills/<name>` |
+| Hermes Agent | `${HERMES_HOME:-$HOME/.hermes}/skills/<name>` |
 
 Provisioning is idempotent. Without `--force`, existing regular files and directories are left untouched. With `--force`, an existing skill directory is moved to a timestamped sibling backup before its link is created. The provisioner never recursively deletes a skill and refuses sources without `SKILL.md`.
 
 Links from a Git installation track that checkout. Moving the checkout breaks them until the provisioner is run again from the new location. New skill names are also linked only after the provisioner is rerun.
+
+### Hermes Agent profiles
+
+Hermes scopes each profile through `HERMES_HOME`; the default profile lives at `~/.hermes`. Provision a named profile by re-running with the variable set:
+
+```bash
+# Default Hermes profile
+cachyos-provision-agent-skills
+
+# Named Hermes profile
+HERMES_HOME="$HOME/.hermes/profiles/coder" \
+  cachyos-provision-agent-skills
+```
+
+Verify discovery with `hermes skills list | grep -F cachyos`. In an already-running chat, run `/reload-skills` to re-scan for the new skill without discarding the session. Hermes users who already scan a shared directory through `skills.external_dirs` (for example `~/.agents/skills`) do not need the direct link; both entries resolve to the same `SKILL.md`, which Hermes deduplicates, so having both is harmless but redundant.
+
+Because the link resolves outside `$HERMES_HOME/skills`, Hermes logs a harmless "outside the trusted skills directory" warning when loading the skill. Adding the packaged path (or the linked shared directory) to `skills.external_dirs` marks it trusted and silences the warning.
+
+Hermes's agent-managed skill editing cannot modify the linked skill when it resolves to the root-owned packaged files; that is intentional, as the package remains the source of truth.
 
 ## Topic guides
 
