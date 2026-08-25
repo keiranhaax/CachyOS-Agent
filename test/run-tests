@@ -130,6 +130,57 @@ fi
 rm -rf "$SANDBOX"
 ok
 
+# ---- validator: rejects empty descriptions -----------------------------------
+begin "validate rejects empty frontmatter descriptions"
+for empty_desc in 'description:' 'description: >'; do
+  SANDBOX=$(mktemp -d)
+  mkdir -p "$SANDBOX/agents/skills/cachyos"
+  printf -- '---\nname: cachyos\n%s\n---\n# body\n' "$empty_desc" \
+    > "$SANDBOX/agents/skills/cachyos/SKILL.md"
+  if "$VALIDATE" "$SANDBOX" >/dev/null 2>&1; then
+    fail "validator accepted '$empty_desc' as a description"
+  fi
+  rm -rf "$SANDBOX"
+done
+ok
+
+# ---- validator: folded descriptions with content still pass ------------------
+begin "validate accepts folded descriptions with content"
+SANDBOX=$(mktemp -d)
+mkdir -p "$SANDBOX/agents/skills/cachyos"
+printf -- '---\nname: cachyos\ndescription: >\n  Real trigger text.\n---\n# body\n' \
+  > "$SANDBOX/agents/skills/cachyos/SKILL.md"
+"$VALIDATE" "$SANDBOX" >/dev/null 2>&1 || fail "validator rejected a folded description"
+rm -rf "$SANDBOX"
+ok
+
+# ---- package layout: staged package() keeps AGENTS.md links resolvable ------
+begin "package layout passes validation"
+SANDBOX=$(mktemp -d)
+mkdir -p "$SANDBOX/build/cachyos-agent-system"
+for entry in agents bin packaging AGENTS.md README.md MAINTENANCE.md LICENSE VERSION upstreams.tsv PKGBUILD; do
+  cp -a "$REPO_ROOT/$entry" "$SANDBOX/build/cachyos-agent-system/"
+done
+if ! (cd "$SANDBOX/build" \
+      && bash -c 'set -euo pipefail
+                  source cachyos-agent-system/PKGBUILD
+                  pkgdir=$1
+                  package' _ "$SANDBOX/pkg" >/dev/null); then
+  fail "package() failed to stage the layout"
+else
+  staged="$SANDBOX/pkg/usr/share/cachyos-agent-system"
+  "$VALIDATE" "$staged" >/dev/null 2>&1 \
+    || fail "validator rejected the installed package layout"
+  [[ -x "$SANDBOX/pkg/usr/bin/cachyos-provision-agent-skills" ]] \
+    || fail "provisioner missing from /usr/bin"
+  [[ -f "$staged/MAINTENANCE.md" ]] \
+    || fail "MAINTENANCE.md is not resolvable beside AGENTS.md"
+  [[ -f "$staged/bin/cachyos-provision-agent-skills" ]] \
+    || fail "bin/cachyos-provision-agent-skills is not resolvable beside AGENTS.md"
+fi
+rm -rf "$SANDBOX"
+ok
+
 if (( failures > 0 )); then
   echo "$failures test failure(s)" >&2
   exit 1
