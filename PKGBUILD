@@ -51,6 +51,5 @@ package() {
 
   install -Dm644 README.md "$docdir/README.md"
   install -Dm644 MAINTENANCE.md "$docdir/MAINTENANCE.md"
-  install -Dm644 INSTALL_ON_CACHYOS_PROMPT.md "$docdir/INSTALL_ON_CACHYOS_PROMPT.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
