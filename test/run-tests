@@ -158,7 +158,7 @@ ok
 begin "package layout passes validation"
 SANDBOX=$(mktemp -d)
 mkdir -p "$SANDBOX/build/cachyos-agent-system"
-for entry in agents bin packaging AGENTS.md README.md MAINTENANCE.md LICENSE VERSION upstreams.tsv PKGBUILD; do
+for entry in agents bin packaging AGENTS.md README.md MAINTENANCE.md THIRD_PARTY_NOTICES.md LICENSE VERSION upstreams.tsv PKGBUILD; do
   cp -a "$REPO_ROOT/$entry" "$SANDBOX/build/cachyos-agent-system/"
 done
 if ! (cd "$SANDBOX/build" \
@@ -175,6 +175,8 @@ else
     || fail "provisioner missing from /usr/bin"
   [[ -f "$staged/MAINTENANCE.md" ]] \
     || fail "MAINTENANCE.md is not resolvable beside AGENTS.md"
+  [[ -f "$SANDBOX/pkg/usr/share/doc/cachyos-agent-system/THIRD_PARTY_NOTICES.md" ]] \
+    || fail "THIRD_PARTY_NOTICES.md is missing from package documentation"
   [[ -f "$staged/bin/cachyos-provision-agent-skills" ]] \
     || fail "bin/cachyos-provision-agent-skills is not resolvable beside AGENTS.md"
 fi

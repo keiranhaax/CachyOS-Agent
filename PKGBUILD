@@ -1,7 +1,7 @@
 # Maintainer: keiranhaax <widisberto@hotmail.com>
 
 pkgname=cachyos-agent-system
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc='CachyOS-specific guidance for AI coding agents'
 arch=('any')
@@ -48,6 +48,7 @@ package() {
 
   install -Dm644 README.md "$docdir/README.md"
   install -Dm644 MAINTENANCE.md "$docdir/MAINTENANCE.md"
+  install -Dm644 THIRD_PARTY_NOTICES.md "$docdir/THIRD_PARTY_NOTICES.md"
   install -Dm644 packaging/README.md "$docdir/packaging/README.md"
   install -Dm644 packaging/pacman/cachyos-agent.conf "$docdir/packaging/pacman/cachyos-agent.conf"
   ln -s "../doc/$pkgname/MAINTENANCE.md" "$datadir/MAINTENANCE.md"
