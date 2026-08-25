@@ -1,6 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
 # Compare reviewed upstream commits with the current official branch heads.
+# Rows may scope the comparison to the paths the guidance actually relies on.
 set -euo pipefail
 
 usage() {
@@ -11,8 +12,14 @@ Read ROOT/upstreams.tsv and compare each reviewed commit with the current
 official branch head. ROOT defaults to the checkout containing this script or
 to /usr/share/cachyos-agent-system for a packaged installation.
 
+A row may carry a fifth column of space-separated paths. When the branch head
+moved but no commit in the reviewed range touches those paths, the row is
+reported as current-in-scope instead of requiring review. Scoped rows need a
+network Git fetch (blob-less, commits and trees only); when that fetch fails,
+the row conservatively requires review.
+
 Exit status:
-  0  all reviewed commits are current
+  0  all reviewed commits are current (in scope, where scoped)
   1  one or more upstreams changed and require review
   2  the check could not be completed
 USAGE
@@ -50,9 +57,29 @@ if ! command -v git >/dev/null 2>&1; then
   exit 2
 fi
 
+WORKDIR=$(mktemp -d)
+trap 'rm -rf "$WORKDIR"' EXIT
+
+# Count commits in reviewed..current that touch the given paths.
+# Prints the count on success; returns nonzero when it cannot be determined.
+scoped_change_count() {
+  local url=$1 ref=$2 reviewed=$3 current=$4
+  shift 4
+  local clone="$WORKDIR/scope-repo" count
+  rm -rf "$clone"
+  git init --quiet --bare "$clone"
+  if ! git -C "$clone" fetch --quiet --filter=blob:none "$url" "$ref" "$reviewed" 2>/dev/null; then
+    return 1
+  fi
+  if ! count=$(git -C "$clone" rev-list --count "$reviewed..$current" -- "$@" 2>/dev/null); then
+    return 1
+  fi
+  printf '%s\n' "$count"
+}
+
 changed=0
 checked=0
-while IFS=$'\t' read -r name url ref reviewed; do
+while IFS=$'\t' read -r name url ref reviewed paths; do
   [[ -z "$name" || $name == \#* ]] && continue
   if [[ -z "$url" || -z "$ref" || ! "$reviewed" =~ ^[0-9a-f]{40}$ ]]; then
     echo "invalid row in $manifest: $name" >&2
@@ -70,10 +97,23 @@ while IFS=$'\t' read -r name url ref reviewed; do
   ((checked++)) || true
   if [[ "$current" == "$reviewed" ]]; then
     echo "current: $name ${current:0:12}"
+    continue
+  fi
+  if [[ -n "${paths:-}" ]]; then
+    # shellcheck disable=SC2086
+    if count=$(scoped_change_count "$url" "$ref" "$reviewed" "$current" $paths); then
+      if (( count == 0 )); then
+        echo "current in scope: $name head moved ${reviewed:0:12} -> ${current:0:12}; no changes under: $paths"
+        continue
+      fi
+      echo "review required: $name ${reviewed:0:12} -> ${current:0:12} ($count in-scope commit(s) under: $paths)"
+    else
+      echo "review required: $name ${reviewed:0:12} -> ${current:0:12} (scoped fetch failed; treating as changed)"
+    fi
   else
     echo "review required: $name ${reviewed:0:12} -> ${current:0:12}"
-    ((changed++)) || true
   fi
+  ((changed++)) || true
 done < "$manifest"
 
 if (( checked == 0 )); then
@@ -81,7 +121,7 @@ if (( checked == 0 )); then
   exit 2
 fi
 if (( changed > 0 )); then
-  echo "$changed of $checked upstream branch(es) changed; review before updating upstreams.tsv" >&2
+  echo "$changed of $checked upstream branch(es) changed in scope; review before updating upstreams.tsv" >&2
   exit 1
 fi
 echo "all $checked reviewed upstream branch(es) are current"

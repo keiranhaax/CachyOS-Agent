@@ -1,13 +1,17 @@
 # reviewed_at=2026-08-24
 # reviewed_desktop_iso=260809
-# name	url	ref	reviewed_commit
-cachyos-wiki	https://github.com/CachyOS/wiki.git	refs/heads/next	5990dd6e9428de3d00c3a871b4ee55c48695d9d4
-linux-cachyos	https://github.com/CachyOS/linux-cachyos.git	refs/heads/master	bd96a024d179846015f63c027c105a893e252219
-cachyos-settings	https://github.com/CachyOS/CachyOS-Settings.git	refs/heads/master	4bcb3e3bf8a0c6763dbd935d14430c60d7ff5a37
-chwd	https://github.com/CachyOS/chwd.git	refs/heads/master	e99ec339715f2b5724a1adc100ea55b94e59df5a
-new-cli-installer	https://github.com/CachyOS/New-Cli-Installer.git	refs/heads/master	bb3eccb03e85007ba5db65a952f82af132b0e21d
+# Columns: name, url, ref, reviewed_commit, optional space-separated paths.
+# Paths scope the review trigger to files the guidance actually cites; a head
+# move with no in-scope commits is reported as current. Rows without paths
+# flag any commit. Widen a scope when a skill starts relying on new files.
+# name	url	ref	reviewed_commit	paths
+cachyos-wiki	https://github.com/CachyOS/wiki.git	refs/heads/next	5990dd6e9428de3d00c3a871b4ee55c48695d9d4	src/content/docs/cachyos_basic src/content/docs/configuration src/content/docs/features src/content/docs/installation
+linux-cachyos	https://github.com/CachyOS/linux-cachyos.git	refs/heads/master	bd96a024d179846015f63c027c105a893e252219	README.md
+cachyos-settings	https://github.com/CachyOS/CachyOS-Settings.git	refs/heads/master	4bcb3e3bf8a0c6763dbd935d14430c60d7ff5a37	usr
+chwd	https://github.com/CachyOS/chwd.git	refs/heads/master	e99ec339715f2b5724a1adc100ea55b94e59df5a	profiles README.md
+new-cli-installer	https://github.com/CachyOS/New-Cli-Installer.git	refs/heads/master	bb3eccb03e85007ba5db65a952f82af132b0e21d	server-profiles.toml settings.json src/main.cpp installer-lib/src/installer_config.cpp
 cachyos-hypr-noctalia	https://github.com/CachyOS/cachyos-hypr-noctalia.git	refs/heads/master	fbf09833195e8e3d74d773d3da0a327bafd102cf
-scx-loader	https://github.com/sched-ext/scx-loader.git	refs/heads/main	368845eb73737ea280def513afe46f4447b8983f
-cachyos-calamares	https://github.com/CachyOS/cachyos-calamares.git	refs/heads/cachyos	f1c20a500e14448e36991f1b9d3ebae153827761
-cachyos-pkgbuilds	https://github.com/CachyOS/CachyOS-PKGBUILDS.git	refs/heads/master	c440f3798039223ebb7844e5bf87f03fe9a690e3
+scx-loader	https://github.com/sched-ext/scx-loader.git	refs/heads/main	368845eb73737ea280def513afe46f4447b8983f	README.md src
+cachyos-calamares	https://github.com/CachyOS/cachyos-calamares.git	refs/heads/cachyos	f1c20a500e14448e36991f1b9d3ebae153827761	src/modules/netinstall
+cachyos-pkgbuilds	https://github.com/CachyOS/CachyOS-PKGBUILDS.git	refs/heads/master	c440f3798039223ebb7844e5bf87f03fe9a690e3	README.md
 cachyos-repo-script	https://github.com/CachyOS/cachyos-repo-add-script.git	refs/heads/develop	21f6f9aa142d1546817ab0a3519df192fbe53d88
