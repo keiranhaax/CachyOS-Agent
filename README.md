@@ -31,7 +31,9 @@ packaging/                       Pacman repository template and release notes
 
 ## Install with pacman
 
-Reviewed tags produce an architecture-independent `cachyos-agent-system` package. Packages and the repository database are signed; import and locally sign the maintainer key first (fingerprint verification and key handling are documented in [`packaging/README.md`](packaging/README.md)). Then install the repository fragment, include it once from `/etc/pacman.conf`, and install normally:
+Reviewed tags produce an architecture-independent `cachyos-agent-system` package. Packages and the repository database are signed; import and locally sign the maintainer key first (fingerprint verification and key handling are documented in [`packaging/README.md`](packaging/README.md)). Then install the repository fragment, include it once from `/etc/pacman.conf`, and install normally.
+
+**Signing key fingerprint:** _not yet published — the first signed release is `v0.1.2`. The maintainer records the fingerprint here when that release is tagged. Do not trust a key whose fingerprint does not match this line._ Releases up to and including `v0.1.1` are unsigned and cannot be installed through this repository.
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/keiranhaax/CachyOS-Agent/repo/cachyos-agent-signing-key.asc

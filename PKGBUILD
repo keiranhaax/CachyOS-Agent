@@ -1,7 +1,7 @@
 # Maintainer: keiranhaax <widisberto@hotmail.com>
 
 pkgname=cachyos-agent-system
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='CachyOS-specific guidance for AI coding agents'
 arch=('any')

@@ -39,7 +39,7 @@ Rows in `upstreams.tsv` may carry a fifth column of space-separated paths that s
 2. Increment `VERSION` using semantic versioning.
 3. Run `./bin/cachyos-agent-skills-validate`, `shellcheck bin/* test/run-tests`, and `./test/run-tests`. CI runs the same checks on every push and pull request, and the release workflow repeats them before building.
 4. Update `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` and review the diff.
-5. Confirm the `PACKAGE_SIGNING_KEY` repository secret holds the current maintainer signing key; the release fails without it. Key generation and rotation are documented in [`packaging/README.md`](packaging/README.md).
+5. Confirm the `PACKAGE_SIGNING_KEY` repository secret holds the current maintainer signing key; the release fails without it. Confirm the **Signing key fingerprint** line in `README.md` matches that key. Key generation and rotation are documented in [`packaging/README.md`](packaging/README.md).
 6. Commit, then tag the exact commit as `v<VERSION>`. Never move a published release tag.
 7. Push the branch and tag. The release workflow builds as an unprivileged user, runs `namcap`, signs the package and the repository database, publishes the artifact, its signature, the checksum, and the public key, and updates the `repo` branch.
 8. Verify the GitHub Actions run and test `pacman -Syu cachyos-agent-system` from an enrolled CachyOS machine.

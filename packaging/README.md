@@ -33,7 +33,7 @@ gpg --armor --export-secret-keys <fingerprint>   # store as the PACKAGE_SIGNING_
 gpg --armor --export <fingerprint> > cachyos-agent-signing-key.asc
 ```
 
-The workflow exports the public key as `cachyos-agent-signing-key.asc` on every release and at the `repo` branch root. Publish the fingerprint through a second channel (for example the project README) so users can verify the key they import.
+The workflow exports the public key as `cachyos-agent-signing-key.asc` on every release and at the `repo` branch root. Publish the fingerprint through a second channel so users can verify the key they import: the root [`README.md`](../README.md) carries a **Signing key fingerprint** line that must be filled in with the real fingerprint in the same commit that is tagged for the first signed release, and updated whenever the key rotates.
 
 ## Enroll a machine
 
