@@ -82,8 +82,18 @@ for skill_dir in "${skill_dirs[@]}"; do
   fi
   if ! grep -Eq '^description:' <<<"$frontmatter"; then
     problem "$name: frontmatter has no description"
-  elif ! sed -n '/^description:/,$p' <<<"$frontmatter" | grep -Eq '[[:alnum:]]{10}|[[:alnum:]].*[[:alnum:]]'; then
-    problem "$name: frontmatter description is empty"
+  else
+    # Collect the description value: the rest of its line plus any indented
+    # continuation lines. The key itself must not count as content.
+    description=$(awk '
+      /^description:/ { grab = 1; sub(/^description:[[:space:]]*/, ""); print; next }
+      grab && /^[[:space:]]/ { print; next }
+      grab { exit }
+    ' <<<"$frontmatter")
+    # Ignore YAML block-scalar indicators when testing for real content.
+    if ! grep -Eq '[[:alnum:]]' <<<"${description//[>|+-]/}"; then
+      problem "$name: frontmatter description is empty"
+    fi
   fi
 done
 
