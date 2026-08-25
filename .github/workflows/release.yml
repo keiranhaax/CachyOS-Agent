@@ -38,6 +38,11 @@ jobs:
           [[ $GITHUB_REF_NAME == "v$version" ]]
           pkgbuild_version=$(bash -c 'source ./PKGBUILD; printf "%s" "$pkgver"')
           [[ $pkgbuild_version == "$version" ]]
+          if grep -q 'Signing key fingerprint:\*\* _not yet published' README.md; then
+            echo "README.md still carries the placeholder signing-key fingerprint." >&2
+            echo "Publish the real verified fingerprint before tagging a release." >&2
+            exit 1
+          fi
 
       - name: Validate source tree
         shell: bash
