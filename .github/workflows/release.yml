@@ -1,0 +1,115 @@
+name: Build pacman release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pacman-release
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Install release tools
+        run: pacman -Syu --noconfirm git github-cli namcap
+
+      - name: Validate release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(<VERSION)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ $GITHUB_REF_TYPE == tag ]]
+          [[ $GITHUB_REF_NAME == "v$version" ]]
+          pkgbuild_version=$(bash -c 'source ./PKGBUILD; printf "%s" "$pkgver"')
+          [[ $pkgbuild_version == "$version" ]]
+
+      - name: Build as an unprivileged user
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf "PACKAGER='keiranhaax <widisberto@hotmail.com>'\n" >> /etc/makepkg.conf
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- env HOME=/home/builder makepkg -Ccf --noconfirm
+
+      - name: Inspect package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          [[ ${#packages[@]} -eq 1 ]]
+          namcap PKGBUILD "${packages[0]}"
+          bsdtar -tf "${packages[0]}" | sort
+          sha256sum "${packages[0]}" > SHA256SUMS.pkg
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber "${packages[0]}" SHA256SUMS.pkg
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "CachyOS Agent ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              "${packages[0]}" SHA256SUMS.pkg
+          fi
+
+      - name: Update pacman repository branch
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          package_file=${packages[0]##*/}
+          publish_dir=$(mktemp -d)
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          if git ls-remote --exit-code --heads "$remote" repo >/dev/null 2>&1; then
+            git clone --depth 1 --branch repo "$remote" "$publish_dir"
+          else
+            git -C "$publish_dir" init --initial-branch=repo
+            git -C "$publish_dir" remote add origin "$remote"
+          fi
+
+          install -d "$publish_dir/x86_64"
+          install -m644 "${packages[0]}" "$publish_dir/x86_64/"
+          cd "$publish_dir/x86_64"
+          repo-add -R cachyos-agent.db.tar.gz "$package_file"
+          rm -f cachyos-agent.db cachyos-agent.files
+          cp cachyos-agent.db.tar.gz cachyos-agent.db
+          cp cachyos-agent.files.tar.gz cachyos-agent.files
+
+          cd "$publish_dir"
+          printf '%s\n' \
+            '# CachyOS Agent pacman repository' \
+            '' \
+            'This branch is generated from tagged releases. Do not edit it manually.' \
+            > README.md
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add --all
+          git commit -m "repo: publish ${GITHUB_REF_NAME}"
+          git push origin HEAD:repo

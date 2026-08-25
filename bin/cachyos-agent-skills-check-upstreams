@@ -1,0 +1,87 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Compare reviewed upstream commits with the current official branch heads.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent-skills-check-upstreams [ROOT]
+
+Read ROOT/upstreams.tsv and compare each reviewed commit with the current
+official branch head. ROOT defaults to the checkout containing this script or
+to /usr/share/cachyos-agent-system for a packaged installation.
+
+Exit status:
+  0  all reviewed commits are current
+  1  one or more upstreams changed and require review
+  2  the check could not be completed
+USAGE
+}
+
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+  usage
+  exit 0
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if (( $# == 1 )); then
+  ROOT=$1
+elif [[ -f "$SCRIPT_DIR/../upstreams.tsv" ]]; then
+  ROOT=$SCRIPT_DIR/..
+elif [[ -f /usr/share/cachyos-agent-system/upstreams.tsv ]]; then
+  ROOT=/usr/share/cachyos-agent-system
+else
+  echo "upstreams.tsv not found beside the script or under /usr/share/cachyos-agent-system" >&2
+  exit 2
+fi
+ROOT=$(cd "$ROOT" && pwd)
+manifest="$ROOT/upstreams.tsv"
+
+if [[ ! -r "$manifest" ]]; then
+  echo "cannot read upstream manifest: $manifest" >&2
+  exit 2
+fi
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is required to query official upstream branches" >&2
+  exit 2
+fi
+
+changed=0
+checked=0
+while IFS=$'\t' read -r name url ref reviewed; do
+  [[ -z "$name" || $name == \#* ]] && continue
+  if [[ -z "$url" || -z "$ref" || ! "$reviewed" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "invalid row in $manifest: $name" >&2
+    exit 2
+  fi
+  if ! result=$(git ls-remote "$url" "$ref"); then
+    echo "failed to query $name ($url $ref)" >&2
+    exit 2
+  fi
+  current=${result%%[[:space:]]*}
+  if [[ ! "$current" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "no branch head returned for $name ($ref)" >&2
+    exit 2
+  fi
+  ((checked++)) || true
+  if [[ "$current" == "$reviewed" ]]; then
+    echo "current: $name ${current:0:12}"
+  else
+    echo "review required: $name ${reviewed:0:12} -> ${current:0:12}"
+    ((changed++)) || true
+  fi
+done < "$manifest"
+
+if (( checked == 0 )); then
+  echo "no upstream entries found in $manifest" >&2
+  exit 2
+fi
+if (( changed > 0 )); then
+  echo "$changed of $checked upstream branch(es) changed; review before updating upstreams.tsv" >&2
+  exit 1
+fi
+echo "all $checked reviewed upstream branch(es) are current"

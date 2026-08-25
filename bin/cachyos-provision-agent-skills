@@ -1,0 +1,168 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Symlink every agents/skills/<name> directory into the common harness skill paths.
+# Contents track the source tree (ln -sfn). New skill directory names require a re-run.
+# Supports a development checkout or package-owned files under /usr/share.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-provision-agent-skills [--force] [SKILLS_DIR]
+
+Symlink each subdirectory of agents/skills/ into:
+  ~/.agents/skills/<name>
+  ~/.claude/skills/<name>
+  ~/.codex/skills/<name>
+  ~/.pi/agent/skills/<name>
+  ~/.gemini/config/skills/<name>
+
+SKILLS_DIR defaults to ../agents/skills relative to this script, the packaged
+/usr/share/cachyos-agent-system/agents/skills path, or $CACHYOS_SKILLS_SRC when
+set. An explicit argument takes precedence over the environment variable.
+
+--force   Replace an existing skill directory only when dest/SKILL.md exists.
+          The previous directory is moved to a timestamped sibling backup;
+          it is never recursively deleted. Anything else is refused.
+          Existing symlinks are updated without --force.
+
+New skill names (new directories under agents/skills/) are not seen by
+harnesses until this script is run again. Moving the checkout requires
+a re-run so the links point at the new path.
+USAGE
+}
+
+FORCE=0
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --force)
+      FORCE=1
+      shift
+      ;;
+    --)
+      shift
+      POSITIONAL+=("$@")
+      break
+      ;;
+    -*)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if (( ${#POSITIONAL[@]} > 1 )); then
+  echo "too many arguments" >&2
+  usage >&2
+  exit 2
+fi
+if (( ${#POSITIONAL[@]} == 1 )); then
+  SRC=${POSITIONAL[0]}
+elif [[ -n ${CACHYOS_SKILLS_SRC:-} ]]; then
+  SRC=$CACHYOS_SKILLS_SRC
+else
+  checkout_src="$SCRIPT_DIR/../agents/skills"
+  packaged_src=/usr/share/cachyos-agent-system/agents/skills
+  if [[ -d "$checkout_src" ]]; then
+    SRC=$checkout_src
+  elif [[ -d "$packaged_src" ]]; then
+    SRC=$packaged_src
+  else
+    echo "skills directory not found beside the script or under /usr/share/cachyos-agent-system" >&2
+    exit 1
+  fi
+fi
+
+if [[ ! -d "$SRC" ]]; then
+  echo "skills directory not found: $SRC" >&2
+  exit 1
+fi
+SRC=$(cd "$SRC" && pwd)
+
+DESTS=(
+  "$HOME/.agents/skills"
+  "$HOME/.claude/skills"
+  "$HOME/.codex/skills"
+  "$HOME/.pi/agent/skills"
+  "$HOME/.gemini/config/skills"
+)
+
+shopt -s nullglob
+skill_dirs=("$SRC"/*/)
+if (( ${#skill_dirs[@]} == 0 )); then
+  echo "no skill subdirectories in $SRC" >&2
+  exit 1
+fi
+for skill_dir in "${skill_dirs[@]}"; do
+  if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+    echo "refuse: source directory has no SKILL.md: $skill_dir" >&2
+    exit 1
+  fi
+done
+
+backup_path_for() {
+  local original=$1 stamp candidate sequence=0
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  candidate="${original}.backup.${stamp}"
+  while [[ -e "$candidate" || -L "$candidate" ]]; do
+    ((sequence++)) || true
+    candidate="${original}.backup.${stamp}.${sequence}"
+  done
+  printf '%s\n' "$candidate"
+}
+
+linked=0
+skipped=0
+backed_up=0
+for skill_dir in "${skill_dirs[@]}"; do
+  [[ -d "$skill_dir" ]] || continue
+  name=$(basename "${skill_dir%/}")
+  for dest_parent in "${DESTS[@]}"; do
+    mkdir -p "$dest_parent"
+    dest="$dest_parent/$name"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      if [[ -L "$dest" ]]; then
+        ln -sfn "$SRC/$name" "$dest"
+        ((linked++)) || true
+        continue
+      fi
+      if (( FORCE == 1 )); then
+        if [[ -d "$dest" && -f "$dest/SKILL.md" ]]; then
+          backup=$(backup_path_for "$dest")
+          mv -- "$dest" "$backup"
+          echo "backup: $dest -> $backup"
+          ln -sfn "$SRC/$name" "$dest"
+          ((linked++)) || true
+          ((backed_up++)) || true
+          continue
+        fi
+        echo "refuse: $dest is not a skill directory; move it aside manually" >&2
+        exit 1
+      fi
+      echo "skip: $dest exists and is not a symlink (pass --force)" >&2
+      ((skipped++)) || true
+      continue
+    fi
+    ln -sfn "$SRC/$name" "$dest"
+    ((linked++)) || true
+  done
+done
+
+echo "linked $linked path(s) from $SRC"
+if (( backed_up > 0 )); then
+  echo "backed up $backed_up previous skill director$( (( backed_up == 1 )) && printf 'y' || printf 'ies' )"
+fi
+if (( skipped > 0 )); then
+  echo "skipped $skipped existing non-symlink dest(s)" >&2
+  exit 1
+fi

@@ -1,0 +1,103 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Safely update a Git-backed skill checkout and refresh harness symlinks.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent-skills-update [ROOT]
+
+Fast-forward a clean Git checkout, validate that it has the expected skill,
+refresh harness symlinks, and check whether reviewed CachyOS upstream commits
+have changed. ROOT defaults to the checkout containing this script.
+
+Package-owned installations under /usr/share/cachyos-agent-system are updated
+by pacman; this command only refreshes their harness links and checks freshness.
+USAGE
+}
+
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+  usage
+  exit 0
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if (( $# == 1 )); then
+  ROOT=$1
+elif [[ -f "$SCRIPT_DIR/../agents/skills/cachyos/SKILL.md" ]]; then
+  ROOT=$SCRIPT_DIR/..
+elif [[ -f /usr/share/cachyos-agent-system/agents/skills/cachyos/SKILL.md ]]; then
+  ROOT=/usr/share/cachyos-agent-system
+else
+  echo "CachyOS agent source not found" >&2
+  exit 2
+fi
+ROOT=$(cd "$ROOT" && pwd)
+
+if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git_root=$(git -C "$ROOT" rev-parse --show-toplevel)
+  git_root=$(cd "$git_root" && pwd)
+  if [[ "$git_root" != "$ROOT" ]]; then
+    echo "refuse: ROOT is inside a larger Git checkout: $git_root" >&2
+    exit 1
+  fi
+  if [[ -n $(git -C "$ROOT" status --porcelain) ]]; then
+    echo "refuse: checkout has local changes; commit or stash them before updating" >&2
+    git -C "$ROOT" status --short >&2
+    exit 1
+  fi
+  if ! upstream=$(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
+    echo "refuse: current branch has no configured upstream" >&2
+    exit 1
+  fi
+  git -C "$ROOT" fetch --prune
+  local_commit=$(git -C "$ROOT" rev-parse HEAD)
+  remote_commit=$(git -C "$ROOT" rev-parse "$upstream")
+  merge_base=$(git -C "$ROOT" merge-base HEAD "$upstream")
+  if [[ "$local_commit" == "$remote_commit" ]]; then
+    echo "source checkout is current"
+  elif [[ "$merge_base" == "$local_commit" ]]; then
+    git -C "$ROOT" merge --ff-only "$upstream"
+  elif [[ "$merge_base" == "$remote_commit" ]]; then
+    echo "local checkout is ahead of $upstream; no pull needed"
+  else
+    echo "refuse: local branch and $upstream have diverged" >&2
+    exit 1
+  fi
+else
+  if command -v pacman >/dev/null 2>&1 && pacman -Qo "$ROOT/agents/skills/cachyos/SKILL.md" >/dev/null 2>&1; then
+    echo "source is package-owned; use pacman -Syu to obtain package updates"
+  else
+    echo "refuse: source is neither a Git checkout nor a pacman-owned installation" >&2
+    exit 1
+  fi
+fi
+
+if [[ ! -f "$ROOT/agents/skills/cachyos/SKILL.md" ]]; then
+  echo "updated source is missing agents/skills/cachyos/SKILL.md" >&2
+  exit 1
+fi
+
+if [[ -x "$ROOT/bin/cachyos-provision-agent-skills" ]]; then
+  provisioner="$ROOT/bin/cachyos-provision-agent-skills"
+elif command -v cachyos-provision-agent-skills >/dev/null 2>&1; then
+  provisioner=$(command -v cachyos-provision-agent-skills)
+else
+  echo "cachyos-provision-agent-skills is not installed" >&2
+  exit 1
+fi
+if [[ -x "$ROOT/bin/cachyos-agent-skills-check-upstreams" ]]; then
+  checker="$ROOT/bin/cachyos-agent-skills-check-upstreams"
+elif command -v cachyos-agent-skills-check-upstreams >/dev/null 2>&1; then
+  checker=$(command -v cachyos-agent-skills-check-upstreams)
+else
+  echo "cachyos-agent-skills-check-upstreams is not installed" >&2
+  exit 1
+fi
+
+"$provisioner" "$ROOT/agents/skills"
+"$checker" "$ROOT"

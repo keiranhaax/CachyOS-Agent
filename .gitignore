@@ -1,0 +1,10 @@
+*.pkg.tar.*
+*.pkg.tar.*.sig
+*.src.tar.*
+/cachyos-agent-system/
+/dist/
+pkg/
+src/
+repo/
+*.log
+*.tmp

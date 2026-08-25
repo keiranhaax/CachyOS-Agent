@@ -1,0 +1,12 @@
+post_install() {
+  printf '%s\n' \
+    'CachyOS agent guidance was installed under /usr/share/cachyos-agent-system.' \
+    'Run cachyos-provision-agent-skills as each user who should receive the skill.'
+}
+
+post_upgrade() {
+  printf '%s\n' \
+    'CachyOS agent guidance was updated.' \
+    'Existing harness links already target the package-owned skill directory.' \
+    'Re-run cachyos-provision-agent-skills only when a release adds a new skill name.'
+}
