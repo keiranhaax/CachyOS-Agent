@@ -5,8 +5,8 @@ This project contains reviewed operational guidance, not generated documentation
 ## Source and installation model
 
 - Keep the canonical project in a versioned Git repository.
-- Keep personal checkouts in a stable path such as `~/.local/share/cachyos-agent-system`, never a temporary download directory.
-- For system-managed installations, publish a package in a pacman repository already configured on the target machine. Install project data under `/usr/share/cachyos-agent-system/`, the `bin/` commands under `/usr/bin`, and the license under `/usr/share/licenses/cachyos-agent-system/`.
+- Keep personal checkouts in a stable path such as `~/.local/share/cachyos-agent`, never a temporary download directory.
+- For system-managed installations, publish a package in a pacman repository already configured on the target machine. Install project data under `/usr/share/cachyos-agent/`, the `bin/` commands under `/usr/bin`, and the license under `/usr/share/licenses/cachyos-agent/`.
 - Do not make package hooks fetch Git or rewrite skills. A package update must contain already-reviewed files.
 - `PKGBUILD`, `VERSION`, and the release tag must carry the same semantic version. Increment `pkgrel` only for packaging-only changes to the same source version.
 
@@ -37,11 +37,11 @@ Rows in `upstreams.tsv` may carry a fifth column of space-separated paths that s
 
 1. Update the affected skill files and the reviewed commits in `upstreams.tsv`.
 2. Increment `VERSION` using semantic versioning.
-3. Run `./bin/cachyos-agent-skills-validate`, `shellcheck bin/* test/run-tests`, and `./test/run-tests`. CI runs the same checks on every push and pull request, and the release workflow repeats them before building.
+3. Run `./bin/cachyos-agent-skills-validate`, `shellcheck -x bin/* lib/*.sh test/run-tests test/lib.sh test/cases/*.sh`, and `./test/run-tests`. CI runs the same checks on every push and pull request, and the release workflow repeats them before building.
 4. Update `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` and review the diff.
 5. Confirm the `PACKAGE_SIGNING_KEY` repository secret holds the current maintainer signing key; the release fails without it. Confirm the **Signing key fingerprint** line in `README.md` matches that key. Key generation and rotation are documented in [`packaging/README.md`](packaging/README.md).
 6. Commit, then tag the exact commit as `v<VERSION>`. Never move a published release tag.
 7. Push the branch and tag. The release workflow builds as an unprivileged user, runs `namcap`, signs the package and the repository database, publishes the artifact, its signature, the checksum, and the public key, and updates the `repo` branch.
-8. Verify the GitHub Actions run and test `pacman -Syu cachyos-agent-system` from an enrolled CachyOS machine.
+8. Verify the GitHub Actions run and test `pacman -Syu cachyos-agent` from an enrolled CachyOS machine.
 
 Do not claim that every CachyOS update automatically changes this prose. The dependable guarantee is that upstream movement is detected, reviewed releases are published, and pacman installs those reviewed releases.

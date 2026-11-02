@@ -18,7 +18,7 @@ Agents are first-class. The project never favors a particular harness, and its s
 
 ### Recommended: install the signed pacman package
 
-Reviewed tags publish an architecture-independent `cachyos-agent-system` package and a signed pacman repository. Import and locally sign the maintainer key before enabling the repository.
+Reviewed tags publish an architecture-independent `cachyos-agent` package and a signed pacman repository. Import and locally sign the maintainer key before enabling the repository.
 
 **Signing key fingerprint:** `8A55 9E3B B6EB 0640 1622 73BC C1D6 43CE B30C 6C59`. Verify it out of band and do not trust a key with a different fingerprint. Releases through `v0.1.1` are unsigned and cannot be installed through this repository.
 
@@ -39,11 +39,11 @@ sudo install -Dm644 cachyos-agent.conf \
 grep -Fxq 'Include = /etc/pacman.d/cachyos-agent.conf' /etc/pacman.conf || \
   printf '\nInclude = /etc/pacman.d/cachyos-agent.conf\n' | sudo tee -a /etc/pacman.conf
 
-sudo pacman -Syu cachyos-agent-system
-cachyos-provision-agent-skills
+sudo pacman -Syu cachyos-agent
+cachyos-agent skills provision
 ```
 
-Inspect `/etc/pacman.conf` before changing it and include the repository fragment only once. Package installation updates the canonical files under `/usr/share/cachyos-agent-system/`; it does **not** modify user home directories. Each intended user must run `cachyos-provision-agent-skills` without `sudo`.
+Inspect `/etc/pacman.conf` before changing it and include the repository fragment only once. Package installation updates the canonical files under `/usr/share/cachyos-agent/`; it does **not** modify user home directories. Each intended user must run `cachyos-agent skills provision` without `sudo`.
 
 See [`packaging/README.md`](packaging/README.md) for the repository trust boundary, signing details, and local-build procedure.
 
@@ -53,13 +53,13 @@ Keep the checkout in a stable location so its provisioned links remain valid.
 
 ```bash
 git clone https://github.com/keiranhaax/CachyOS-Agent.git \
-  ~/.local/share/cachyos-agent-system
+  ~/.local/share/cachyos-agent
 
-cd ~/.local/share/cachyos-agent-system
-./bin/cachyos-provision-agent-skills
+cd ~/.local/share/cachyos-agent
+./bin/cachyos-agent-skills-provision
 ```
 
-Run `./bin/cachyos-provision-agent-skills --help` for source and replacement options.
+Run `./bin/cachyos-agent-skills-provision --help` for source and replacement options.
 
 ## What provisioning changes
 
@@ -84,11 +84,11 @@ Hermes scopes each profile through `HERMES_HOME`; the default profile lives at `
 
 ```bash
 # Default Hermes profile
-cachyos-provision-agent-skills
+cachyos-agent skills provision
 
 # Named Hermes profile
 HERMES_HOME="$HOME/.hermes/profiles/coder" \
-  cachyos-provision-agent-skills
+  cachyos-agent skills provision
 ```
 
 Verify discovery with `hermes skills list | grep -F cachyos`. In an already-running chat, run `/reload-skills` to re-scan for the new skill without discarding the session. Hermes users who already scan a shared directory through `skills.external_dirs` (for example `~/.agents/skills`) do not need the direct link; both entries resolve to the same `SKILL.md`, which Hermes deduplicates, so having both is harmless but redundant.
@@ -138,7 +138,7 @@ Run the release checks natively on CachyOS or Arch with GNU userland:
 ```bash
 ./bin/cachyos-agent-skills-validate
 ./test/run-tests
-shellcheck bin/* test/run-tests
+shellcheck -x bin/* lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
 namcap PKGBUILD
 ```
 
@@ -153,7 +153,7 @@ MAINTENANCE.md                    Upstream review and release checklist
 THIRD_PARTY_NOTICES.md            Omarchy attribution and MIT notice
 VERSION upstreams.tsv LICENSE    Version, reviewed sources, and project license
 agents/skills/cachyos/            Umbrella skill and CachyOS topic guides
-bin/cachyos-provision-agent-skills
+bin/cachyos-agent-skills-provision
 bin/cachyos-agent-skills-update
 bin/cachyos-agent-skills-check-upstreams
 bin/cachyos-agent-skills-validate

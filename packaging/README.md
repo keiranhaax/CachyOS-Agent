@@ -5,7 +5,7 @@
 The package never writes to a user's home directory. After installation, each user runs:
 
 ```bash
-cachyos-provision-agent-skills
+cachyos-agent skills provision
 ```
 
 ## Local build
@@ -49,7 +49,7 @@ sudo install -Dm644 packaging/pacman/cachyos-agent.conf /etc/pacman.d/cachyos-ag
 grep -Fxq 'Include = /etc/pacman.d/cachyos-agent.conf' /etc/pacman.conf || \
   printf '\nInclude = /etc/pacman.d/cachyos-agent.conf\n' | sudo tee -a /etc/pacman.conf
 sudo pacman -Syu cachyos-agent
-cachyos-provision-agent-skills
+cachyos-agent skills provision
 ```
 
 Do not append the `Include` line twice. The repository is intentionally below CachyOS and Arch repositories when its include is appended at the end of `pacman.conf`; it contains only this uniquely named package.
