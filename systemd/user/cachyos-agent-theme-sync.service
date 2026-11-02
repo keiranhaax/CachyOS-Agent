@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync the Plasma color scheme into coding agents
+# Plasma writes kdeglobals in bursts. The default start limit would put this unit
+# in failed state after five runs in ten seconds, and the path unit that triggers
+# it would stop watching with it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/cachyos-agent-theme-sync
