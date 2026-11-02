@@ -135,6 +135,10 @@ add_command cachyos-agent-broken "cachyos-agent:summary=Syntax error" && echo 'i
 printf '#!/bin/bash\n# cachyos-agent:summary=No exec bit\n' >"$TREE/bin/cachyos-agent-plain"
 printf '#!/usr/bin/env python3\n# cachyos-agent:summary=Bad python\ndef (\n' >"$TREE/bin/cachyos-agent-pybad"
 chmod +x "$TREE/bin/cachyos-agent-pybad"
+add_command cachyos-agent-usage "cachyos-agent:summary=Usage"
+printf '#!/usr/bin/env python3\n# cachyos-agent:summary=Name the resolver cannot match\nprint("hi")\n' >"$TREE/bin/cachyos-agent-usage-collect.py"
+chmod +x "$TREE/bin/cachyos-agent-usage-collect.py"
+add_command "cachyos-agent-usage~" "cachyos-agent:summary=Editor backup"
 if out=$("$TREE_AGENT" commands --check 2>&1); then
   fail "--check passed a tree with problems"
 fi
@@ -143,7 +147,10 @@ fi
 [[ $out == *"cachyos-agent-plain is not executable"* ]] || fail "missing exec bit not reported: $out"
 [[ $out == *"cachyos-agent-broken fails its syntax check"* ]] || fail "bash syntax error not reported: $out"
 [[ $out == *"cachyos-agent-pybad fails its syntax check"* ]] || fail "python syntax error not reported: $out"
-[[ $out != *cachyos-agent-fine* && $out != *cachyos-agent-secret* ]] || fail "a valid or hidden command was reported: $out"
+[[ $out == *"cachyos-agent-usage-collect.py is not reachable"* ]] || fail "a dotted name is not reported as unreachable: $out"
+[[ $out == *"cachyos-agent-usage~ is not reachable"* ]] || fail "an editor backup is not reported as unreachable: $out"
+[[ $out != *cachyos-agent-fine* && $out != *cachyos-agent-secret* && $out != *"cachyos-agent-usage is"* ]] \
+  || fail "a valid or hidden command was reported: $out"
 [[ -z $(find "$TREE" -name __pycache__) ]] || fail "py_compile left bytecode in the command directory"
 ok
 cleanup_sandbox
@@ -257,6 +264,8 @@ source "$LIB"
 
 begin "the data root, config and state dirs follow the environment"
 [[ $CACHYOS_AGENT_ROOT == "$REPO_ROOT" ]] || fail "root is $CACHYOS_AGENT_ROOT"
+[[ $CACHYOS_AGENT_BIN == "$REPO_ROOT/bin" ]] || fail "bin dir is $CACHYOS_AGENT_BIN"
+[[ $(bash -c 'echo "$CACHYOS_AGENT_BIN"') == "$REPO_ROOT/bin" ]] || fail "the bin dir is not exported"
 [[ $CACHYOS_AGENT_CONFIG_DIR == "$HOME/.config/cachyos-agent" ]] || fail "config dir is $CACHYOS_AGENT_CONFIG_DIR"
 [[ $CACHYOS_AGENT_STATE_DIR == "$HOME/.local/state/cachyos-agent" ]] || fail "state dir is $CACHYOS_AGENT_STATE_DIR"
 [[ $(XDG_STATE_HOME=/elsewhere bash -c 'source "$1" && echo "$CACHYOS_AGENT_STATE_DIR"' _ "$LIB") == /elsewhere/cachyos-agent ]] \
@@ -297,20 +306,101 @@ ca_flag_enabled crash-ignore/other && fail "an unrelated nested flag is enabled"
 ok
 
 begin "ca_flag rejects names that could leave the toggles directory"
-for bad in ../escape a/../b a/b/c /abs .hidden '' 'x/'; do
+for bad in ../escape a/../b a/b/c /abs . .. a/. a/.. '' 'x/'; do
   if (ca_flag "$bad" on) >/dev/null 2>&1; then fail "accepted flag name '$bad'"; fi
 done
 if (ca_flag demo sideways) >/dev/null 2>&1; then fail "accepted an unknown action"; fi
 [[ ! -e $CACHYOS_AGENT_STATE_DIR/escape && ! -e $HOME/escape ]] || fail "a rejected name still wrote a file"
 ok
 
+begin "ca_flag takes any process name that fits in one path component"
+for name in 'c++' '(sd-pam)' .kwin-wrapped 'foo@bar' 'chrome:cs0' 'two words' '-dash'; do
+  ca_flag "crash-ignore/$name" on
+  ca_flag_enabled "crash-ignore/$name" || fail "'crash-ignore/$name' is not enabled after on"
+  [[ -f $CACHYOS_AGENT_STATE_DIR/toggles/crash-ignore/$name ]] || fail "'$name' is not stored under its own name"
+  ca_flag "crash-ignore/$name" off
+  if ca_flag_enabled "crash-ignore/$name"; then fail "'crash-ignore/$name' is still enabled after off"; fi
+done
+ca_flag .hidden on
+ca_flag_enabled .hidden || fail "a leading dot is rejected"
+ca_flag .hidden off
+ok
+
+begin "ca_flag_enabled answers false for a name it can never hold"
+for name in crash-ignore/kworker/u16:2 crash-ignore/async-std/runti ../escape '' x/; do
+  out=$( (ca_flag_enabled "$name" || echo "survived $?") 2>&1)
+  [[ $out == "survived 1" ]] || fail "ca_flag_enabled '$name' printed: $out"
+done
+ok
+
 begin "ca_atomic_write replaces the file and leaves no temp files"
 target=$SANDBOX/out/deep/file.txt
 printf 'one\n' | ca_atomic_write "$target"
 [[ $(<"$target") == one ]] || fail "first write is wrong"
+[[ $(stat -c %a "$target") == 600 ]] || fail "mode is $(stat -c %a "$target"), not 0600"
 printf 'two\n' | ca_atomic_write "$target"
 [[ $(<"$target") == two ]] || fail "rewrite is wrong"
+[[ $(stat -c %a "$target") == 600 ]] || fail "rewritten mode is $(stat -c %a "$target"), not 0600"
 [[ $(ls -A "$SANDBOX/out/deep") == file.txt ]] || fail "temp files were left behind: $(ls -A "$SANDBOX/out/deep")"
+ok
+
+begin "ca_atomic_write keeps the last good file when its producer wrote nothing"
+target=$SANDBOX/out/usage.json
+printf '{"good":1}\n' | ca_atomic_write "$target"
+status=0
+(set -o pipefail; false | ca_atomic_write "$target") 2>/dev/null || status=$?
+[[ $status -ne 0 ]] || fail "empty input was accepted"
+[[ $(<"$target") == '{"good":1}' ]] || fail "the last good file was replaced: $(<"$target")"
+[[ -z $(find "$SANDBOX/out" -name 'usage.json.*') ]] || fail "temp file left behind: $(find "$SANDBOX/out" -name 'usage.json.*')"
+rm "$target"
+if ca_atomic_write "$target" </dev/null 2>/dev/null; then fail "empty input was accepted for a new file"; fi
+[[ ! -e $target ]] || fail "an empty file was created"
+ok
+
+begin "ca_atomic_write writes through a symlink and keeps the link"
+mkdir -p "$SANDBOX/dotfiles"
+printf 'old\n' >"$SANDBOX/dotfiles/real.json"
+ln -s "$SANDBOX/dotfiles/real.json" "$SANDBOX/out/link.json"
+printf 'new\n' | ca_atomic_write "$SANDBOX/out/link.json"
+[[ -L $SANDBOX/out/link.json ]] || fail "the symlink was replaced by a regular file"
+[[ $(<"$SANDBOX/dotfiles/real.json") == new ]] || fail "the link target was not updated"
+ln -s "$SANDBOX/dotfiles/later/dangling.json" "$SANDBOX/out/dangling.json"
+printf 'made\n' | ca_atomic_write "$SANDBOX/out/dangling.json"
+[[ $(<"$SANDBOX/dotfiles/later/dangling.json") == made ]] || fail "a dangling link was not written through"
+[[ -z $(find "$SANDBOX/dotfiles" -name '*.??????' -type f) ]] || fail "temp files were left behind"
+ok
+
+begin "ca_atomic_write leaves no temp file when the move fails"
+target=$SANDBOX/out/moved.txt
+printf 'keep\n' >"$target"
+stub mv 'exit 1'
+status=0
+printf 'lost\n' | ca_atomic_write "$target" 2>/dev/null || status=$?
+rm "$SANDBOX/stubs/mv"
+[[ $status -ne 0 ]] || fail "a failed mv was reported as success"
+[[ $(<"$target") == keep ]] || fail "the file changed although mv failed"
+[[ -z $(find "$SANDBOX/out" -name 'moved.txt.*') ]] || fail "temp file left behind: $(find "$SANDBOX/out" -name 'moved.txt.*')"
+ok
+
+begin "ca_atomic_write removes its temp file when the process is terminated"
+target=$SANDBOX/out/killed.txt
+mkfifo "$SANDBOX/in"
+# setsid gives the writer its own process group, so one signal reaches it and
+# its subshell the way systemd or a terminal would.
+# shellcheck disable=SC2016 # the snippet is meant to expand in the child shell
+setsid bash -c 'source "$1"; ca_atomic_write "$2" <"$3"' _ "$LIB" "$target" "$SANDBOX/in" 2>/dev/null &
+writer=$!
+exec 3>"$SANDBOX/in"
+for _ in {1..100}; do
+  [[ -n $(find "$SANDBOX/out" -name 'killed.txt.*') ]] && break
+  sleep 0.05
+done
+[[ -n $(find "$SANDBOX/out" -name 'killed.txt.*') ]] || fail "the writer never created its temp file"
+kill -TERM -- "-$writer"
+wait "$writer" 2>/dev/null || true
+exec 3>&-
+[[ -z $(find "$SANDBOX/out" -name 'killed.txt.*') ]] || fail "temp file survived SIGTERM: $(find "$SANDBOX/out" -name 'killed.txt.*')"
+[[ ! -e $target ]] || fail "a terminated write still produced the file"
 ok
 
 begin "ca_notify falls back to stderr without notify-send or a bus"
@@ -358,6 +448,15 @@ check_terminal ghostty '--title=My Title' -e
 check_terminal xterm -T 'My Title' -e
 ok
 
+# Konsole reads -p values as key=value;key=value and expands % codes in titles.
+begin "ca_terminal_exec keeps a konsole title from being read as profile syntax"
+rm -f "$SANDBOX"/stubs/* "$SANDBOX"/calls/*
+stub konsole
+only_path "$SANDBOX/stubs" ca_terminal_exec --title 'Crash: a;b;Environment=FOO=1 100%n' agent
+expected=$(printf '%s\n' -p 'tabtitle=Crash: a b Environment=FOO=1 100 n' -e agent '')
+[[ $(<"$SANDBOX/calls/konsole") == "$expected" ]] || fail "konsole got: $(<"$SANDBOX/calls/konsole")"
+ok
+
 begin "ca_terminal_exec prefers TERMINAL, then konsole, then alacritty"
 rm -f "$SANDBOX"/stubs/* "$SANDBOX"/calls/*
 stub myterm
@@ -391,6 +490,13 @@ ca_syntax_ok "$SANDBOX/syntax/good.py" || fail "rejected valid Python"
 if ca_syntax_ok "$SANDBOX/syntax/bad.sh"; then fail "accepted broken bash"; fi
 if ca_syntax_ok "$SANDBOX/syntax/bad.py"; then fail "accepted broken Python"; fi
 [[ -z $(find "$SANDBOX/syntax" -name __pycache__) ]] || fail "bytecode was written next to the script"
+ok
+
+begin "ca_syntax_ok treats a .py file as Python even without a shebang"
+printf 'print(1)\n' >"$SANDBOX/syntax/lib_good.py"
+printf 'def (\n' >"$SANDBOX/syntax/lib_bad.py"
+ca_syntax_ok "$SANDBOX/syntax/lib_good.py" || fail "rejected valid Python"
+if ca_syntax_ok "$SANDBOX/syntax/lib_bad.py"; then fail "accepted broken Python"; fi
 ok
 
 cleanup_sandbox

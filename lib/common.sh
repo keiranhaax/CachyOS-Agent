@@ -10,9 +10,13 @@
 # /usr/share/cachyos-agent when packaged. readlink -f lets scripts run through
 # the /usr/bin symlinks and still find their own files.
 CACHYOS_AGENT_ROOT=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+# One way for a command to run a sibling: "$CACHYOS_AGENT_BIN/cachyos-agent-launch".
+# A bare name only works when the package is installed, and then it may be an
+# older copy than the checkout under test.
+CACHYOS_AGENT_BIN=$CACHYOS_AGENT_ROOT/bin
 CACHYOS_AGENT_CONFIG_DIR=${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/cachyos-agent
 CACHYOS_AGENT_STATE_DIR=${XDG_STATE_HOME:-${HOME:?HOME is not set}/.local/state}/cachyos-agent
-export CACHYOS_AGENT_ROOT CACHYOS_AGENT_CONFIG_DIR CACHYOS_AGENT_STATE_DIR
+export CACHYOS_AGENT_ROOT CACHYOS_AGENT_BIN CACHYOS_AGENT_CONFIG_DIR CACHYOS_AGENT_STATE_DIR
 
 # ca_die "message": print to stderr, exit 1.
 ca_die() {
@@ -64,20 +68,25 @@ ca_notify() {
 
 # ca_flag <name> on|off|toggle and ca_flag_enabled <name>: boolean switches kept
 # as empty files in $CACHYOS_AGENT_STATE_DIR/toggles. A name is one component or
-# two (crash-ignore/firefox), so a caller cannot reach outside that directory.
+# two (crash-ignore/firefox). Only what could escape that directory is refused:
+# an empty component, a '.' or '..' component, a third level. The name of a
+# process is arbitrary text (c++, (sd-pam), .kwin-wrapped) and must still work,
+# so a caller building a name from one replaces '/' first (${comm//\//_}).
+# ca_flag_enabled is a question and answers false for a name that can never be
+# a flag; only ca_flag, which writes, dies on it.
 _ca_flag_path() {
-  local part='[[:alnum:]_][[:alnum:]_. -]*'
-  [[ $1 =~ ^$part(/$part)?$ ]] || ca_die "invalid flag name: $1"
+  local part='[^/]+'
+  [[ $1 =~ ^$part(/$part)?$ ]] || return 1
+  case /$1/ in */./* | */../*) return 1 ;; esac
   _CA_FLAG_PATH=$CACHYOS_AGENT_STATE_DIR/toggles/$1
 }
 
 ca_flag_enabled() {
-  _ca_flag_path "$1"
-  [[ -f $_CA_FLAG_PATH ]]
+  _ca_flag_path "$1" && [[ -f $_CA_FLAG_PATH ]]
 }
 
 ca_flag() {
-  _ca_flag_path "$1"
+  _ca_flag_path "$1" || ca_die "invalid flag name: $1"
   case ${2-} in
     on)
       mkdir -p -- "${_CA_FLAG_PATH%/*}"
@@ -122,7 +131,10 @@ ca_terminal_exec() {
 
   case ${term##*/} in
     konsole)
-      [[ -z $title ]] || prefix+=(-p "tabtitle=$title")
+      # -p reads key=value;key=value and a tab title expands % codes, so a ; or
+      # % in a title built from outside text (a process name) would cut the
+      # title short or set another profile property. Both become spaces.
+      [[ -z $title ]] || prefix+=(-p "tabtitle=${title//[;%]/ }")
       prefix+=(-e)
       ;;
     alacritty | xterm)
@@ -141,30 +153,42 @@ ca_terminal_exec() {
   exec "$term" "${prefix[@]}" "$@"
 }
 
-# ca_atomic_write <path>: read stdin into <path> without ever leaving a partial
-# file there. The temp file sits in the same directory so mv is a rename. The
-# result is mode 0600 (mktemp's), which suits state and credentials-adjacent
-# files alike.
+# ca_atomic_write <path>: replace <path> with stdin by renaming a temp file from
+# the same directory over it, so a reader sees the old file or the new one.
+# stdin must be the complete content: this function cannot see whether the
+# producer of a pipe succeeded, so `producer | ca_atomic_write f` would publish
+# half of a crashed producer's output. Capture first and write only on success:
+#   data=$(producer) && printf '%s\n' "$data" | ca_atomic_write f
+# Empty input is refused for the same reason (a producer that died before it
+# printed anything), and the previous file stays. A symlinked <path> is written
+# through, so a dotfiles link survives. The result is mode 0600 (mktemp's),
+# which suits state and credentials-adjacent files alike. The temp file is
+# removed when the write fails or the process is terminated; the subshell keeps
+# that cleanup trap from replacing the caller's own.
 ca_atomic_write() {
-  local path=$1 tmp
+  local path
+  path=$(readlink -m -- "${1:?ca_atomic_write: path required}")
   mkdir -p -- "$(dirname -- "$path")"
-  tmp=$(mktemp -- "$path.XXXXXX")
-  if cat >"$tmp"; then
+  (
+    tmp=$(mktemp -- "$path.XXXXXX") || exit 1
+    trap 'rm -f -- "$tmp"' EXIT
+    cat >"$tmp" || exit 1
+    if [[ ! -s $tmp ]]; then
+      printf '%s: refusing to replace %s with empty input\n' "${0##*/}" "$path" >&2
+      exit 1
+    fi
     mv -f -- "$tmp" "$path"
-  else
-    rm -f -- "$tmp"
-    return 1
-  fi
+  )
 }
 
-# ca_syntax_ok <file>: quietly check a command file's syntax, with py_compile
-# for Python scripts and bash -n for everything else. py_compile would write
-# __pycache__ next to the script (read-only under /usr/share), so its bytecode
-# goes to a throwaway directory.
+# ca_syntax_ok <file>: quietly check a source file's syntax, with py_compile
+# for Python (a .py name or a python shebang) and bash -n for everything else.
+# py_compile would write __pycache__ next to the file (read-only under
+# /usr/share), so its bytecode goes to a throwaway directory.
 ca_syntax_ok() {
   local file=$1 first cache ok=0
   IFS= read -r first <"$file" || true
-  if [[ $first == '#!'*python* ]]; then
+  if [[ $file == *.py || $first == '#!'*python* ]]; then
     cache=$(mktemp -d)
     PYTHONPYCACHEPREFIX=$cache python3 -m py_compile "$file" 2>/dev/null || ok=1
     rm -rf -- "$cache"

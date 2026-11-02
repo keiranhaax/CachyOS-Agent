@@ -73,6 +73,7 @@ self=${BASH_SOURCE[0]}
 EOF
   printf '%s\n' "$body" >>"$SANDBOX/stubs/$cmd"
   chmod +x "$SANDBOX/stubs/$cmd"
+  hash -r # a command this shell already ran stays cached at its old path otherwise
 }
 
 # cleanup_sandbox: remove the current sandbox and restore PATH. Sandboxes a case
