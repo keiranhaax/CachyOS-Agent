@@ -10,10 +10,18 @@
 # /usr/share/cachyos-agent when packaged. readlink -f lets scripts run through
 # the /usr/bin symlinks and still find their own files.
 CACHYOS_AGENT_ROOT=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
-# One way for a command to run a sibling: "$CACHYOS_AGENT_BIN/cachyos-agent-launch".
-# A bare name only works when the package is installed, and then it may be an
-# older copy than the checkout under test.
+# Commands call their siblings by bare name (cachyos-agent-launch), never by
+# path, so a test stub first on PATH stands in for a sibling and the installed
+# /usr/bin copies are what a packaged command runs. The data root's bin is
+# appended as the fallback that lets a checkout run before it is installed;
+# when an older package is also installed, put the checkout first yourself:
+#   PATH=$PWD/bin:$PATH ./bin/cachyos-agent ...
 CACHYOS_AGENT_BIN=$CACHYOS_AGENT_ROOT/bin
+case ":$PATH:" in
+  *":$CACHYOS_AGENT_BIN:"*) ;;
+  *) PATH=$PATH:$CACHYOS_AGENT_BIN ;;
+esac
+export PATH
 CACHYOS_AGENT_CONFIG_DIR=${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/cachyos-agent
 CACHYOS_AGENT_STATE_DIR=${XDG_STATE_HOME:-${HOME:?HOME is not set}/.local/state}/cachyos-agent
 export CACHYOS_AGENT_ROOT CACHYOS_AGENT_BIN CACHYOS_AGENT_CONFIG_DIR CACHYOS_AGENT_STATE_DIR

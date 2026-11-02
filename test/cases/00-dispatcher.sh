@@ -38,7 +38,7 @@ add_command() {
 only_path() {
   local dir=$1
   shift
-  # shellcheck disable=SC2123 # narrowing PATH is the whole point
+  # shellcheck disable=SC2123,SC2030 # narrowing PATH inside this subshell is the whole point
   (PATH=$dir; "$@")
 }
 
@@ -270,6 +270,22 @@ begin "the data root, config and state dirs follow the environment"
 [[ $CACHYOS_AGENT_STATE_DIR == "$HOME/.local/state/cachyos-agent" ]] || fail "state dir is $CACHYOS_AGENT_STATE_DIR"
 [[ $(XDG_STATE_HOME=/elsewhere bash -c 'source "$1" && echo "$CACHYOS_AGENT_STATE_DIR"' _ "$LIB") == /elsewhere/cachyos-agent ]] \
   || fail "XDG_STATE_HOME is ignored"
+ok
+
+begin "siblings resolve by bare name through PATH, with stubs first and the data root last"
+# PATH is read through a child shell: shellcheck otherwise ties these reads to
+# the subshell assignment in only_path. The provisioner's new name is used
+# because an installed cachyos-agent-system still puts the validator on /usr/bin.
+path_now=$(bash -c 'printf %s "$PATH"')
+[[ :$path_now: == *":$REPO_ROOT/bin:"* ]] || fail "the data root's bin is not on PATH"
+[[ $path_now == *"$REPO_ROOT/bin" ]] || fail "the data root's bin is not the last PATH entry: $path_now"
+[[ $(type -P cachyos-agent-skills-provision) == "$REPO_ROOT/bin/cachyos-agent-skills-provision" ]] \
+  || fail "a sibling does not resolve to the checkout copy"
+stub cachyos-agent-skills-provision 'echo stubbed'
+[[ $(cachyos-agent-skills-provision) == stubbed ]] || fail "a stub first on PATH did not replace the sibling"
+rm -f "$SANDBOX/stubs/cachyos-agent-skills-provision"; hash -r
+path_again=$(bash -c 'source "$1"; printf %s "$PATH"' _ "$LIB")
+[[ $path_again == "$path_now" ]] || fail "sourcing common.sh twice appended the bin dir again"
 ok
 
 begin "ca_version and ca_cmd_present"
