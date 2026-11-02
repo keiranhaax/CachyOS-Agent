@@ -20,6 +20,9 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 
 ENDPOINT=http://127.0.0.1:11434/v1
+# The Arch package ships a system unit (User=ollama, models kept under
+# /var/lib/ollama, WantedBy=multi-user.target), not a user unit, so starting it
+# takes sudo. See the package's PKGBUILD on gitlab.archlinux.org.
 SERVICE=ollama.service
 RECIPES=$CACHYOS_AGENT_ROOT/data/local-models.tsv
 ACTIVE_FILE=$CACHYOS_AGENT_STATE_DIR/local/active
