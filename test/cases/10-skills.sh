@@ -230,6 +230,34 @@ fi
 ok
 cleanup_sandbox
 
+begin "validate checks lib/*.py syntax"
+make_sandbox
+tree=$SANDBOX/tree
+make_valid_tree "$tree"
+printf 'print("collect")\n' >"$tree/lib/good.py"
+"$VALIDATE" "$tree" >/dev/null 2>&1 || fail "validator rejected a valid Python helper"
+printf 'def (\n' >"$tree/lib/bad.py"
+if "$VALIDATE" "$tree" >/dev/null 2>&1; then
+  fail "validator accepted a Python helper with a syntax error"
+fi
+[[ -z $(find "$tree" -name __pycache__) ]] || fail "py_compile left bytecode in the tree"
+ok
+cleanup_sandbox
+
+begin "skills commands exit 2, not 1, when ROOT is not a directory"
+make_sandbox
+touch "$SANDBOX/a-file"
+for command in validate check-upstreams update; do
+  for root in "$SANDBOX/no-such-dir" "$SANDBOX/a-file"; do
+    status=0
+    out=$("$AGENT" skills "$command" "$root" 2>&1) || status=$?
+    [[ $status -eq 2 ]] || fail "skills $command exited $status for $root"
+    [[ $out == *"not a directory: $root"* ]] || fail "skills $command did not name the bad ROOT $root: $out"
+  done
+done
+ok
+cleanup_sandbox
+
 # ---- package layout --------------------------------------------------------
 
 begin "package() installs a self-locating tree"
@@ -256,6 +284,8 @@ else
   [[ $(readlink -f "$pkg/usr/bin/cachyos-provision-agent-skills") == "$staged/bin/cachyos-agent-skills-provision" ]] \
     || fail "the old provisioner name is not a symlink to the new one"
   [[ -f $staged/lib/common.sh ]] || fail "lib/common.sh is missing from the data root"
+  [[ -f $staged/AGENTS.md ]] || fail "AGENTS.md is missing from the data root"
+  [[ -f $staged/upstreams.tsv ]] || fail "upstreams.tsv is missing from the data root"
   [[ -f $staged/MAINTENANCE.md ]] || fail "MAINTENANCE.md is not resolvable beside AGENTS.md"
   [[ -f $pkg/usr/share/doc/cachyos-agent/THIRD_PARTY_NOTICES.md ]] \
     || fail "THIRD_PARTY_NOTICES.md is missing from package documentation"

@@ -9,6 +9,8 @@ This project contains reviewed operational guidance, not generated documentation
 - For system-managed installations, publish a package in a pacman repository already configured on the target machine. Install project data under `/usr/share/cachyos-agent/`, the `bin/` commands under `/usr/bin`, and the license under `/usr/share/licenses/cachyos-agent/`.
 - Do not make package hooks fetch Git or rewrite skills. A package update must contain already-reviewed files.
 - `PKGBUILD`, `VERSION`, and the release tag must carry the same semantic version. Increment `pkgrel` only for packaging-only changes to the same source version.
+- `bin/` holds Bash commands only: the lint step runs `shellcheck` on every file there and fails on anything else. Python helpers live in `lib/` and are run by a Bash command. `cachyos-agent skills validate` syntax-checks `lib/*.sh` and `lib/*.py`.
+- A command calls a sibling as `"$CACHYOS_AGENT_BIN/cachyos-agent-<name>"` (set by `lib/common.sh`), never by bare name: `PATH` may lack the package or hold an older copy.
 
 ## Upstream review
 

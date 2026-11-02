@@ -40,7 +40,10 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then
   exit 0
 fi
 
-ROOT=$(cd "${1:-$CACHYOS_AGENT_ROOT}" && pwd)
+ROOT=$(cd -- "${1:-$CACHYOS_AGENT_ROOT}" 2>/dev/null && pwd) || {
+  echo "not a directory: ${1:-$CACHYOS_AGENT_ROOT}" >&2
+  exit 2
+}
 manifest="$ROOT/upstreams.tsv"
 
 if [[ ! -r "$manifest" ]]; then
