@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install release tools
-        run: pacman -Syu --noconfirm git github-cli namcap shellcheck
+        run: pacman -Syu --noconfirm git github-cli namcap shellcheck jq python
 
       - name: Validate release identity
         shell: bash
