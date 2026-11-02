@@ -1,0 +1,666 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent local: recipe parsing, what fits a machine, use, start, stop,
+# status and remove, with ollama, nvidia-smi, sudo, systemctl and pacman stubbed.
+# shellcheck source=../lib.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
+
+AGENT=$REPO_ROOT/bin/cachyos-agent
+OUT='' RC=0
+
+# make_tree: $TREE_AGENT, a private copy of the dispatcher and the command whose
+# recipes are three fixture rows, strongest first, so fit decisions do not move
+# when data/local-models.tsv does.
+make_tree() {
+  local tree=$SANDBOX/tree
+  mkdir -p "$tree/bin" "$tree/lib" "$tree/data"
+  cp "$REPO_ROOT/bin/cachyos-agent" "$REPO_ROOT/bin/cachyos-agent-local" "$tree/bin/"
+  cp "$REPO_ROOT/lib/common.sh" "$tree/lib/"
+  cp "$REPO_ROOT/VERSION" "$tree/"
+  {
+    printf '# fixture recipes\n\n'
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      huge huge:120b 80 96 65536 'the large one' \
+      mid mid:30b 24 32 32768 'the middle one' \
+      tiny tiny:1b 8 16 32768 'the small one'
+  } >"$tree/data/local-models.tsv"
+  TREE=$tree
+  TREE_AGENT=$tree/bin/cachyos-agent
+}
+
+# set_machine <vram> <ram_gib>: what the command will see. <vram> is the MiB
+# figure nvidia-smi prints per card (several figures make several cards), or
+# "none" for an nvidia-smi that fails the way it does without a driver.
+set_machine() {
+  printf 'MemTotal:       %d kB\nMemFree:           1024 kB\n' $(($2 * 1048576)) >"$SANDBOX/meminfo"
+  export CACHYOS_AGENT_MEMINFO=$SANDBOX/meminfo CACHYOS_AGENT_DRM_DIR=$SANDBOX/drm
+  if [[ $1 == none ]]; then
+    stub nvidia-smi 'exit 9'
+  else
+    stub nvidia-smi "printf '%s\\n' $1"
+  fi
+}
+
+# add_amd_card <n> <bytes>: a card directory as amdgpu exposes it.
+add_amd_card() {
+  mkdir -p "$SANDBOX/drm/card$1/device"
+  printf '%s\n' "$2" >"$SANDBOX/drm/card$1/device/mem_info_vram_total"
+}
+
+# fake_service: stubs for ollama, systemctl, sudo and pacman that share one
+# state: $SANDBOX/running exists while the service runs, installed holds what
+# `ollama list` prints, ps what `ollama ps` prints, and pull-fails makes a
+# pull or a create fail. `systemctl enable|start` begins the service, stop ends it, and the
+# stubbed pacman makes an ollama appear, as installing the package would.
+# Without install_ollama the stubbed ollama is present from the start.
+# shellcheck disable=SC2016 # the stub bodies are scripts, not strings to expand here
+fake_service() {
+  mkdir -p "$SANDBOX/pkg"
+  stub ollama '
+state=${self%/stubs/*}
+case $1 in
+  list) [[ -e $state/running ]] || exit 1; if [[ -f $state/installed ]]; then cat "$state/installed"; fi ;;
+  ps) if [[ -f $state/ps ]]; then cat "$state/ps"; fi ;;
+  pull) if [[ -e $state/pull-fails ]]; then echo "pull failed" >&2; exit 1; fi ;;
+  create)
+    if [[ -e $state/create-fails ]]; then echo "create failed" >&2; exit 1; fi
+    cp "$4" "$state/modelfile"; echo "$OLLAMA_HOST" >"$state/host" ;;
+esac
+exit 0'
+  stub systemctl '
+state=${self%/stubs/*}
+case $1 in
+  is-active)
+    if [[ -e $state/running ]]; then [[ ${2-} == --quiet ]] || echo active; exit 0; fi
+    [[ ${2-} == --quiet ]] || echo inactive
+    exit 3 ;;
+  start | enable) : >"$state/running" ;;
+  stop) rm -f "$state/running" ;;
+esac
+exit 0'
+  stub sudo 'exec "$@"'
+  stub pacman 'state=${self%/stubs/*}; if [[ -x $state/pkg/ollama ]]; then cp "$state/pkg/ollama" "$state/stubs/ollama"; fi'
+  stub sleep
+}
+
+# install_ollama: take the stubbed ollama off PATH until the stubbed pacman
+# installs it, and narrow PATH to what the command really needs so an ollama on
+# the machine running the tests cannot answer. Sets NARROW for use as
+# PATH=$NARROW run ...
+install_ollama() {
+  local tool
+  mv "$SANDBOX/stubs/ollama" "$SANDBOX/pkg/ollama"
+  mkdir -p "$SANDBOX/real"
+  for tool in dirname readlink mkdir mktemp mv cat rm cp; do
+    ln -sf "$(type -P "$tool")" "$SANDBOX/real/$tool"
+  done
+  NARROW=$SANDBOX/stubs:$SANDBOX/real
+}
+
+# run <args...>: the dispatcher of the private tree with stdin closed. Never
+# aborts the case; the output (both streams) lands in OUT and the status in RC.
+run() {
+  OUT=$("$TREE_AGENT" "$@" 2>&1 </dev/null) && RC=0 || RC=$?
+}
+
+# answer <text> <args...>: the same with <text> typed on stdin.
+answer() {
+  local text=$1
+  shift
+  OUT=$("$TREE_AGENT" "$@" 2>&1 <<<"$text") && RC=0 || RC=$?
+}
+
+# calls <cmd>: one line per recorded call of a stub, arguments joined by spaces.
+calls() {
+  local file=$SANDBOX/calls/$1 line args=''
+  [[ -f $file ]] || return 0
+  while IFS= read -r line; do
+    if [[ -n $line ]]; then
+      args+=${args:+ }$line
+    else
+      printf '%s\n' "$args"
+      args=''
+    fi
+  done <"$file"
+}
+
+# expect_calls <cmd> <line>...: the stub was called exactly like this, in order.
+expect_calls() {
+  local cmd=$1 want got
+  shift
+  want=$(printf '%s\n' "$@")
+  got=$(calls "$cmd")
+  [[ $got == "$want" ]] || fail "$cmd calls differ. wanted: ${want//$'\n'/ ; } got: ${got//$'\n'/ ; }"
+}
+
+expect_no_calls() {
+  [[ ! -s $SANDBOX/calls/$1 ]] || fail "$1 was called: $(calls "$1")"
+}
+
+expect_in() {
+  [[ $OUT == *"$1"* ]] || fail "output lacks: $1 (output: $OUT)"
+}
+
+# expect_row <id> <fit>: list shows a row of that id with that fit.
+expect_row() {
+  grep -Eq "^[ *] $1 +[^ ]+ +[0-9]+K +$2 " <<<"$OUT" || fail "$1 is not listed as $2 (output: $OUT)"
+}
+
+state_dir() {
+  printf '%s\n' "$XDG_STATE_HOME/cachyos-agent/local"
+}
+
+# ---- the shipped recipes --------------------------------------------------------
+
+begin "data/local-models.tsv: unique ids, numeric limits, an Ollama tag, a context an agent can use"
+make_sandbox
+set_machine 8188 64
+declare -A seen=()
+rows=0
+while IFS=$'\t' read -r id model vram ram ctx note; do
+  [[ -n $id && $id != '#'* ]] || continue
+  rows=$((rows + 1))
+  [[ -z ${seen[$id]+x} ]] || fail "duplicate id $id"
+  seen[$id]=1
+  [[ $id =~ ^[a-z0-9][a-z0-9._-]*$ ]] || fail "bad id $id"
+  [[ $model =~ ^[a-z0-9._/-]+:[A-Za-z0-9._-]+$ ]] || fail "$id: $model is not name:tag"
+  [[ $vram =~ ^[0-9]+$ && $ram =~ ^[0-9]+$ ]] || fail "$id: limits are not numbers"
+  ((ram > 0 && vram > 0)) || fail "$id: a limit is zero"
+  ((ctx >= 32768)) || fail "$id: context $ctx is too small for an agent"
+  [[ -n $note ]] || fail "$id: no note"
+done <"$REPO_ROOT/data/local-models.tsv"
+((rows >= 5)) || fail "only $rows recipes"
+run_real=$("$AGENT" local list 2>&1 </dev/null)
+for id in "${!seen[@]}"; do
+  [[ $run_real == *" $id "* ]] || fail "list through the real dispatcher does not show $id"
+done
+grep -q '2026-' "$REPO_ROOT/data/local-models.tsv" || fail "the header does not record the date the tags were checked"
+ok
+cleanup_sandbox
+
+# ---- list: what fits ------------------------------------------------------------
+
+begin "list on a small machine says what fits and why the rest does not"
+make_sandbox
+make_tree
+set_machine 8188 32
+run local list
+((RC == 0)) || fail "list exited $RC: $OUT"
+expect_in "This machine: NVIDIA GPU with 8 GiB VRAM, 32 GiB RAM"
+expect_row tiny gpu
+expect_row mid cpu
+expect_row huge no
+expect_in "needs 24 GiB VRAM to stay on the GPU; this GPU has 8 GiB, so the rest runs from RAM, slower"
+expect_in "needs 96 GiB RAM or 80 GiB VRAM; this machine has 32 GiB RAM and 8 GiB VRAM"
+expect_in "cachyos-agent local use best picks tiny."
+expect_calls nvidia-smi "--query-gpu=memory.total --format=csv,noheader,nounits"
+ok
+cleanup_sandbox
+
+begin "list on a large machine fits everything and picks the strongest model"
+make_sandbox
+make_tree
+set_machine "49152 49152" 128
+run local list
+expect_in "NVIDIA GPU with 96 GiB VRAM, 128 GiB RAM"
+expect_row huge gpu
+expect_row mid gpu
+expect_row tiny gpu
+expect_in "cachyos-agent local use best picks huge."
+ok
+cleanup_sandbox
+
+begin "list without a GPU runs models from RAM and says so"
+make_sandbox
+make_tree
+set_machine none 20
+run local list
+expect_in "This machine: no supported GPU, 20 GiB RAM"
+expect_row tiny cpu
+expect_row mid no
+expect_in "no supported GPU, so it runs from the 20 GiB of RAM, slowly"
+expect_in "picks tiny."
+ok
+cleanup_sandbox
+
+begin "list reads AMD VRAM from sysfs and adds the cards together"
+make_sandbox
+make_tree
+set_machine none 16
+add_amd_card 0 17179869184
+add_amd_card 1 8589934592
+mkdir -p "$SANDBOX/drm/card2/device" # an Intel card has no mem_info_vram_total
+run local list
+expect_in "This machine: AMD GPU with 24 GiB VRAM, 16 GiB RAM"
+expect_row mid gpu
+expect_row tiny gpu
+expect_in "picks mid."
+ok
+cleanup_sandbox
+
+begin "list when nothing fits says so, and use best refuses"
+make_sandbox
+make_tree
+set_machine none 4
+run local list
+expect_row tiny no
+expect_row huge no
+expect_in "No recipe fits this machine."
+run local use best
+((RC == 1)) || fail "use best exited $RC on a machine nothing fits"
+expect_in "no recipe fits this machine"
+expect_no_calls ollama
+ok
+cleanup_sandbox
+
+begin "list marks the active model"
+make_sandbox
+make_tree
+set_machine 8188 32
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+run local list
+grep -Eq '^\* mid ' <<<"$OUT" || fail "mid is not marked active: $OUT"
+grep -Eq '^  tiny ' <<<"$OUT" || fail "tiny is marked active: $OUT"
+expect_in "* marks the model cachyos-agent launch --local opens an agent on."
+ok
+cleanup_sandbox
+
+begin "a malformed or duplicate recipe row stops with its line number"
+make_sandbox
+set_machine 8188 32
+rows=(
+  $'broken\tbroken:1b\tmany\t16\t32768\tvram is not a number'
+  $'broken\tbroken:1b\t8\tmany\t32768\tram is not a number'
+  $'broken\tbroken:1b\t8\t16\tbig\tcontext is not a number'
+  $'broken\tbroken:1b\t8\t16\t32768'
+  $'broken\tbroken:1b\t8\t16\t32768\t'
+  $'Broken\tbroken:1b\t8\t16\t32768\tid has a capital'
+  $'broken\ttwo words\t8\t16\t32768\tmodel has a space'
+  'broken broken:1b 8 16 32768 spaces instead of tabs'
+)
+for row in "${rows[@]}"; do
+  make_tree
+  printf '%s\n' "$row" >>"$TREE/data/local-models.tsv"
+  run local list
+  ((RC == 1)) || fail "row '$row' exited $RC"
+  expect_in "local-models.tsv:6: malformed recipe row"
+done
+make_tree
+printf 'tiny\tother:2b\t8\t16\t32768\tsame id again\n' >>"$TREE/data/local-models.tsv"
+run local list
+((RC == 1)) || fail "duplicate id exited $RC"
+expect_in "local-models.tsv:6: duplicate recipe id tiny"
+make_tree
+printf '# only a comment\n\n' >"$TREE/data/local-models.tsv"
+run local list
+((RC == 1)) || fail "an empty recipe file exited $RC"
+expect_in "has no recipes"
+ok
+cleanup_sandbox
+
+begin "RAM is MemTotal rounded to the nearest GiB, as a 64 GiB machine reports 63"
+make_sandbox
+make_tree
+set_machine none 1
+printf 'MemTotal:       65665276 kB\nMemFree:           1024 kB\n' >"$SANDBOX/meminfo"
+run local list
+expect_in "no supported GPU, 63 GiB RAM"
+printf 'MemTotal:       33134387 kB\n' >"$SANDBOX/meminfo"
+run local list
+expect_in "32 GiB RAM"
+expect_row mid cpu
+ok
+cleanup_sandbox
+
+# ---- use ------------------------------------------------------------------------
+
+begin "use best downloads the model, builds it with the recipe's context and records it as active"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+export OLLAMA_HOST=elsewhere:9
+run local use best
+((RC == 0)) || fail "use best exited $RC: $OUT"
+expect_in "Best fit for this machine: tiny"
+expect_in "cachyos-agent launch --local"
+expect_in "http://127.0.0.1:11434/v1"
+[[ $(calls ollama) == "list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
+  || fail "ollama calls were: $(calls ollama)"
+[[ $(<"$SANDBOX/modelfile") == $'FROM tiny:1b\nPARAMETER num_ctx 32768' ]] || fail "Modelfile was: $(<"$SANDBOX/modelfile")"
+[[ $(<"$SANDBOX/host") == 127.0.0.1:11434 ]] || fail "ollama talked to $(<"$SANDBOX/host") instead of the endpoint it prints"
+[[ $(<"$(state_dir)/active") == tiny ]] || fail "active is not tiny"
+expect_no_calls sudo
+compgen -G "$(state_dir)/Modelfile.*" >/dev/null && fail "a temporary Modelfile was left behind"
+unset OLLAMA_HOST
+run local use best
+((RC == 0)) || fail "running use a second time exited $RC"
+[[ $(<"$(state_dir)/active") == tiny ]] || fail "active changed on the second run"
+ok
+cleanup_sandbox
+
+begin "use <id> on a model that only fits with help from RAM warns and goes ahead"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+run local use mid
+((RC == 0)) || fail "use mid exited $RC: $OUT"
+expect_in "Note: needs 24 GiB VRAM to stay on the GPU; this GPU has 8 GiB"
+expect_in "mid: the middle one"
+[[ $(<"$(state_dir)/active") == mid ]] || fail "active is not mid"
+[[ $(<"$SANDBOX/modelfile") == $'FROM mid:30b\nPARAMETER num_ctx 32768' ]] || fail "Modelfile was: $(<"$SANDBOX/modelfile")"
+ok
+cleanup_sandbox
+
+begin "use refuses a model that does not fit before touching anything"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+mkdir -p "$(state_dir)"
+printf 'tiny\n' >"$(state_dir)/active"
+run local use huge
+((RC == 1)) || fail "use huge exited $RC"
+expect_in "huge does not fit this machine: needs 96 GiB RAM or 80 GiB VRAM"
+expect_no_calls ollama
+expect_no_calls sudo
+[[ $(<"$(state_dir)/active") == tiny ]] || fail "active changed"
+ok
+cleanup_sandbox
+
+begin "use rejects unknown recipes, text that is not an id, and a wrong argument count"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+for bad in nope ../x '@' '*' 'a b' ''; do
+  run local use "$bad"
+  ((RC == 1)) || fail "use '$bad' exited $RC"
+  expect_in "unknown recipe"
+done
+run local use
+((RC == 2)) || fail "use with no argument exited $RC"
+expect_in "use needs best or a recipe id"
+run local use tiny mid
+((RC == 2)) || fail "use with two arguments exited $RC"
+expect_no_calls ollama
+expect_no_calls sudo
+ok
+cleanup_sandbox
+
+begin "use keeps the previous active model when the download or the model build fails"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+: >"$SANDBOX/pull-fails"
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+run local use tiny
+((RC != 0)) || fail "use exited 0 although the pull failed"
+expect_in "pull failed"
+[[ $(<"$(state_dir)/active") == mid ]] || fail "active changed to $(<"$(state_dir)/active")"
+[[ $(calls ollama) != *create* ]] || fail "a model was created after a failed pull"
+rm "$SANDBOX/pull-fails"
+: >"$SANDBOX/create-fails"
+run local use tiny
+((RC != 0)) || fail "use exited 0 although the model build failed"
+expect_in "create failed"
+[[ $(<"$(state_dir)/active") == mid ]] || fail "active changed to $(<"$(state_dir)/active")"
+compgen -G "$(state_dir)/Modelfile.*" >/dev/null && fail "a temporary Modelfile was left behind after a failed build"
+ok
+cleanup_sandbox
+
+begin "use asks before installing Ollama and stops on anything but yes"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+install_ollama
+for reply in n N no '' maybe; do
+  PATH=$NARROW answer "$reply" local use best
+  ((RC == 1)) || fail "reply '$reply' exited $RC"
+  expect_in "Install ollama-cuda with: sudo pacman -S --needed ollama-cuda"
+  expect_in "Ollama is required"
+done
+PATH=$NARROW run local use best
+((RC == 1)) || fail "end of input exited $RC"
+expect_in "Ollama is required"
+expect_no_calls sudo
+expect_no_calls pacman
+[[ ! -e $(state_dir)/active ]] || fail "active was written without Ollama"
+ok
+cleanup_sandbox
+
+begin "the package to install follows the GPU: CUDA, ROCm, or plain ollama"
+make_sandbox
+make_tree
+fake_service
+install_ollama
+set_machine 8188 32
+PATH=$NARROW answer n local use best
+expect_in "sudo pacman -S --needed ollama-cuda"
+set_machine none 32
+add_amd_card 0 17179869184
+PATH=$NARROW answer n local use best
+expect_in "sudo pacman -S --needed ollama-rocm"
+set_machine none 32
+rm -rf -- "$SANDBOX/drm"
+PATH=$NARROW answer n local use best
+expect_in "Install ollama with: sudo pacman -S --needed ollama"$'\n'
+expect_no_calls sudo
+ok
+cleanup_sandbox
+
+begin "answering y installs the package with sudo, starts the service, then sets the model up"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+install_ollama
+PATH=$NARROW answer y local use best
+((RC == 0)) || fail "use best exited $RC: $OUT"
+expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl enable --now ollama.service"
+[[ $(calls ollama) == "list"$'\n'"list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
+  || fail "ollama calls were: $(calls ollama)"
+[[ $(<"$(state_dir)/active") == tiny ]] || fail "active is not tiny"
+[[ $OUT != *--noconfirm* ]] || fail "the install ran with --noconfirm"
+ok
+cleanup_sandbox
+
+begin "use starts the service when the server does not answer"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+run local use tiny
+((RC == 0)) || fail "use exited $RC: $OUT"
+expect_calls sudo "systemctl enable --now ollama.service"
+[[ -e $SANDBOX/running ]] || fail "the service was not started"
+ok
+cleanup_sandbox
+
+begin "use gives up with the journal command when the service never answers"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+stub ollama 'exit 1'
+run local use tiny
+((RC == 1)) || fail "use exited $RC"
+expect_in "did not answer after 30 seconds; see: journalctl -u ollama.service"
+[[ $(calls ollama) != *pull* ]] || fail "pulled without a server"
+[[ ! -e $(state_dir)/active ]] || fail "active was written"
+ok
+cleanup_sandbox
+
+# ---- start, stop, status, remove ---------------------------------------------------
+
+begin "start runs the service through sudo, and does nothing when it already answers"
+make_sandbox
+make_tree
+fake_service
+run local start
+((RC == 0)) || fail "start exited $RC: $OUT"
+expect_calls sudo "systemctl start ollama.service"
+expect_in "Ollama is running at http://127.0.0.1:11434/v1"
+run local start
+expect_in "already running"
+expect_calls sudo "systemctl start ollama.service"
+ok
+cleanup_sandbox
+
+begin "start without Ollama installed points at use"
+make_sandbox
+make_tree
+fake_service
+install_ollama
+PATH=$NARROW run local start
+((RC == 1)) || fail "start exited $RC"
+expect_in "run: cachyos-agent local use best"
+expect_no_calls sudo
+ok
+cleanup_sandbox
+
+begin "stop runs the service through sudo, and does nothing when it is not running"
+make_sandbox
+make_tree
+fake_service
+: >"$SANDBOX/running"
+run local stop
+((RC == 0)) || fail "stop exited $RC: $OUT"
+expect_calls sudo "systemctl stop ollama.service"
+[[ ! -e $SANDBOX/running ]] || fail "the service is still running"
+run local stop
+expect_in "ollama.service is not running"
+expect_calls sudo "systemctl stop ollama.service"
+ok
+cleanup_sandbox
+
+begin "status shows the service, the endpoint, the active model and what is loaded"
+make_sandbox
+make_tree
+fake_service
+: >"$SANDBOX/running"
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+printf '%s\n' 'NAME        ID      SIZE   PROCESSOR  CONTEXT  UNTIL' 'mid:latest  abc123  19 GB  100% GPU   32768    4 minutes from now' >"$SANDBOX/ps"
+run local status
+((RC == 0)) || fail "status exited $RC: $OUT"
+expect_in "service:  active (ollama.service)"
+expect_in "endpoint: http://127.0.0.1:11434/v1"
+expect_in "active:   mid (mid:30b, 32K context)"
+expect_in "  mid:latest  abc123  19 GB  100% GPU   32768    4 minutes from now"
+printf '%s\n' 'NAME  ID  SIZE  PROCESSOR  CONTEXT  UNTIL' >"$SANDBOX/ps"
+run local status
+expect_in "loaded:   nothing"
+ok
+cleanup_sandbox
+
+begin "status reports a stopped service, no active model and a missing Ollama without failing"
+make_sandbox
+make_tree
+fake_service
+run local status
+((RC == 0)) || fail "status exited $RC"
+expect_in "service:  inactive (ollama.service)"
+expect_in "active:   none (set one with: cachyos-agent local use best)"
+expect_in "the server is not answering (cachyos-agent local start)"
+install_ollama
+PATH=$NARROW run local status
+((RC == 0)) || fail "status without ollama exited $RC"
+expect_in "not installed (cachyos-agent local use best installs it)"
+ok
+cleanup_sandbox
+
+begin "status shows an active name that is not a recipe as it is"
+make_sandbox
+make_tree
+fake_service
+: >"$SANDBOX/running"
+mkdir -p "$(state_dir)"
+printf 'my-own-model\n' >"$(state_dir)/active"
+run local status
+expect_in "active:   my-own-model"$'\n'
+ok
+cleanup_sandbox
+
+begin "remove deletes the model and its download and clears active when it was the active one"
+make_sandbox
+make_tree
+fake_service
+: >"$SANDBOX/running"
+printf '%s\n' 'NAME         ID      SIZE   MODIFIED' 'mid:latest   aaa111  19 GB  1 hour ago' 'mid:30b      bbb222  19 GB  1 hour ago' 'tiny:1b      ccc333  1 GB   1 hour ago' >"$SANDBOX/installed"
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+run local remove mid
+((RC == 0)) || fail "remove exited $RC: $OUT"
+expect_in "Removed mid mid:30b"
+[[ $(calls ollama) == "list"$'\n'"rm mid"$'\n'"rm mid:30b" ]] || fail "ollama calls were: $(calls ollama)"
+[[ $(calls ollama) != *"rm tiny"* ]] || fail "tiny was removed too"
+[[ ! -e $(state_dir)/active ]] || fail "active survived removing its model"
+ok
+cleanup_sandbox
+
+begin "remove leaves active alone when another model is removed, and says when nothing is installed"
+make_sandbox
+make_tree
+fake_service
+: >"$SANDBOX/running"
+printf '%s\n' 'NAME      ID      SIZE   MODIFIED' 'tiny:1b   ccc333  1 GB   1 hour ago' >"$SANDBOX/installed"
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+run local remove tiny
+expect_in "Removed tiny:1b"
+[[ $(<"$(state_dir)/active") == mid ]] || fail "active changed"
+run local remove huge
+((RC == 0)) || fail "removing an absent model exited $RC"
+expect_in "huge is not installed; nothing to remove."
+ok
+cleanup_sandbox
+
+begin "remove refuses an unknown recipe, a stopped service and a missing Ollama"
+make_sandbox
+make_tree
+fake_service
+run local remove nope
+((RC == 1)) || fail "unknown recipe exited $RC"
+expect_in "unknown recipe: nope"
+run local remove tiny
+((RC == 1)) || fail "stopped service exited $RC"
+expect_in "start it first: cachyos-agent local start"
+run local remove
+((RC == 2)) || fail "no argument exited $RC"
+install_ollama
+PATH=$NARROW run local remove tiny
+((RC == 1)) || fail "missing Ollama exited $RC"
+expect_in "Ollama is not installed"
+[[ $(calls ollama) != *rm* ]] || fail "rm was called"
+ok
+cleanup_sandbox
+
+# ---- the dispatcher ---------------------------------------------------------------
+
+begin "the dispatcher lists the command, answers --help, and usage mistakes exit 2"
+make_sandbox
+jq -e '.commands | map(select(.route == "cachyos-agent local")) | length == 1 and (.[0].summary | length > 0)' \
+  <<<"$("$AGENT" commands --json)" >/dev/null || fail "local is not in commands --json with a summary"
+help=$("$AGENT" local --help)
+[[ $help == *"Usage: cachyos-agent local <command> [args]"* ]] || fail "--help did not print the usage"
+[[ $("$AGENT" local -h) == "$help" ]] || fail "-h differs from --help"
+for args in "" "frobnicate" "list extra" "start now" "stop now" "status now"; do
+  # shellcheck disable=SC2086 # the words are the point
+  if "$AGENT" local $args >/dev/null 2>&1; then fail "local $args exited 0"; fi
+  # shellcheck disable=SC2086
+  "$AGENT" local $args >/dev/null 2>&1 && rc=0 || rc=$?
+  ((rc == 2)) || fail "local $args exited $rc, not 2"
+done
+ok
+cleanup_sandbox
