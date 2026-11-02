@@ -7,6 +7,7 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 
 AGENT=$REPO_ROOT/bin/cachyos-agent
 UPDATE=$REPO_ROOT/bin/cachyos-agent-usage-update
+REPORT=$REPO_ROOT/bin/cachyos-agent-usage
 COLLECTORS=(claude codex grok kimi cursor grokbot copilot muse agy kimchi hermes devin vibe qwen
   opencode zai ollama minimax openrouter deepseek fireworks synthetic local)
 
@@ -203,7 +204,7 @@ make_root() {
   mkdir -p "$ROOT/bin" "$ROOT/lib"
   cp "$REPO_ROOT/lib/common.sh" "$ROOT/lib/"
   cp "$REPO_ROOT/VERSION" "$ROOT/"
-  cp "$UPDATE" "$AGENT" "$ROOT/bin/"
+  cp "$UPDATE" "$REPORT" "$AGENT" "$ROOT/bin/"
   USAGE=$XDG_STATE_HOME/cachyos-agent/usage
 }
 
@@ -327,5 +328,139 @@ make_root
 add_collector alpha "echo '{\"id\":\"alpha\",\"ready\":true,\"name\":\"Alpha\"}'"
 "$ROOT/bin/cachyos-agent" usage update alpha
 [[ -f $USAGE/alpha.json ]] || fail "no record written through the dispatcher"
+[[ $("$ROOT/bin/cachyos-agent" usage --json | jq -r '.[0].name') == Alpha ]] || fail "usage --json does not read what update wrote"
+ok
+cleanup_sandbox
+
+# ---- the report ------------------------------------------------------------------
+
+# write_record <agent> <jq args...> <jq program>: a record file in the sandbox.
+write_record() {
+  local agent=$1
+  shift
+  mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"
+  jq -n "$@" >"$XDG_STATE_HOME/cachyos-agent/usage/$agent.json"
+}
+
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+# Times lie 30 seconds beyond a minute boundary, so the seconds a test takes
+# do not change the minutes the report prints.
+# shellcheck disable=SC2016 # the $names in the programs are jq variables
+make_report_fixtures() {
+  local now
+  now=$(date +%s)
+  write_record claude --arg updated "$(iso "$now")" \
+    --arg session "$(iso $((now + 2 * 3600 + 13 * 60 + 30)))" \
+    --arg weekly "$(iso $((now + 4 * 86400 + 3 * 3600 + 5 * 60 + 30)))" '
+    {schemaVersion: 1, id: "claude", name: "Claude Code", ready: true, updatedAt: $updated,
+     tierLabel: "max 5x", usageStatusText: "", authHelpText: "",
+     limits: [{label: "Session (5-hour)", percent: 0.42, resetsAt: $session},
+              {label: "Weekly (7-day)", percent: 0.17, resetsAt: $weekly}],
+     limitsStale: false, limitsFetchedAt: 0, hasLocalStats: true, hasPromptStats: true,
+     todayPrompts: 12, totalPrompts: 340, todayTotalTokens: 1234567,
+     recentDays: ([range(0; 6) | {date: "d\(.)", messageCount: 200000}] + [{date: "d6", messageCount: 1234567}])}'
+  write_record codex --arg updated "$(iso $((now - 3 * 3600 - 30)))" \
+    --arg elapsed "$(iso $((now - 3600)))" --arg session "$(iso $((now + 20 * 60 + 30)))" \
+    --arg tomorrow "$(iso $((now + 86400 + 30)))" \
+    --argjson fetched "$(((now - 25 * 60 - 30) * 1000))" --argjson work_fetched "$(((now - 5 * 60 - 30) * 1000))" '
+    {schemaVersion: 1, id: "codex", name: "Codex", ready: true, updatedAt: $updated, tierLabel: "",
+     usageStatusText: "Sign-in expired", authHelpText: "Run `codex login` to authenticate.",
+     limits: [{label: "Weekly", percent: 0.9, resetsAt: $elapsed},
+              {label: "Session", percent: 0.5, resetsAt: $session},
+              {label: "Monthly", percent: 1, resetsAt: ""}],
+     limitsStale: true, limitsFetchedAt: $fetched,
+     accounts: [
+       {id: "work", label: "work", plan: "Pro", active: true, stale: true, fetchedAt: $work_fetched,
+        usageStatusText: "", authHelpText: "Limits paused",
+        limits: [{label: "Weekly", percent: 0.3, resetsAt: $tomorrow}]},
+       {id: "home", label: "home", plan: "Plus", active: false, limits: []}]}'
+  write_record deepseek '
+    {schemaVersion: 1, id: "deepseek", name: "DeepSeek", ready: true, tierLabel: "Prepaid", limits: [],
+     balance: {remaining: 3, funded: 0, spent: 0, currency: "CNY", estimated: true}}'
+  write_record kimi '{schemaVersion: 1, id: "kimi", name: "Kimi", ready: false, limits: []}'
+  write_record openrouter '
+    {schemaVersion: 1, id: "openrouter", name: "OpenRouter", ready: true, tierLabel: "Prepaid", limits: [],
+     balance: {remaining: 12.34, funded: 20, spent: 7.66, currency: "USD", estimated: false}}'
+}
+
+begin "the report shows limits, balances, tokens, prompts and stale records"
+make_sandbox
+make_report_fixtures
+expected=$(
+  cat <<'EOF'
+Claude Code  Max 5x
+  Session (5-hour)  42%  resets in 2h 13m
+  Weekly (7-day)    17%  resets in 4d 3h
+  Tokens            today 1.2M, this week 2.4M
+  Prompts           today 12, all time 340
+
+Codex  (updated 3h 0m ago)
+  Weekly   0%
+  Session  50%  resets in 20m
+  Monthly  100%
+  limits are stale (last checked 25m ago)
+  ! Sign-in expired: Run `codex login` to authenticate.
+  Accounts
+    work  Pro  (active)
+      Weekly  30%  resets in 1d 0h
+      limits are stale (last checked 5m ago)
+      ! Limits paused
+    home  Plus
+
+DeepSeek  Prepaid
+  Balance  about CNY 3.00 left
+
+OpenRouter  Prepaid
+  Balance  $12.34 left of $20.00 (spent $7.66)
+EOF
+)
+actual=$("$REPORT")
+[[ $actual == "$expected" ]] || { diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true; fail "the report differs from the expected text"; }
+[[ $("$AGENT" usage) == "$expected" ]] || fail "the report differs through the dispatcher"
+ok
+cleanup_sandbox
+
+begin "the report filters by agent name and says when one is not in use"
+make_sandbox
+make_report_fixtures
+out=$("$REPORT" kimi openrouter)
+[[ $out == $'Kimi: not in use on this machine\n\nOpenRouter  Prepaid\n  Balance  $12.34 left of $20.00 (spent $7.66)' ]] || fail "filtered report is wrong: $out"
+[[ $("$AGENT" usage -- openrouter) == *"OpenRouter  Prepaid"* && $("$AGENT" usage -- openrouter) != *Codex* ]] \
+  || fail "usage -- <agent> did not filter through the dispatcher"
+if "$REPORT" ghost 2>"$SANDBOX/err"; then fail "an agent without a record succeeded"; fi
+grep -q 'no usage record for: ghost' "$SANDBOX/err" || fail "missing record not explained: $(<"$SANDBOX/err")"
+if "$REPORT" --bogus 2>/dev/null; then fail "an unknown option was accepted"; fi
+if "$REPORT" '../x' 2>/dev/null; then fail "a path was accepted as an agent name"; fi
+ok
+cleanup_sandbox
+
+begin "usage --json prints the raw records as an array in file order"
+make_sandbox
+make_report_fixtures
+printf '{broken' >"$XDG_STATE_HOME/cachyos-agent/usage/aaa.json"
+json=$("$AGENT" usage --json 2>"$SANDBOX/err")
+is_json "$json" 'type == "array" and map(.id) == ["claude","codex","deepseek","kimi","openrouter"]' || fail "wrong ids or order: $(head -c 300 <<<"$json")"
+is_json "$json" '.[0].limits[0].percent == 0.42 and .[3].ready == false' || fail "records are not the raw ones"
+grep -q 'aaa.json' "$SANDBOX/err" || fail "the broken record was not reported"
+[[ $("$REPORT" --json openrouter kimi | jq -c 'map(.id)') == '["kimi","openrouter"]' ]] || fail "--json with names does not filter in file order"
+ok
+cleanup_sandbox
+
+begin "the report with no records says how to make some"
+make_sandbox
+out=$("$REPORT")
+[[ $out == *"cachyos-agent usage update"* ]] || fail "no hint: $out"
+[[ $("$REPORT" --json) == '[]' ]] || fail "--json without records is not an empty array"
+[[ $("$REPORT" --help) == "Usage: cachyos-agent usage [--json] [agent...]"* ]] || fail "no help text"
+ok
+cleanup_sandbox
+
+begin "the report copes with a record of the wrong shapes"
+make_sandbox
+mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"
+printf '%s\n' '{"id":"odd","name":"Odd","ready":true,"limits":"nope","recentDays":5,"accounts":"x","balance":7,"todayTotalTokens":"many","updatedAt":12,"tierLabel":3}' \
+  >"$XDG_STATE_HOME/cachyos-agent/usage/odd.json"
+[[ $("$REPORT") == Odd ]] || fail "a malformed record changed the report: $("$REPORT")"
 ok
 cleanup_sandbox
