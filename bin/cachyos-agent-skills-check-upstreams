@@ -7,13 +7,16 @@
 # Rows may scope the comparison to the paths the guidance actually relies on.
 set -euo pipefail
 
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
 usage() {
   cat <<'USAGE'
-Usage: cachyos-agent-skills-check-upstreams [ROOT]
+Usage: cachyos-agent skills check-upstreams [ROOT]
 
 Read ROOT/upstreams.tsv and compare each reviewed commit with the current
-official branch head. ROOT defaults to the checkout containing this script or
-to /usr/share/cachyos-agent-system for a packaged installation.
+official branch head. ROOT defaults to the data root of this installation: the
+checkout containing this script, or /usr/share/cachyos-agent when packaged.
 
 A row may carry a fifth column of space-separated paths. When the branch head
 moved but no commit in the reviewed range touches those paths, the row is
@@ -37,18 +40,7 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then
   exit 0
 fi
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if (( $# == 1 )); then
-  ROOT=$1
-elif [[ -f "$SCRIPT_DIR/../upstreams.tsv" ]]; then
-  ROOT=$SCRIPT_DIR/..
-elif [[ -f /usr/share/cachyos-agent-system/upstreams.tsv ]]; then
-  ROOT=/usr/share/cachyos-agent-system
-else
-  echo "upstreams.tsv not found beside the script or under /usr/share/cachyos-agent-system" >&2
-  exit 2
-fi
-ROOT=$(cd "$ROOT" && pwd)
+ROOT=$(cd "${1:-$CACHYOS_AGENT_ROOT}" && pwd)
 manifest="$ROOT/upstreams.tsv"
 
 if [[ ! -r "$manifest" ]]; then

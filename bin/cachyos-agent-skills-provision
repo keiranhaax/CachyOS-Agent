@@ -5,12 +5,15 @@
 # cachyos-agent:examples=cachyos-agent skills provision | cachyos-agent skills provision --force
 # Symlink every agents/skills/<name> directory into the common harness skill paths.
 # Contents track the source tree (ln -sfn). New skill directory names require a re-run.
-# Supports a development checkout or package-owned files under /usr/share.
+# Supports a development checkout or the package-owned data root.
 set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: cachyos-provision-agent-skills [--force] [SKILLS_DIR]
+Usage: cachyos-agent skills provision [--force] [SKILLS_DIR]
 
 Symlink each subdirectory of agents/skills/ into:
   ~/.agents/skills/<name>
@@ -20,9 +23,10 @@ Symlink each subdirectory of agents/skills/ into:
   ~/.gemini/config/skills/<name>
   ${HERMES_HOME:-$HOME/.hermes}/skills/<name>
 
-SKILLS_DIR defaults to ../agents/skills relative to this script, the packaged
-/usr/share/cachyos-agent-system/agents/skills path, or $CACHYOS_SKILLS_SRC when
-set. An explicit argument takes precedence over the environment variable.
+SKILLS_DIR defaults to $CACHYOS_SKILLS_SRC when set, otherwise to agents/skills
+under the data root: the checkout containing this script, or
+/usr/share/cachyos-agent when packaged. An explicit argument takes precedence
+over the environment variable.
 
 --force   Replace an existing skill directory only when dest/SKILL.md exists.
           The previous directory is moved to a timestamped sibling backup;
@@ -64,28 +68,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if (( ${#POSITIONAL[@]} > 1 )); then
   echo "too many arguments" >&2
   usage >&2
   exit 2
 fi
-if (( ${#POSITIONAL[@]} == 1 )); then
-  SRC=${POSITIONAL[0]}
-elif [[ -n ${CACHYOS_SKILLS_SRC:-} ]]; then
-  SRC=$CACHYOS_SKILLS_SRC
-else
-  checkout_src="$SCRIPT_DIR/../agents/skills"
-  packaged_src=/usr/share/cachyos-agent-system/agents/skills
-  if [[ -d "$checkout_src" ]]; then
-    SRC=$checkout_src
-  elif [[ -d "$packaged_src" ]]; then
-    SRC=$packaged_src
-  else
-    echo "skills directory not found beside the script or under /usr/share/cachyos-agent-system" >&2
-    exit 1
-  fi
-fi
+SRC=${POSITIONAL[0]:-${CACHYOS_SKILLS_SRC:-$CACHYOS_AGENT_ROOT/agents/skills}}
 
 if [[ ! -d "$SRC" ]]; then
   echo "skills directory not found: $SRC" >&2

@@ -6,9 +6,12 @@
 # Validate the skill tree: frontmatter, relative links, index sync, scripts.
 set -euo pipefail
 
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
 usage() {
   cat <<'USAGE'
-Usage: cachyos-agent-skills-validate [ROOT]
+Usage: cachyos-agent skills validate [ROOT]
 
 Validate a source tree before provisioning or releasing:
   - every agents/skills/<name>/ directory has SKILL.md with YAML frontmatter
@@ -17,10 +20,12 @@ Validate a source tree before provisioning or releasing:
     packaging/README.md, and the skill files resolves to an existing file
   - the AGENTS.md skill index and the SKILL.md topic index each reference
     every topic file, and reference nothing that does not exist
-  - every bin/ script is executable and passes bash -n
+  - every bin/ script is executable, parses (bash -n, or py_compile for
+    Python), and carries a cachyos-agent:summary comment unless it is hidden
+  - every lib/*.sh passes bash -n
 
-ROOT defaults to the checkout containing this script or to
-/usr/share/cachyos-agent-system for a packaged installation.
+ROOT defaults to the data root of this installation: the checkout containing
+this script, or /usr/share/cachyos-agent when packaged.
 
 Exit status: 0 valid, 1 one or more problems found, 2 the check could not run.
 USAGE
@@ -35,18 +40,7 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then
   exit 0
 fi
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if (( $# == 1 )); then
-  ROOT=$1
-elif [[ -d "$SCRIPT_DIR/../agents/skills" ]]; then
-  ROOT=$SCRIPT_DIR/..
-elif [[ -d /usr/share/cachyos-agent-system/agents/skills ]]; then
-  ROOT=/usr/share/cachyos-agent-system
-else
-  echo "skill source not found beside the script or under /usr/share/cachyos-agent-system" >&2
-  exit 2
-fi
-ROOT=$(cd "$ROOT" && pwd)
+ROOT=$(cd "${1:-$CACHYOS_AGENT_ROOT}" && pwd)
 
 if [[ ! -d "$ROOT/agents/skills" ]]; then
   echo "no agents/skills directory under $ROOT" >&2
@@ -167,11 +161,22 @@ if [[ -d "$ROOT/bin" ]]; then
     if [[ ! -x "$script" ]]; then
       problem "$rel_script: not executable"
     fi
-    if ! bash -n "$script" 2>/dev/null; then
-      problem "$rel_script: bash -n failed"
+    if ! ca_syntax_ok "$script"; then
+      problem "$rel_script: syntax check failed"
+    fi
+    header=$(head -n 80 "$script")
+    if ! grep -Eq '^#[[:space:]]*cachyos-agent:summary=[[:space:]]*[^[:space:]]' <<<"$header" &&
+       ! grep -Eq '^#[[:space:]]*cachyos-agent:hidden=true' <<<"$header"; then
+      problem "$rel_script: no cachyos-agent:summary comment (or mark it cachyos-agent:hidden=true)"
     fi
   done
 fi
+
+for lib in "$ROOT"/lib/*.sh; do
+  if ! bash -n "$lib" 2>/dev/null; then
+    problem "lib/${lib##*/}: bash -n failed"
+  fi
+done
 
 if (( problems > 0 )); then
   echo "$problems problem(s) found in $ROOT" >&2

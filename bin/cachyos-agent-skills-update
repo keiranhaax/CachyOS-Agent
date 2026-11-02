@@ -6,16 +6,19 @@
 # Safely update a Git-backed skill checkout and refresh harness symlinks.
 set -euo pipefail
 
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
 usage() {
   cat <<'USAGE'
-Usage: cachyos-agent-skills-update [ROOT]
+Usage: cachyos-agent skills update [ROOT]
 
 Fast-forward a clean Git checkout, validate that it has the expected skill,
 refresh harness symlinks, and check whether reviewed CachyOS upstream commits
-have changed. ROOT defaults to the checkout containing this script.
+have changed. ROOT defaults to the data root of this installation.
 
-Package-owned installations under /usr/share/cachyos-agent-system are updated
-by pacman; this command only refreshes their harness links and checks freshness.
+Package-owned installations under /usr/share/cachyos-agent are updated by
+pacman; this command only refreshes their harness links and checks freshness.
 USAGE
 }
 
@@ -28,18 +31,7 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then
   exit 0
 fi
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if (( $# == 1 )); then
-  ROOT=$1
-elif [[ -f "$SCRIPT_DIR/../agents/skills/cachyos/SKILL.md" ]]; then
-  ROOT=$SCRIPT_DIR/..
-elif [[ -f /usr/share/cachyos-agent-system/agents/skills/cachyos/SKILL.md ]]; then
-  ROOT=/usr/share/cachyos-agent-system
-else
-  echo "CachyOS agent source not found" >&2
-  exit 2
-fi
-ROOT=$(cd "$ROOT" && pwd)
+ROOT=$(cd "${1:-$CACHYOS_AGENT_ROOT}" && pwd)
 
 if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git_root=$(git -C "$ROOT" rev-parse --show-toplevel)
