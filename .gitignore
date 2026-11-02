@@ -8,3 +8,4 @@ src/
 repo/
 *.log
 *.tmp
+__pycache__/
