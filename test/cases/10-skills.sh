@@ -283,6 +283,12 @@ else
   done
   [[ $(readlink -f "$pkg/usr/bin/cachyos-provision-agent-skills") == "$staged/bin/cachyos-agent-skills-provision" ]] \
     || fail "the old provisioner name is not a symlink to the new one"
+  # Links made by cachyos-agent-system 0.1.x point into its data directory, which
+  # pacman removes when this package replaces it.
+  [[ -L $pkg/usr/share/cachyos-agent-system && $(readlink -f "$pkg/usr/share/cachyos-agent-system") == "$staged" ]] \
+    || fail "the old data directory is not a symlink to the new one"
+  [[ -f $pkg/usr/share/cachyos-agent-system/agents/skills/cachyos/SKILL.md ]] \
+    || fail "an old skill link would not resolve through the compatibility path"
   [[ -f $staged/lib/common.sh ]] || fail "lib/common.sh is missing from the data root"
   [[ -f $staged/AGENTS.md ]] || fail "AGENTS.md is missing from the data root"
   [[ -f $staged/upstreams.tsv ]] || fail "upstreams.tsv is missing from the data root"

@@ -48,7 +48,14 @@ package() {
     install -Dm755 "$script" "$datadir/bin/$name"
     ln -s "../share/$pkgname/bin/$name" "$pkgdir/usr/bin/$name"
   done
+
+  # Old names from cachyos-agent-system, which this package replaces. Skill
+  # links its users made point into /usr/share/cachyos-agent-system, a
+  # directory pacman removes with that package, so every link would dangle.
+  # The symlink keeps them resolving until each user re-runs the provisioner.
+  # pacman swaps the old package's directory for it in one transaction.
   ln -s cachyos-agent-skills-provision "$pkgdir/usr/bin/cachyos-provision-agent-skills"
+  ln -s "$pkgname" "$pkgdir/usr/share/cachyos-agent-system"
 
   # Whole directories, so a new feature needs no PKGBUILD edit.
   for dir in lib agents shell data; do

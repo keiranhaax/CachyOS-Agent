@@ -47,6 +47,12 @@ Inspect `/etc/pacman.conf` before changing it and include the repository fragmen
 
 See [`packaging/README.md`](packaging/README.md) for the repository trust boundary, signing details, and local-build procedure.
 
+### Upgrade from `cachyos-agent-system`
+
+`cachyos-agent` replaces `cachyos-agent-system` (0.1.x), so `pacman -Syu` removes the old package and installs the new one in one transaction. Skill links the old package's provisioner created point into `/usr/share/cachyos-agent-system`, which pacman removes. The package therefore ships two compatibility names: `/usr/share/cachyos-agent-system`, a symlink to `/usr/share/cachyos-agent`, and `/usr/bin/cachyos-provision-agent-skills`, which runs the provisioner. Existing links keep working through the symlink. Each user should still run `cachyos-agent skills provision` once to move them to the new path, because a later release drops the symlink.
+
+Check a link with `readlink ~/.claude/skills/cachyos`: a target under `cachyos-agent-system` has not been moved yet.
+
 ### Install from a Git checkout
 
 Keep the checkout in a stable location so its provisioned links remain valid.
@@ -60,6 +66,8 @@ cd ~/.local/share/cachyos-agent
 ```
 
 Run `./bin/cachyos-agent-skills-provision --help` for source and replacement options.
+
+A checkout from before 0.2.0 has `bin/cachyos-provision-agent-skills`, which no longer exists: only the package keeps that name. Running that checkout's own `skills update` fast-forwards it and then stops with `cachyos-provision-agent-skills is not installed`, before the upstream check. Run `./bin/cachyos-agent-skills-provision` once by hand; later updates use the new name.
 
 ## What provisioning changes
 

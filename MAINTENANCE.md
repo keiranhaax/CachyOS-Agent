@@ -44,6 +44,6 @@ Rows in `upstreams.tsv` may carry a fifth column of space-separated paths that s
 5. Confirm the `PACKAGE_SIGNING_KEY` repository secret holds the current maintainer signing key; the release fails without it. Confirm the **Signing key fingerprint** line in `README.md` matches that key. Key generation and rotation are documented in [`packaging/README.md`](packaging/README.md).
 6. Commit, then tag the exact commit as `v<VERSION>`. Never move a published release tag.
 7. Push the branch and tag. The release workflow builds as an unprivileged user, runs `namcap`, signs the package and the repository database, publishes the artifact, its signature, the checksum, and the public key, and updates the `repo` branch.
-8. Verify the GitHub Actions run and test `pacman -Syu cachyos-agent` from an enrolled CachyOS machine.
+8. Verify the GitHub Actions run and test `pacman -Syu cachyos-agent` from an enrolled CachyOS machine. Test the upgrade from the previous release, not only a fresh install, and confirm a skill link made by that release still resolves. The compatibility names in `PKGBUILD` (`/usr/share/cachyos-agent-system`, `/usr/bin/cachyos-provision-agent-skills`) stay until a release that says in its notes that they are gone.
 
 Do not claim that every CachyOS update automatically changes this prose. The dependable guarantee is that upstream movement is detected, reviewed releases are published, and pacman installs those reviewed releases.
