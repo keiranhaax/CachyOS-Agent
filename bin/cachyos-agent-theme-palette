@@ -1,0 +1,176 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-theme-color (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Print the Plasma color scheme as the palette agent themes are rendered from
+# cachyos-agent:args=[--file <kdeglobals>]
+# cachyos-agent:examples=cachyos-agent theme palette | cachyos-agent theme palette --file ~/.config/kdeglobals
+# cachyos-agent:hidden=true
+# Omarchy themes come with a colors.toml; Plasma's equivalent is the color
+# scheme in kdeglobals. This prints Omarchy's palette keys, one `key<TAB>#rrggbb`
+# per line, derived from it, so the agent templates need no changes beyond names.
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/theme.sh
+source "$CACHYOS_AGENT_ROOT/lib/theme.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent theme palette [--file <kdeglobals>]
+
+Print the palette of the active Plasma color scheme as key<TAB>#rrggbb lines.
+The file defaults to $XDG_CONFIG_HOME/kdeglobals. When it carries no color
+groups, the scheme named by [General] ColorScheme is read from the color-schemes
+directories of XDG_DATA_HOME and XDG_DATA_DIRS, and BreezeDark when that is
+not installed either.
+USAGE
+}
+
+file=${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/kdeglobals
+while (($# > 0)); do
+  case $1 in
+    --file)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      file=$2
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+ca_cmd_present kreadconfig6 || ca_die "kreadconfig6 not found; install kconfig"
+file=$(readlink -m -- "$file")
+
+# conf_color <file> <group> <key>: a KDE "r,g,b" entry as #rrggbb, or nothing
+# when the key is missing or is not a color. A trailing alpha channel is dropped.
+conf_color() {
+  local raw r g b
+  raw=$(kreadconfig6 --file "$1" --group "$2" --key "$3") || return 0
+  raw=${raw//[[:space:]]/}
+  [[ $raw =~ ^([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})(,[0-9]{1,3})?$ ]] || return 0
+  r=$((10#${BASH_REMATCH[1]})) g=$((10#${BASH_REMATCH[2]})) b=$((10#${BASH_REMATCH[3]}))
+  ((r < 256 && g < 256 && b < 256)) || return 0
+  printf '#%02x%02x%02x\n' "$r" "$g" "$b"
+}
+
+# scheme_file: the color scheme file to read when kdeglobals holds none. The
+# name comes from a config file and ends up in a path, so one with a slash in it
+# is ignored. Plasma looks schemes up in the XDG data directories, user first.
+scheme_file() {
+  local name candidate dir
+  local -a dirs system
+  name=$(kreadconfig6 --file "$file" --group General --key ColorScheme) || name=''
+  [[ $name =~ ^[^/]+$ && $name != .* ]] || name=''
+  IFS=: read -ra system <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  dirs=("${XDG_DATA_HOME:-$HOME/.local/share}" "${system[@]}")
+  for candidate in "$name" BreezeDark; do
+    [[ -n $candidate ]] || continue
+    for dir in "${dirs[@]}"; do
+      if [[ -r $dir/color-schemes/$candidate.colors ]]; then
+        printf '%s\n' "$dir/color-schemes/$candidate.colors"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+src=$file
+if [[ -z $(conf_color "$src" Colors:View BackgroundNormal) ]]; then
+  src=$(scheme_file) || ca_die "no color scheme found: $file has no color groups and BreezeDark is not installed"
+fi
+
+# pick <group> <key> [<group> <key>]...: the first of those entries of the
+# scheme that is a color.
+pick() {
+  local value
+  while (($# >= 2)); do
+    value=$(conf_color "$src" "$1" "$2")
+    if [[ -n $value ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+    shift 2
+  done
+  return 1
+}
+
+# need <group> <key>...: pick, or stop. Used as $(need ...), where the message
+# is printed and the failed assignment ends the script.
+need() {
+  pick "$@" || ca_die "$src has no color $1 $2"
+}
+
+bg=$(need Colors:View BackgroundNormal)
+fg=$(need Colors:View ForegroundNormal)
+neg=$(need Colors:View ForegroundNegative)
+pos=$(need Colors:View ForegroundPositive)
+neu=$(need Colors:View ForegroundNeutral)
+act=$(need Colors:View ForegroundActive Colors:View DecorationFocus)
+link=$(need Colors:View ForegroundLink)
+vis=$(need Colors:View ForegroundVisited)
+# The accent the user chose in System Settings lives in kdeglobals even when the
+# colors come from a scheme file.
+accent=$(conf_color "$file" General AccentColor)
+if [[ -z $accent ]]; then
+  accent=$(need Colors:View DecorationFocus Colors:Selection BackgroundNormal)
+fi
+win_bg=$(pick Colors:Window BackgroundNormal) || win_bg=$bg
+sel_bg=$(pick Colors:Selection BackgroundNormal) || sel_bg=$accent
+sel_fg=$(pick Colors:Selection ForegroundNormal) || sel_fg=$fg
+
+# Light or dark by the sum of the background's channels, as omarchy-theme-color
+# does. Mixes towards "extreme" make text stand out from either kind.
+if (( 16#${bg:1:2} + 16#${bg:3:2} + 16#${bg:5:2} > 382 )); then
+  theme_type=light extreme=#000000
+else
+  theme_type=dark extreme=#ffffff
+fi
+
+# The mapping, which is the whole policy. Right-hand sides are Plasma colors
+# (View is the content area, so its semantic colors are legible on bg):
+#   red=Negative  green=Positive  yellow=Neutral  blue=Active  magenta=Visited
+#   cyan=Link  (blue falls back to DecorationFocus)
+#   accent=[General] AccentColor, else the focus color
+#   selection*=Colors:Selection  lighter_background=Colors:Window
+# and mixes, written as {{ mix from towards amount }}:
+#   bright_*  the color 30% towards the foreground (more contrast, either theme)
+#   muted  the foreground 40% towards the background: borders, comments
+#   dark_foreground  the same at 25%: dim text that must stay readable
+#   dark_background  the background 25% towards black, as in Omarchy
+theme_render <(printf '%s\t%s\n' \
+  bg "$bg" fg "$fg" neg "$neg" pos "$pos" neu "$neu" act "$act" link "$link" vis "$vis" \
+  accent "$accent" win_bg "$win_bg" sel_bg "$sel_bg" sel_fg "$sel_fg" \
+  extreme "$extreme" theme_type "$theme_type") <<'MAP'
+background	{{ bg }}
+foreground	{{ fg }}
+accent	{{ accent }}
+muted	{{ mix fg bg 40% }}
+selection	{{ sel_bg }}
+selection_background	{{ sel_bg }}
+selection_foreground	{{ sel_fg }}
+red	{{ neg }}
+green	{{ pos }}
+yellow	{{ neu }}
+blue	{{ act }}
+magenta	{{ vis }}
+cyan	{{ link }}
+bright_red	{{ mix neg fg 30% }}
+bright_green	{{ mix pos fg 30% }}
+bright_yellow	{{ mix neu fg 30% }}
+bright_blue	{{ mix act fg 30% }}
+bright_magenta	{{ mix vis fg 30% }}
+bright_cyan	{{ mix link fg 30% }}
+bright_foreground	{{ mix fg extreme 50% }}
+dark_background	{{ mix bg #000000 25% }}
+lighter_background	{{ win_bg }}
+dark_foreground	{{ mix fg bg 25% }}
+theme_type	{{ theme_type }}
+MAP
