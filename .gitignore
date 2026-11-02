@@ -1,7 +1,7 @@
 *.pkg.tar.*
 *.pkg.tar.*.sig
 *.src.tar.*
-/cachyos-agent-system/
+/cachyos-agent/
 /dist/
 pkg/
 src/

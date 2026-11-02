@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-PROVISION="$REPO_ROOT/bin/cachyos-provision-agent-skills"
+PROVISION="$REPO_ROOT/bin/cachyos-agent-skills-provision"
 VALIDATE="$REPO_ROOT/bin/cachyos-agent-skills-validate"
 
 failures=0
@@ -184,28 +184,30 @@ ok
 # ---- package layout: staged package() keeps AGENTS.md links resolvable ------
 begin "package layout passes validation"
 SANDBOX=$(mktemp -d)
-mkdir -p "$SANDBOX/build/cachyos-agent-system"
+mkdir -p "$SANDBOX/build/cachyos-agent"
 for entry in agents bin packaging AGENTS.md README.md MAINTENANCE.md THIRD_PARTY_NOTICES.md LICENSE VERSION upstreams.tsv PKGBUILD; do
-  cp -a "$REPO_ROOT/$entry" "$SANDBOX/build/cachyos-agent-system/"
+  cp -a "$REPO_ROOT/$entry" "$SANDBOX/build/cachyos-agent/"
 done
 if ! (cd "$SANDBOX/build" \
       && bash -c 'set -euo pipefail
-                  source cachyos-agent-system/PKGBUILD
+                  source cachyos-agent/PKGBUILD
                   pkgdir=$1
                   package' _ "$SANDBOX/pkg" >/dev/null); then
   fail "package() failed to stage the layout"
 else
-  staged="$SANDBOX/pkg/usr/share/cachyos-agent-system"
+  staged="$SANDBOX/pkg/usr/share/cachyos-agent"
   "$VALIDATE" "$staged" >/dev/null 2>&1 \
     || fail "validator rejected the installed package layout"
-  [[ -x "$SANDBOX/pkg/usr/bin/cachyos-provision-agent-skills" ]] \
+  [[ -L "$SANDBOX/pkg/usr/bin/cachyos-agent-skills-provision" ]] \
     || fail "provisioner missing from /usr/bin"
+  [[ $(readlink "$SANDBOX/pkg/usr/bin/cachyos-provision-agent-skills") == cachyos-agent-skills-provision ]] \
+    || fail "compatibility symlink for the old provisioner name is missing"
   [[ -f "$staged/MAINTENANCE.md" ]] \
     || fail "MAINTENANCE.md is not resolvable beside AGENTS.md"
-  [[ -f "$SANDBOX/pkg/usr/share/doc/cachyos-agent-system/THIRD_PARTY_NOTICES.md" ]] \
+  [[ -f "$SANDBOX/pkg/usr/share/doc/cachyos-agent/THIRD_PARTY_NOTICES.md" ]] \
     || fail "THIRD_PARTY_NOTICES.md is missing from package documentation"
-  [[ -f "$staged/bin/cachyos-provision-agent-skills" ]] \
-    || fail "bin/cachyos-provision-agent-skills is not resolvable beside AGENTS.md"
+  [[ -f "$staged/bin/cachyos-agent-skills-provision" ]] \
+    || fail "bin/cachyos-agent-skills-provision is not resolvable beside AGENTS.md"
 fi
 rm -rf "$SANDBOX"
 ok

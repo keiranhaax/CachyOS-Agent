@@ -82,12 +82,12 @@ if [[ ! -f "$ROOT/agents/skills/cachyos/SKILL.md" ]]; then
   exit 1
 fi
 
-if [[ -x "$ROOT/bin/cachyos-provision-agent-skills" ]]; then
-  provisioner="$ROOT/bin/cachyos-provision-agent-skills"
-elif command -v cachyos-provision-agent-skills >/dev/null 2>&1; then
-  provisioner=$(command -v cachyos-provision-agent-skills)
+if [[ -x "$ROOT/bin/cachyos-agent-skills-provision" ]]; then
+  provisioner="$ROOT/bin/cachyos-agent-skills-provision"
+elif command -v cachyos-agent-skills-provision >/dev/null 2>&1; then
+  provisioner=$(command -v cachyos-agent-skills-provision)
 else
-  echo "cachyos-provision-agent-skills is not installed" >&2
+  echo "cachyos-agent-skills-provision is not installed" >&2
   exit 1
 fi
 if [[ -x "$ROOT/bin/cachyos-agent-skills-check-upstreams" ]]; then

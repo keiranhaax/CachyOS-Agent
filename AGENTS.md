@@ -28,6 +28,6 @@ Read the matching topic before starting that class of work:
 - [`agents/skills/cachyos/packaging.md`](agents/skills/cachyos/packaging.md) — CachyOS-PKGBUILDS, march/LTO/PGO (deep authoring lives only here)
 - [`agents/skills/cachyos/handheld.md`](agents/skills/cachyos/handheld.md) — Handheld Edition, `linux-cachyos-deckify`, `scx_lavd`
 
-Install the skill into local harness directories with [`bin/cachyos-provision-agent-skills`](bin/cachyos-provision-agent-skills).
+Install the skill into local harness directories with [`bin/cachyos-agent-skills-provision`](bin/cachyos-agent-skills-provision).
 
 Repository releases and upstream review are documented in [`MAINTENANCE.md`](MAINTENANCE.md). Never auto-rewrite guidance from fetched documentation and never pull Git as root from a pacman hook.

@@ -23,7 +23,7 @@ jobs:
         run: pacman -Syu --noconfirm shellcheck namcap
 
       - name: Shellcheck scripts
-        run: shellcheck bin/* test/run-tests
+        run: shellcheck -x bin/* lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
 
       - name: Validate skill tree
         run: ./bin/cachyos-agent-skills-validate

@@ -1,6 +1,6 @@
 # Pacman packaging
 
-`PKGBUILD` produces the architecture-independent `cachyos-agent-system` package. It installs reviewed, immutable source files under `/usr/share/cachyos-agent-system`, executable helpers under `/usr/bin`, documentation under `/usr/share/doc/cachyos-agent-system`, and the GPL license under `/usr/share/licenses/cachyos-agent-system`.
+`PKGBUILD` produces the architecture-independent `cachyos-agent` package. It installs reviewed, immutable source files under `/usr/share/cachyos-agent`, executable helpers under `/usr/bin`, documentation under `/usr/share/doc/cachyos-agent`, and the GPL license under `/usr/share/licenses/cachyos-agent`.
 
 The package never writes to a user's home directory. After installation, each user runs:
 
@@ -14,10 +14,10 @@ Build only from a release tag whose name matches `VERSION` and `pkgver`:
 
 ```bash
 makepkg -Ccf
-namcap PKGBUILD cachyos-agent-system-*.pkg.tar.zst
+namcap PKGBUILD cachyos-agent-[0-9]*.pkg.tar.zst
 ```
 
-Install the inspected artifact with `sudo pacman -U ./cachyos-agent-system-*.pkg.tar.zst`.
+Install the inspected artifact with `sudo pacman -U ./cachyos-agent-[0-9]*.pkg.tar.zst`.
 
 ## Update repository
 
@@ -28,7 +28,7 @@ Pushing a matching `v*` tag runs `.github/workflows/release.yml`. The workflow v
 Releases fail without a signing key. Generate a dedicated key without a passphrase (CI cannot answer pinentry prompts), keep the private key only in the GitHub Actions secret, and rotate it if it may have leaked:
 
 ```bash
-gpg --quick-generate-key 'cachyos-agent-system (package signing) <maintainer@example>' ed25519 sign never
+gpg --quick-generate-key 'cachyos-agent (package signing) <maintainer@example>' ed25519 sign never
 gpg --armor --export-secret-keys <fingerprint>   # store as the PACKAGE_SIGNING_KEY repository secret
 gpg --armor --export <fingerprint> > cachyos-agent-signing-key.asc
 ```
@@ -48,7 +48,7 @@ sudo pacman-key --lsign-key <fingerprint>
 sudo install -Dm644 packaging/pacman/cachyos-agent.conf /etc/pacman.d/cachyos-agent.conf
 grep -Fxq 'Include = /etc/pacman.d/cachyos-agent.conf' /etc/pacman.conf || \
   printf '\nInclude = /etc/pacman.d/cachyos-agent.conf\n' | sudo tee -a /etc/pacman.conf
-sudo pacman -Syu cachyos-agent-system
+sudo pacman -Syu cachyos-agent
 cachyos-provision-agent-skills
 ```
 

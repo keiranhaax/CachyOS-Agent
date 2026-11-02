@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shellcheck bin/* test/run-tests
+          shellcheck -x bin/* lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
           ./bin/cachyos-agent-skills-validate
           ./test/run-tests
 
@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          mapfile -t packages < <(compgen -G 'cachyos-agent-[0-9]*.pkg.tar.zst')
           [[ ${#packages[@]} -eq 1 ]]
           namcap PKGBUILD "${packages[0]}"
           bsdtar -tf "${packages[0]}" | sort
@@ -99,7 +99,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          mapfile -t packages < <(compgen -G 'cachyos-agent-[0-9]*.pkg.tar.zst')
           assets=("${packages[0]}" "${packages[0]}.sig" SHA256SUMS.pkg cachyos-agent-signing-key.asc)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
@@ -118,7 +118,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t packages < <(compgen -G 'cachyos-agent-system-*.pkg.tar.zst')
+          mapfile -t packages < <(compgen -G 'cachyos-agent-[0-9]*.pkg.tar.zst')
           package_file=${packages[0]##*/}
           publish_dir=$(mktemp -d)
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
