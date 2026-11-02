@@ -269,3 +269,243 @@ dark_colors "$XDG_CONFIG_HOME/kdeglobals"
 if "$AGENT" commands | grep -q 'theme palette'; then fail "palette is not hidden"; fi
 ok
 cleanup_sandbox
+
+# ---- theme sync --------------------------------------------------------------
+
+SYNC=$REPO_ROOT/bin/cachyos-agent-theme-sync
+
+# sync_env: a sandbox with the dark scheme, kreadconfig6 and hermes stubs, and
+# the state directory the sync renders into in $THEME.
+sync_env() {
+  make_sandbox
+  stub kreadconfig6 "$KREAD_STUB"
+  stub hermes ''
+  dark_colors "$XDG_CONFIG_HOME/kdeglobals"
+  THEME=$XDG_STATE_HOME/cachyos-agent/theme
+}
+
+# make_agents: the config directories of all four agents, as after each has run once.
+make_agents() {
+  mkdir -p "$HOME/.claude" "$HOME/.hermes/profiles/work" "$HOME/.hermes/profiles/team" "$HOME/.pi/agent" "$XDG_CONFIG_HOME/opencode"
+  : >"$HOME/.hermes/config.yaml"
+}
+
+# make_tree: $TREE, a private copy of the runtime whose templates a case may break.
+make_tree() {
+  TREE=$SANDBOX/tree
+  mkdir -p "$TREE"
+  cp -r "$REPO_ROOT/bin" "$REPO_ROOT/lib" "$REPO_ROOT/data" "$REPO_ROOT/VERSION" "$TREE/"
+}
+
+begin "sync renders every template with the palette into the state directory and publishes nowhere else"
+sync_env
+"$AGENT" theme sync >"$SANDBOX/out"
+for file in hermes.yaml claude.json pi.json opencode.json palette.tsv; do
+  [[ -s $THEME/$file ]] || fail "$file was not rendered"
+done
+if grep -rl '{{' "$THEME"; then fail "a placeholder survived rendering"; fi
+for file in claude pi opencode; do jq -e . "$THEME/$file.json" >/dev/null || fail "$file.json does not parse"; done
+[[ $(jq -r '.name, .base, .overrides.claude, .overrides.diffAdded, .overrides.inactive' "$THEME/claude.json") == $'CachyOS\ndark\n#926ed6\n#172d23\n#9fa0a1' ]] \
+  || fail "claude.json has the wrong values"
+[[ $(jq -r '.name, .vars.accent, .vars.selectedBackground, .colors.accent' "$THEME/pi.json") == $'cachyos\n#926ed6\n#302942\naccent' ]] \
+  || fail "pi.json has the wrong values"
+[[ $(jq -r '.theme | length, .borderActive, .diffAddedBg' "$THEME/opencode.json") == $'50\n#926ed6\n#172d23' ]] \
+  || fail "opencode.json has the wrong values"
+[[ $(sed -n 1,3p "$THEME/hermes.yaml") == $'name: cachyos\ndescription: CachyOS Plasma color scheme\ncolors:' ]] || fail "hermes.yaml has the wrong header"
+grep -qx '  ui_primary: "#926ed6"' "$THEME/hermes.yaml" || fail "hermes.yaml has the wrong accent"
+if sed 1,3d "$THEME/hermes.yaml" | grep -vqE '^  [a-z_]+: "#[0-9a-f]{6}"$'; then fail "hermes.yaml has a line that is not a color"; fi
+[[ ! -e $HOME/.claude && ! -e $HOME/.hermes && ! -e $HOME/.pi && ! -e $XDG_CONFIG_HOME/opencode ]] || fail "an agent directory was created without --activate"
+[[ $(grep -c skipped "$SANDBOX/out") == 4 ]] || fail "each missing agent should be reported as skipped: $(<"$SANDBOX/out")"
+ok
+cleanup_sandbox
+
+begin "sync follows the scheme: a light one renders a light base and new colors"
+sync_env
+"$SYNC" >/dev/null
+light_colors "$XDG_CONFIG_HOME/kdeglobals"
+"$SYNC" >/dev/null
+[[ $(jq -r '.base, .overrides.claude, .overrides.diffAdded' "$THEME/claude.json") == $'light\n#3daee9\n#dff3e7' ]] || fail "claude.json did not follow the light scheme"
+[[ $(jq -r '.vars.selectedBackground' "$THEME/pi.json") == '#d4edfa' ]] || fail "pi.json did not follow the light scheme"
+ok
+cleanup_sandbox
+
+begin "sync publishes to existing agents, every Hermes profile included, and a second run changes nothing"
+sync_env
+make_agents
+"$AGENT" theme sync >/dev/null
+published=("$HOME/.claude/themes/cachyos.json" "$HOME/.pi/agent/themes/cachyos.json" "$XDG_CONFIG_HOME/opencode/themes/cachyos.json")
+for file in "${published[@]}"; do
+  case $file in */.claude/*) base=claude.json ;; */.pi/*) base=pi.json ;; *) base=opencode.json ;; esac
+  cmp -s "$file" "$THEME/$base" || fail "$file differs from the rendered theme"
+done
+for skin in "$HOME/.hermes/skins/cachyos.yaml" "$HOME/.hermes/profiles/work/skins/cachyos.yaml" "$HOME/.hermes/profiles/team/skins/cachyos.yaml"; do
+  cmp -s "$skin" "$THEME/hermes.yaml" || fail "$skin differs from the rendered skin"
+done
+[[ ! -e $HOME/.claude/settings.json && ! -e $HOME/.pi/agent/settings.json && ! -e $XDG_CONFIG_HOME/opencode/tui.json ]] || fail "settings were written without --activate"
+[[ ! -e $SANDBOX/calls/hermes ]] || fail "hermes was run without --activate"
+before=$(stat -c %i "${published[@]}" "$HOME/.hermes/skins/cachyos.yaml")
+"$SYNC" >"$SANDBOX/out"
+[[ $(stat -c %i "${published[@]}" "$HOME/.hermes/skins/cachyos.yaml") == "$before" ]] || fail "an unchanged theme was written again"
+[[ $(grep -c unchanged "$SANDBOX/out") == 6 ]] || fail "expected six unchanged reports: $(<"$SANDBOX/out")"
+light_colors "$XDG_CONFIG_HOME/kdeglobals"
+"$SYNC" >/dev/null
+[[ $(jq -r .base "$HOME/.claude/themes/cachyos.json") == light ]] || fail "a changed scheme was not published"
+ok
+cleanup_sandbox
+
+begin "sync leaves Hermes alone until it has run, and honors the agents' own directory variables"
+sync_env
+mkdir -p "$HOME/.hermes"
+"$SYNC" >"$SANDBOX/out"
+[[ ! -e $HOME/.hermes/skins ]] || fail "a skin was published before Hermes had a config.yaml"
+grep -q 'hermes: skipped' "$SANDBOX/out" || fail "no skip report for Hermes"
+export HERMES_HOME=$SANDBOX/hermes-alt CLAUDE_CONFIG_DIR=$SANDBOX/claude-alt PI_CODING_AGENT_DIR=$SANDBOX/pi-alt
+mkdir -p "$HERMES_HOME" "$CLAUDE_CONFIG_DIR" "$PI_CODING_AGENT_DIR"
+: >"$HERMES_HOME/config.yaml"
+"$SYNC" >/dev/null
+for file in "$HERMES_HOME/skins/cachyos.yaml" "$CLAUDE_CONFIG_DIR/themes/cachyos.json" "$PI_CODING_AGENT_DIR/themes/cachyos.json"; do
+  [[ -s $file ]] || fail "$file was not published"
+done
+unset HERMES_HOME CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR
+ok
+cleanup_sandbox
+
+begin "sync --activate sets each agent's theme, keeps its other settings and creates what is missing"
+sync_env
+mkdir -p "$HOME/.claude" "$HOME/.hermes"
+: >"$HOME/.hermes/config.yaml"
+printf '{"model":"opus","theme":"dark","permissions":{"allow":["Bash(ls)"]},"env":{"A":"1"}}' >"$HOME/.claude/settings.json"
+"$AGENT" theme sync --activate >/dev/null
+[[ $(jq -c . "$HOME/.claude/settings.json") == '{"model":"opus","theme":"custom:cachyos","permissions":{"allow":["Bash(ls)"]},"env":{"A":"1"}}' ]] \
+  || fail "claude settings.json changed more than the theme: $(jq -c . "$HOME/.claude/settings.json")"
+[[ $(<"$SANDBOX/calls/hermes") == $'skin\nuse\ncachyos' ]] || fail "hermes was not called with 'skin use cachyos': $(<"$SANDBOX/calls/hermes")"
+[[ $(jq -c . "$HOME/.pi/agent/settings.json") == '{"theme":"cachyos"}' ]] || fail "pi settings were not created"
+[[ $(jq -c . "$XDG_CONFIG_HOME/opencode/tui.json") == '{"theme":"cachyos"}' ]] || fail "opencode tui.json was not created"
+for file in "$HOME/.pi/agent/themes/cachyos.json" "$XDG_CONFIG_HOME/opencode/themes/cachyos.json"; do
+  [[ -s $file ]] || fail "$file was not published"
+done
+"$SYNC" --activate >"$SANDBOX/out"
+[[ $(grep -c 'unchanged .*settings.json\|unchanged .*tui.json' "$SANDBOX/out") == 3 ]] || fail "a second --activate rewrote a setting: $(<"$SANDBOX/out")"
+ok
+cleanup_sandbox
+
+begin "sync --activate keeps a symlinked settings file linked and updates other keys in tui.json"
+sync_env
+mkdir -p "$HOME/.claude" "$XDG_CONFIG_HOME/opencode" "$SANDBOX/dotfiles"
+printf '{"theme":"dark","model":"opus"}\n' >"$SANDBOX/dotfiles/settings.json"
+ln -s "$SANDBOX/dotfiles/settings.json" "$HOME/.claude/settings.json"
+printf '{"keybinds":{"leader":"ctrl+x"},"theme":"tokyonight","scroll_speed":3}\n' >"$XDG_CONFIG_HOME/opencode/tui.json"
+"$SYNC" --activate >/dev/null
+[[ -L $HOME/.claude/settings.json ]] || fail "the symlinked settings.json was replaced by a file"
+[[ $(jq -c . "$SANDBOX/dotfiles/settings.json") == '{"theme":"custom:cachyos","model":"opus"}' ]] || fail "the link's target was not updated"
+[[ $(jq -c . "$XDG_CONFIG_HOME/opencode/tui.json") == '{"keybinds":{"leader":"ctrl+x"},"theme":"cachyos","scroll_speed":3}' ]] || fail "tui.json lost a key"
+ok
+cleanup_sandbox
+
+begin "sync --activate does not edit a tui.jsonc and leaves a settings file that is not JSON as it was"
+sync_env
+mkdir -p "$XDG_CONFIG_HOME/opencode" "$HOME/.claude"
+printf '{\n  // my theme\n  "theme": "nord"\n}\n' >"$XDG_CONFIG_HOME/opencode/tui.jsonc"
+printf '{"theme": "dark",}\n' >"$HOME/.claude/settings.json"
+status=0
+"$SYNC" --activate >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "a broken settings.json should fail the sync, got $status"
+[[ ! -e $XDG_CONFIG_HOME/opencode/tui.json ]] || fail "tui.json was created beside a tui.jsonc"
+grep -q 'not editing .*tui.jsonc' "$SANDBOX/out" || fail "no word about tui.jsonc"
+[[ $(<"$HOME/.claude/settings.json") == '{"theme": "dark",}' ]] || fail "the broken settings.json was modified"
+grep -q 'claude: cannot update' "$SANDBOX/err" || fail "no explanation for claude: $(<"$SANDBOX/err")"
+[[ -s $HOME/.claude/themes/cachyos.json && -s $HOME/.pi/agent/themes/cachyos.json ]] || fail "one failing agent stopped the others"
+grep -q 'theme sync failed for: claude' "$SANDBOX/err" || fail "the failure is not summarized"
+ok
+cleanup_sandbox
+
+begin "sync --activate reports a Hermes that refuses the skin, after publishing to the others"
+sync_env
+make_agents
+stub hermes 'exit 1'
+status=0
+"$SYNC" --activate >/dev/null 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "a failing 'hermes skin use' should fail the sync, got $status"
+grep -q "'hermes skin use cachyos' failed" "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+[[ $(jq -r .theme "$HOME/.claude/settings.json") == custom:cachyos ]] || fail "claude was not activated after hermes failed"
+ok
+cleanup_sandbox
+
+begin "sync --only limits the work, and an unknown target exits 2 before any work"
+sync_env
+make_agents
+"$SYNC" --only claude,pi >/dev/null
+[[ -s $HOME/.claude/themes/cachyos.json && -s $HOME/.pi/agent/themes/cachyos.json ]] || fail "a requested agent was skipped"
+[[ ! -e $HOME/.hermes/skins && ! -e $XDG_CONFIG_HOME/opencode/themes ]] || fail "an agent that was not requested got the theme"
+[[ ! -e $THEME/hermes.yaml && ! -e $THEME/opencode.json ]] || fail "a template that was not requested was rendered"
+rm -rf "$THEME"
+for bad in 'claude,vim' '' ',claude' '@'; do
+  status=0
+  "$SYNC" --only "$bad" >/dev/null 2>&1 || status=$?
+  ((status == 2)) || fail "--only '$bad' exited $status, not 2"
+done
+[[ ! -e $THEME ]] || fail "a rejected argument still rendered"
+status=0
+"$SYNC" --bogus >/dev/null 2>&1 || status=$?
+((status == 2)) || fail "an unknown option exited $status, not 2"
+"$SYNC" --help | grep -q '^Usage: cachyos-agent theme sync' || fail "no usage"
+ok
+cleanup_sandbox
+
+begin "sync publishes nothing a template renders badly: a skin that is not plain colors, JSON that does not parse"
+sync_env
+make_agents
+make_tree
+"$TREE/bin/cachyos-agent-theme-sync" >/dev/null
+good_skin=$(<"$HOME/.hermes/skins/cachyos.yaml")
+dark_good=$(<"$HOME/.claude/themes/cachyos.json")
+light_colors "$XDG_CONFIG_HOME/kdeglobals" # so that publishing anything now would show
+for tamper in 's/^  ui_text: "{{ foreground }}"/  ui_text: "{{ foreground }}; evil"/' \
+  's/^description: .*/description: CachyOS: not plain/' \
+  's/^name: cachyos/name: other/' \
+  's/^  background:/  Background:/' \
+  's/^name: cachyos/# a comment hiding a U+2028 line break: \xe2\x80\xa8\nname: cachyos/'; do
+  cp "$REPO_ROOT/data/themed/hermes.yaml.tpl" "$TREE/data/themed/hermes.yaml.tpl"
+  sed -i "$tamper" "$TREE/data/themed/hermes.yaml.tpl"
+  status=0
+  "$TREE/bin/cachyos-agent-theme-sync" --only hermes >/dev/null 2>"$SANDBOX/err" || status=$?
+  ((status == 1)) || fail "tamper '$tamper' was accepted (status $status)"
+  grep -q 'not a plain color palette' "$SANDBOX/err" || fail "tamper '$tamper': $(<"$SANDBOX/err")"
+  [[ $(<"$HOME/.hermes/skins/cachyos.yaml") == "$good_skin" ]] || fail "tamper '$tamper' was published"
+done
+cp "$REPO_ROOT/data/themed/claude.json.tpl" "$TREE/data/themed/claude.json.tpl"
+sed -i 's/"base": "{{ theme_type }}",/"base": {{ theme_type }},/' "$TREE/data/themed/claude.json.tpl"
+status=0
+"$TREE/bin/cachyos-agent-theme-sync" --only claude >/dev/null 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "JSON that does not parse was accepted"
+grep -q 'does not parse' "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+[[ $(<"$HOME/.claude/themes/cachyos.json") == "$dark_good" ]] || fail "the broken theme was published"
+sed -i 's/"base": {{ theme_type }},/"base": "{{ no_such_color }}",/' "$TREE/data/themed/claude.json.tpl"
+if "$TREE/bin/cachyos-agent-theme-sync" --only claude >/dev/null 2>"$SANDBOX/err"; then fail "an unknown palette key was accepted"; fi
+grep -q 'unknown palette key "no_such_color"' "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+ok
+cleanup_sandbox
+
+begin "sync stops and publishes nothing when there is no palette"
+sync_env
+make_agents
+"$SYNC" >/dev/null
+before=$(<"$HOME/.claude/themes/cachyos.json")
+export XDG_DATA_HOME=$HOME/.local/share XDG_DATA_DIRS=$SANDBOX/share
+rm "$XDG_CONFIG_HOME/kdeglobals"
+status=0
+"$SYNC" >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+unset XDG_DATA_HOME XDG_DATA_DIRS
+((status == 1)) || fail "sync without a palette exited $status"
+grep -q 'no color scheme found' "$SANDBOX/err" || fail "the palette's reason was lost: $(<"$SANDBOX/err")"
+[[ $(<"$HOME/.claude/themes/cachyos.json") == "$before" && ! -s $SANDBOX/out ]] || fail "something was published without a palette"
+ok
+cleanup_sandbox
+
+begin "the theme group help lists sync and hides the palette"
+make_sandbox
+help=$("$AGENT" theme --help)
+[[ $help == *'cachyos-agent theme sync [--activate] [--only hermes,claude,pi,opencode]'* ]] || fail "sync is missing from the group help"
+[[ $help != *palette* ]] || fail "the hidden palette is listed"
+ok
+cleanup_sandbox
