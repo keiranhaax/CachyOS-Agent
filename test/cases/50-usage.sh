@@ -5,6 +5,8 @@
 # shellcheck source=../lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 
+AGENT=$REPO_ROOT/bin/cachyos-agent
+UPDATE=$REPO_ROOT/bin/cachyos-agent-usage-update
 COLLECTORS=(claude codex grok kimi cursor grokbot copilot muse agy kimchi hermes devin vibe qwen
   opencode zai ollama minimax openrouter deepseek fireworks synthetic local)
 
@@ -23,6 +25,9 @@ collect() {
 
 # is_json <json> <jq filter>: the filter is true for the document.
 is_json() { jq -e "$2" >/dev/null <<<"$1"; }
+
+# calls <cmd>: the calls a stub recorded, one line per call.
+calls() { awk -v RS= '{ gsub(/\n/, " "); print }' "$SANDBOX/calls/$1"; }
 
 # ---- the Python files -----------------------------------------------------------
 
@@ -186,5 +191,141 @@ printf 'this is not a database, just a long enough text to look like one to sqli
 record=$(collect hermes --force)
 is_json "$record" '.ready == true and .usageStatusText == "Hermes unavailable"' \
   || fail "unreadable database not reported: $(head -c 600 <<<"$record")"
+ok
+cleanup_sandbox
+
+# ---- usage update ----------------------------------------------------------------
+
+# make_root: $ROOT, a data root holding the update command and the dispatcher
+# beside an empty set of collectors, so a test decides which collectors exist.
+make_root() {
+  ROOT=$SANDBOX/root
+  mkdir -p "$ROOT/bin" "$ROOT/lib"
+  cp "$REPO_ROOT/lib/common.sh" "$ROOT/lib/"
+  cp "$REPO_ROOT/VERSION" "$ROOT/"
+  cp "$UPDATE" "$AGENT" "$ROOT/bin/"
+  USAGE=$XDG_STATE_HOME/cachyos-agent/usage
+}
+
+# add_collector <agent> <body>: bin/cachyos-agent-usage-<agent>. Its body runs
+# after it has logged "<agent> <args>" to $SANDBOX/order.
+add_collector() {
+  printf '#!/bin/bash\necho "%s $*" >>"%s/order"\n%s\n' "$1" "$SANDBOX" "$2" >"$ROOT/bin/cachyos-agent-usage-$1"
+  chmod +x "$ROOT/bin/cachyos-agent-usage-$1"
+}
+
+begin "update writes one record per collector and forwards the flags"
+make_sandbox
+make_root
+for agent in alpha beta gamma; do
+  add_collector "$agent" "echo '{\"id\":\"$agent\",\"ready\":true}'"
+done
+"$ROOT/bin/cachyos-agent-usage-update" --force --limits-only
+for agent in alpha beta gamma; do
+  [[ $(<"$USAGE/$agent.json") == "{\"id\":\"$agent\",\"ready\":true}" ]] || fail "$agent record is wrong or missing"
+  grep -qx "$agent --force --limits-only" "$SANDBOX/order" || fail "$agent did not get the flags"
+done
+[[ $(find "$USAGE" -type f | wc -l) == 3 ]] || fail "temp files were left in the usage directory"
+ok
+cleanup_sandbox
+
+begin "update does not run the commands that are not collectors"
+make_sandbox
+make_root
+add_collector alpha "echo '{\"id\":\"alpha\"}'"
+printf '#!/bin/bash\necho "ran schedule" >>"%s/order"\n' "$SANDBOX" >"$ROOT/bin/cachyos-agent-usage-schedule"
+printf '#!/bin/bash\necho "ran report" >>"%s/order"\n' "$SANDBOX" >"$ROOT/bin/cachyos-agent-usage"
+"$ROOT/bin/cachyos-agent-usage-update"
+[[ $(<"$SANDBOX/order") == "alpha " ]] || fail "update ran something besides the collector: $(<"$SANDBOX/order")"
+[[ $(ls "$USAGE") == alpha.json ]] || fail "update wrote records for non-collectors: $(ls "$USAGE")"
+ok
+cleanup_sandbox
+
+begin "a failing collector is reported, the others are written, and its old record stays"
+make_sandbox
+make_root
+mkdir -p "$USAGE"
+printf '{"id":"bad","old":true}\n' >"$USAGE/bad.json"
+printf '{"id":"junk","old":true}\n' >"$USAGE/junk.json"
+printf '{"id":"scalar","old":true}\n' >"$USAGE/scalar.json"
+add_collector good "echo '{\"id\":\"good\"}'"
+add_collector bad "echo '{\"id\":\"bad\",\"old\":false}'; exit 3"
+add_collector junk "echo 'not json'"
+add_collector scalar "echo '[1,2]'"
+if "$ROOT/bin/cachyos-agent-usage-update" 2>"$SANDBOX/err"; then fail "update succeeded although collectors failed"; fi
+[[ $(<"$USAGE/good.json") == '{"id":"good"}' ]] || fail "the good collector's record was not written"
+for agent in bad junk scalar; do
+  [[ $(<"$USAGE/$agent.json") == "{\"id\":\"$agent\",\"old\":true}" ]] || fail "$agent's previous record was replaced"
+  grep -q "$agent collector failed" "$SANDBOX/err" || fail "the $agent failure was not reported"
+done
+ok
+cleanup_sandbox
+
+begin "update honours --except and agent names"
+make_sandbox
+make_root
+for agent in alpha beta gamma; do
+  add_collector "$agent" "echo '{\"id\":\"$agent\"}'"
+done
+"$ROOT/bin/cachyos-agent-usage-update" --except beta --except gamma
+[[ $(ls "$USAGE") == alpha.json ]] || fail "--except still wrote: $(ls "$USAGE")"
+rm -rf "$USAGE" "$SANDBOX/order"
+"$ROOT/bin/cachyos-agent-usage-update" gamma beta
+[[ $(ls "$USAGE") == $'beta.json\ngamma.json' ]] || fail "agent names did not filter: $(ls "$USAGE")"
+[[ $(sort "$SANDBOX/order") == $'beta \ngamma ' ]] || fail "unnamed collectors ran: $(<"$SANDBOX/order")"
+rm -rf "$USAGE" "$SANDBOX/order"
+if "$ROOT/bin/cachyos-agent-usage-update" nothere 2>"$SANDBOX/err"; then fail "an unknown agent was accepted"; fi
+grep -q 'no collector for agent: nothere' "$SANDBOX/err" || fail "unknown agent not explained: $(<"$SANDBOX/err")"
+[[ ! -e $SANDBOX/order ]] || fail "a collector ran despite the unknown agent"
+if "$ROOT/bin/cachyos-agent-usage-update" --nonsense 2>/dev/null; then fail "an unknown option was accepted"; fi
+ok
+cleanup_sandbox
+
+begin "update refreshes the account registry first and re-collects after a switch"
+make_sandbox
+make_root
+for agent in claude codex; do
+  add_collector "$agent" "echo '{\"id\":\"$agent\"}'"
+done
+stub cachyos-agent-account-state "$(
+  cat <<EOF
+echo "state \$*" >>"$SANDBOX/order"
+[[ \$1 == autoswitch && \$2 == claude ]] && echo work || true
+EOF
+)"
+mkdir -p "$XDG_STATE_HOME/cachyos-agent/accounts"
+printf '{"accounts":[]}\n' >"$XDG_STATE_HOME/cachyos-agent/accounts/claude.json"
+"$ROOT/bin/cachyos-agent-usage-update"
+[[ $(head -1 "$SANDBOX/order") == "state refresh" ]] || fail "refresh did not run first: $(<"$SANDBOX/order")"
+[[ $(tail -2 "$SANDBOX/order") == $'state autoswitch claude\nclaude --limits-only' ]] \
+  || fail "no limits-only re-collect after the switch: $(<"$SANDBOX/order")"
+[[ $(grep -c '^codex' "$SANDBOX/order") == 1 ]] || fail "codex has no registry and must be collected once"
+ok
+cleanup_sandbox
+
+begin "update works without the account commands or an accounts directory"
+make_sandbox
+make_root
+add_collector claude "echo '{\"id\":\"claude\"}'"
+# An accounts registry but no account command: only the tools update itself needs.
+mkdir "$SANDBOX/tools"
+for tool in dirname readlink mkdir jq mktemp cat mv rm; do ln -s "$(command -v "$tool")" "$SANDBOX/tools/$tool"; done
+mkdir -p "$XDG_STATE_HOME/cachyos-agent/accounts"
+printf '{"accounts":[]}\n' >"$XDG_STATE_HOME/cachyos-agent/accounts/claude.json"
+PATH=$SANDBOX/tools "$ROOT/bin/cachyos-agent-usage-update" || fail "update failed without cachyos-agent-account-state"
+[[ -f $USAGE/claude.json ]] || fail "no record without the account command"
+rm -rf "$XDG_STATE_HOME/cachyos-agent/accounts" "$USAGE"
+stub cachyos-agent-account-state ''
+"$ROOT/bin/cachyos-agent-usage-update"
+[[ ! -e $SANDBOX/calls/cachyos-agent-account-state ]] || fail "account commands ran without an accounts directory"
+ok
+cleanup_sandbox
+
+begin "update runs end to end through the dispatcher"
+make_sandbox
+make_root
+add_collector alpha "echo '{\"id\":\"alpha\",\"ready\":true,\"name\":\"Alpha\"}'"
+"$ROOT/bin/cachyos-agent" usage update alpha
+[[ -f $USAGE/alpha.json ]] || fail "no record written through the dispatcher"
 ok
 cleanup_sandbox
