@@ -1,5 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent:summary=Fast-forward a clean Git checkout and refresh the harness links
+# cachyos-agent:args=[ROOT]
+# cachyos-agent:examples=cachyos-agent skills update
 # Safely update a Git-backed skill checkout and refresh harness symlinks.
 set -euo pipefail
 

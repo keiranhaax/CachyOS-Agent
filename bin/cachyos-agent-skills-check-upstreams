@@ -1,5 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent:summary=Compare reviewed CachyOS upstream commits with the current branch heads
+# cachyos-agent:args=[ROOT]
+# cachyos-agent:examples=cachyos-agent skills check-upstreams
 # Compare reviewed upstream commits with the current official branch heads.
 # Rows may scope the comparison to the paths the guidance actually relies on.
 set -euo pipefail

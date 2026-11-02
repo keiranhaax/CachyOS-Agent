@@ -1,0 +1,264 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Run a cachyos-agent command or list what is available
+# cachyos-agent:args=<group> [command] [args...]
+# cachyos-agent:examples=cachyos-agent commands --json | cachyos-agent skills --help
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+BIN_DIR=$CACHYOS_AGENT_ROOT/bin
+SCAN_LINES=80
+# Answered here before any lookup, so an executable in these groups could never run.
+BUILTINS=(commands version)
+# Field separator of the records below. Unlike a tab it is not IFS whitespace,
+# so `read` keeps empty fields (a group's own command has no name).
+US=$'\x1f'
+
+declare -A GROUP_DESC=(
+  [launch]="Launch an AI coding agent in a terminal"
+  [default]="Show or choose the default agent"
+  [prompt]="Launch the default agent with a prompt"
+  [install]="Install an agent CLI"
+  [shortcut]="Bind the Plasma global shortcut for the launcher"
+  [crash]="Diagnose application crashes with an agent"
+  [usage]="Agent usage and rate-limit status"
+  [account]="Switch between subscription accounts"
+  [local]="Run local models with Ollama"
+  [theme]="Sync the Plasma color scheme into agents"
+  [skills]="Provision, update, and validate the CachyOS skill"
+  [commands]="List commands and validate their metadata"
+  [version]="Print the cachyos-agent version"
+)
+
+BINS=()             # executable cachyos-agent-* files
+declare -A META=()  # "<binary>:<key>" -> value of its cachyos-agent:<key>= comment
+PROBLEMS=0
+RESOLVED=''         # set by resolve: the command file to run
+CONSUMED=0          # set by resolve: how many words named it
+
+# --- Metadata ----------------------------------------------------------------
+
+# Read the cachyos-agent:<key>=<value> comments from the first SCAN_LINES lines
+# of every executable cachyos-agent-* file. C collation keeps a group's own
+# command ahead of its subcommands whatever the user's locale is.
+load_commands() {
+  local LC_COLLATE=C file bin line n
+  local re='^#[[:space:]]*cachyos-agent:([a-z]+)=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$'
+  BINS=()
+  for file in "$BIN_DIR"/cachyos-agent-*; do
+    [[ -f $file && -x $file ]] || continue
+    bin=${file##*/}
+    BINS+=("$bin")
+    n=0
+    while IFS= read -r line && ((n++ < SCAN_LINES)); do
+      if [[ $line =~ $re ]]; then
+        META[$bin:${BASH_REMATCH[1]}]=${BASH_REMATCH[2]//$'\t'/ }
+      fi
+    done <"$file"
+  done
+}
+
+# One record per command: route, binary, group, name, summary, args, examples,
+# hidden. Hidden commands are skipped unless the argument is "all".
+records() {
+  local bin stem group name hidden
+  for bin in "${BINS[@]}"; do
+    hidden=false
+    if [[ ${META[$bin:hidden]-} == true ]]; then hidden=true; fi
+    if [[ $hidden == true && ${1-} != all ]]; then continue; fi
+    stem=${bin#cachyos-agent-}
+    group=${stem%%-*}
+    name=${stem#"$group"}
+    printf '%s\n' "cachyos-agent ${stem/-/ }$US$bin$US$group$US${name#-}$US${META[$bin:summary]-}$US${META[$bin:args]-}$US${META[$bin:examples]-}$US$hidden"
+  done
+}
+
+# Two aligned columns from "left<US>right" lines on stdin.
+print_table() {
+  local -a left=() right=()
+  local l r i width=0
+  while IFS=$US read -r l r; do
+    left+=("$l")
+    right+=("$r")
+    if ((${#l} > width)); then width=${#l}; fi
+  done
+  for i in "${!left[@]}"; do
+    printf '  %-*s  %s\n' "$width" "${left[i]}" "${right[i]}"
+  done
+}
+
+# --- Help and listings -------------------------------------------------------
+
+show_usage() {
+  local group
+  load_commands
+  printf 'cachyos-agent %s\n\n' "$(ca_version)"
+  cat <<'EOF'
+Usage:
+  cachyos-agent <group> [command] [args...]
+  cachyos-agent <group> --help
+  cachyos-agent commands [--all] [--json] [--check]
+  cachyos-agent version
+
+Groups:
+EOF
+  { records | cut -d "$US" -f3; printf '%s\n' "${BUILTINS[@]}"; } | sort -u |
+    while IFS= read -r group; do
+      printf '%s%s%s\n' "$group" "$US" "${GROUP_DESC[$group]:-$group commands}"
+    done | print_table
+}
+
+# Usage, summary and examples of every visible command in one group.
+show_group_help() {
+  local group=$1 route cmd_group summary args examples example
+  load_commands
+  printf 'cachyos-agent %s: %s\n' "$group" "${GROUP_DESC[$group]:-$group commands}"
+  while IFS=$US read -r route _ cmd_group _ summary args examples _; do
+    if [[ $cmd_group != "$group" ]]; then continue; fi
+    printf '\n  %s%s\n      %s\n' "$route" "${args:+ $args}" "$summary"
+    if [[ -n $examples ]]; then
+      while IFS= read -r example; do
+        printf '      e.g. %s\n' "$example"
+      done <<<"${examples// | /$'\n'}"
+    fi
+  done < <(records)
+}
+
+# jq does the escaping, so no summary can break the JSON.
+commands_json() {
+  records "$1" | jq -Rn --arg us "$US" '
+    [inputs | split($us) | {
+      binary: .[1], route: .[0], group: .[2], name: .[3], summary: .[4], args: .[5],
+      examples: (.[6] | split(" | ") | map(select(length > 0))),
+      hidden: (.[7] == "true")
+    }] | {ok: true, commands: .}'
+}
+
+problem() {
+  printf 'problem: %s\n' "$1" >&2
+  PROBLEMS=$((PROBLEMS + 1))
+}
+
+# Every command needs a summary unless hidden, must be executable and parse,
+# and must not sit under a built-in group, which the dispatcher answers first.
+commands_check() {
+  local LC_COLLATE=C file bin group
+  for file in "$BIN_DIR"/cachyos-agent-*; do
+    [[ -f $file ]] || continue
+    [[ -x $file ]] || problem "${file##*/} is not executable"
+    ca_syntax_ok "$file" || problem "${file##*/} fails its syntax check"
+  done
+  for bin in "${BINS[@]}"; do
+    group=${bin#cachyos-agent-}
+    group=${group%%-*}
+    if [[ " ${BUILTINS[*]} " == *" $group "* ]]; then
+      problem "duplicate route: $bin is shadowed by the built-in '$group' command"
+    fi
+    if [[ ${META[$bin:hidden]-} != true && -z ${META[$bin:summary]-} ]]; then
+      problem "$bin has no cachyos-agent:summary comment"
+    fi
+  done
+  if ((PROBLEMS > 0)); then
+    printf '%d problem(s) found\n' "$PROBLEMS" >&2
+    return 1
+  fi
+  printf 'commands ok: %d\n' "${#BINS[@]}"
+}
+
+cmd_commands() {
+  local all='' json=false check=false arg
+  for arg; do
+    case $arg in
+      --all) all=all ;;
+      --json) json=true ;;
+      --check) check=true ;;
+      -h | --help)
+        echo "Usage: cachyos-agent commands [--all] [--json] [--check]"
+        echo "List commands; --all adds hidden ones, --json is machine-readable, --check validates metadata."
+        return 0
+        ;;
+      *) ca_die "unknown option for commands: $arg" ;;
+    esac
+  done
+  load_commands
+  if $check; then
+    commands_check
+  elif $json; then
+    commands_json "$all"
+  else
+    records "$all" | cut -d "$US" -f1,5 | print_table
+  fi
+}
+
+# --- Dispatch ----------------------------------------------------------------
+
+# Longest match first: for words a b c try cachyos-agent-a-b-c, then -a-b, then
+# -a. Only the first three words count, and a word that cannot be part of a file
+# name ends the search, so an argument such as ../x is never joined into a path.
+# Sets RESOLVED and CONSUMED.
+resolve() {
+  local name=cachyos-agent word
+  local -a candidates=()
+  for word in "${@:1:3}"; do
+    [[ $word =~ ^[[:alnum:]_][[:alnum:]_-]*$ ]] || break
+    name+=-$word
+    candidates+=("$name")
+  done
+  CONSUMED=${#candidates[@]}
+  while ((CONSUMED > 0)); do
+    RESOLVED=${candidates[CONSUMED - 1]}
+    if [[ -x $BIN_DIR/$RESOLVED && -f $BIN_DIR/$RESOLVED ]]; then return 0; fi
+    CONSUMED=$((CONSUMED - 1))
+  done
+  return 1
+}
+
+has_subcommands() {
+  local file
+  for file in "$BIN_DIR/cachyos-agent-$1"-*; do
+    [[ -x $file ]] && return 0
+  done
+  return 1
+}
+
+# Group help answers "<group> --help" for a group with subcommands, and a bare
+# "<group>" that has no command of its own. A lone command handles --help itself.
+wants_group_help() {
+  has_subcommands "$1" || return 1
+  case $# in
+    1) [[ ! -x $BIN_DIR/cachyos-agent-$1 ]] ;;
+    2) [[ $2 == --help || $2 == -h ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+dispatch() {
+  if wants_group_help "$@"; then
+    show_group_help "$1"
+    return 0
+  fi
+  if resolve "$@"; then
+    shift "$CONSUMED"
+    exec "$BIN_DIR/$RESOLVED" "$@"
+  fi
+  printf 'Unknown command: %s\n' "$*" >&2
+  printf "Run 'cachyos-agent commands' to list the available commands.\n" >&2
+  return 1
+}
+
+main() {
+  case ${1-} in
+    '' | -h | --help) show_usage ;;
+    version) ca_version ;;
+    commands)
+      shift
+      cmd_commands "$@"
+      ;;
+    *) dispatch "$@" ;;
+  esac
+}
+
+main "$@"

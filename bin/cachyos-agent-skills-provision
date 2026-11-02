@@ -1,5 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent:summary=Link the CachyOS skill into every agent harness
+# cachyos-agent:args=[--force] [SKILLS_DIR]
+# cachyos-agent:examples=cachyos-agent skills provision | cachyos-agent skills provision --force
 # Symlink every agents/skills/<name> directory into the common harness skill paths.
 # Contents track the source tree (ln -sfn). New skill directory names require a re-run.
 # Supports a development checkout or package-owned files under /usr/share.

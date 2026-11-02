@@ -1,5 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent:summary=Validate the skill tree: frontmatter, links, indexes, scripts
+# cachyos-agent:args=[ROOT]
+# cachyos-agent:examples=cachyos-agent skills validate
 # Validate the skill tree: frontmatter, relative links, index sync, scripts.
 set -euo pipefail
 
