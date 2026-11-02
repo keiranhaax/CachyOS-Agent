@@ -275,5 +275,3 @@ else
 fi
 ok
 cleanup_sandbox
-
-finish

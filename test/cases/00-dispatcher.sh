@@ -500,4 +500,3 @@ if ca_syntax_ok "$SANDBOX/syntax/lib_bad.py"; then fail "accepted broken Python"
 ok
 
 cleanup_sandbox
-finish

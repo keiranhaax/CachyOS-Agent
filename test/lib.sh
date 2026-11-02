@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Helpers shared by every test case. A case sources this first:
 #   source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
-# then calls begin, make_sandbox, its assertions, ok, cleanup_sandbox and
-# finally finish. test/run-tests runs each case in its own bash process.
+# then calls begin, make_sandbox, its assertions, ok and cleanup_sandbox.
+# test/run-tests runs each case in its own bash process, and the case exits
+# nonzero when any fail was called or a command aborted it: there is nothing
+# to call at the end.
 #
 # Cases never touch the real HOME, the network, a display, root or a real agent
 # CLI: make_sandbox points every user directory into a temp dir, and stub
@@ -22,7 +24,19 @@ FAILURES=0
 
 # An unexpected failing command aborts the case; say where, then let it exit.
 trap 'printf "FAIL %s: line %s: %s\n" "$CURRENT_TEST" "$LINENO" "$BASH_COMMAND" >&2' ERR
-trap 'rm -rf -- "${SANDBOXES[@]}"' EXIT
+trap end_of_case EXIT
+
+# Runs whenever the case ends: removes every sandbox, and turns a case that
+# called fail into a failing one even if it reached its last line.
+end_of_case() {
+  local status=$?
+  rm -rf -- "${SANDBOXES[@]}"
+  if ((FAILURES > 0)); then
+    printf '%d failure(s)\n' "$FAILURES" >&2
+    ((status != 0)) || status=1
+  fi
+  exit "$status"
+}
 
 # begin "name": start a test. ok prints its result unless fail was called.
 begin() {
@@ -56,7 +70,7 @@ make_sandbox() {
   export XDG_CACHE_HOME=$HOME/.cache
   export XDG_RUNTIME_DIR=$SANDBOX/run
   unset HERMES_HOME CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME TERMINAL \
-    CACHYOS_AGENT_DEFAULT DBUS_SESSION_BUS_ADDRESS
+    CACHYOS_AGENT_DEFAULT CACHYOS_SKILLS_SRC DBUS_SESSION_BUS_ADDRESS
   PATH=$SANDBOX/stubs:$BASE_PATH
 }
 
@@ -82,13 +96,4 @@ cleanup_sandbox() {
   rm -rf -- "$SANDBOX"
   SANDBOX=''
   PATH=$BASE_PATH
-}
-
-# finish: end of a case. Exits nonzero when any test failed.
-finish() {
-  if ((FAILURES > 0)); then
-    printf '%d failure(s)\n' "$FAILURES" >&2
-    exit 1
-  fi
-  exit 0
 }
