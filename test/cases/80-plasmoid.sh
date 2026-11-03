@@ -270,15 +270,15 @@ if command -v qml6 >/dev/null; then
   begin "records.js load reports a failed or garbled usage command in one line"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
-  out=$(records '"load"' 127 '""' '"sh: line 1: cachyos-agent: command not found\n"' "$NOW")
+  out=$(records '"load"' 127 '""' '"sh: line 1: cachyos-agent: command not found\n"')
   check "$out" '.agents == [] and .error == "cachyos-agent usage --json failed: sh: line 1: cachyos-agent: command not found"' "a failed command"
-  out=$(records '"load"' 3 '""' '""' "$NOW")
+  out=$(records '"load"' 3 '""' '""')
   check "$out" '.agents == [] and .error == "cachyos-agent usage --json failed (exit 3)"' "a failed command that said nothing"
-  out=$(records '"load"' 0 '"not json"' '""' "$NOW")
+  out=$(records '"load"' 0 '"not json"' '""')
   check "$out" '.agents == [] and .error == "cachyos-agent usage --json did not print a JSON array"' "output that is not JSON"
-  out=$(records '"load"' 0 '"{}"' '""' "$NOW")
+  out=$(records '"load"' 0 '"{}"' '""')
   check "$out" '.agents == [] and (.error | endswith("did not print a JSON array"))' "a JSON object instead of an array"
-  out=$(records '"load"' 0 '"[]"' '""' "$NOW")
+  out=$(records '"load"' 0 '"[]"' '""')
   check "$out" '.agents == [] and .error == ""' "no records is not an error"
   ok
   cleanup_sandbox
@@ -296,11 +296,11 @@ if command -v qml6 >/dev/null; then
     '[$a, $b, $c, $d, $e] | map({label: "Session", percent: 0.95, resetsAt: .})')
   record=$(jq -nc --argjson limits "$windows" '[{id: "x", name: "X", ready: true, tierLabel: "pro", limits: $limits}]')
   for zone in UTC Europe/Madrid America/New_York; do
-    out=$(TZ=$zone records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
+    out=$(TZ=$zone records '"load"' 0 "$(jq -Rs . <<<"$record")" '""')
     check "$out" '[.agents[0].limits[] | [.percent, .resetMs]] == [range(5) | [0.95, '$((soon * 1000))' + (if . == 2 then 123 else 0 end)]]' \
       "reset times with no offset, in the basic form, with an offset or with a fraction, read in $zone"
   done
-  out=$(records '"load"' 0 "$(jq -Rs . <<<'[{"id": "x", "name": "X", "ready": true, "limits": [{"label": "Session", "percent": 0.5, "resetsAt": "20261103"}, {"label": "Weekly", "percent": 0.5, "resetsAt": "2026-13-45T25:61:61Z"}]}]')" '""' "$NOW")
+  out=$(records '"load"' 0 "$(jq -Rs . <<<'[{"id": "x", "name": "X", "ready": true, "limits": [{"label": "Session", "percent": 0.5, "resetsAt": "20261103"}, {"label": "Weekly", "percent": 0.5, "resetsAt": "2026-13-45T25:61:61Z"}]}]')" '""')
   check "$out" '[.agents[0].limits[] | [.percent, .resetMs]] == [[0.5, 0], [0.5, 0]]' "a date or a time that is not one has no countdown"
   ok
   cleanup_sandbox
@@ -312,7 +312,7 @@ if command -v qml6 >/dev/null; then
   # not ready, so `cachyos-agent usage` lists nothing for it, and the widget must not draw it either.
   record='[{"id": "claude", "name": "Claude Code", "ready": false, "tierLabel": "Pro 5x", "limits": [], "usageStatusText": "Claude limits unavailable"},
            {"id": "codex", "name": "Codex", "ready": true, "tierLabel": "", "limits": []}]'
-  out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
+  out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""')
   check "$out" '[.agents[].name] == ["Codex"]' "a record that is not ready is not drawn for its plan"
   ok
   cleanup_sandbox
@@ -337,12 +337,36 @@ if command -v qml6 >/dev/null; then
       limits: [{label: "Session", percent: 0.5}], usageStatusText: "Sign-in expired", authHelpText: "Run `h login`."},
      {id: "i", name: "Stale and empty", ready: true, balance: balance, limitsStale: true, limitsFetchedAt: 0,
       usageStatusText: "Limits unavailable", authHelpText: "Could not reach the service."}]')
-  out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
-  check "$out" '[.agents[] | [.name, .age, .notes]] == [["Old", "Updated 2d 3h ago", []], ["An hour", "Updated 1h 0m ago", []], ["Recent", "", []], ["Future", "", []],
-                  ["Naive", "Updated 2h 0m ago", []], ["Garbled", "", []], ["Unwritten", "", []],
-                  ["Stale too", "Updated 2d 3h ago", ["Sign-in expired", "Run `h login`.", "Limits may be out of date"]],
-                  ["Stale and empty", "", ["Limits unavailable", "Could not reach the service."]]]' \
-    "only a record at least an hour old says how old it is, apart from what is wrong with its numbers, and a record with no limits does not call them old"
+  out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""')
+  # The view keeps when the record was written, and the clock decides what that says: a
+  # time that does not parse is none (null here, NaN in QML), and says nothing.
+  times=$(jq -c '[.agents[].updatedMs]' <<<"$out")
+  texts=()
+  for i in {0..8}; do
+    ms=$(jq -c ".[$i]" <<<"$times")
+    if [[ $ms == null ]]; then texts+=('""'); else texts+=("$(records '"ageText"' "$ms" "$NOW")"); fi
+  done
+  check "[$(IFS=,; echo "${texts[*]}")]" '. == ["Updated 2d 3h ago", "Updated 1h 0m ago", "", "", "Updated 2h 0m ago", "", "", "Updated 2d 3h ago", ""]' \
+    "only a record at least an hour old says how old it is"
+  check "$times" 'map(. == null) == [false, false, false, false, false, true, true, false, true]' "a missing or garbled time is none"
+  # The record read 59 minutes old turns an hour old twenty minutes on, with nothing read again.
+  [[ $(records '"ageText"' "$(jq -c '.[2]' <<<"$times")" "$((NOW + 20 * 60000))") == '"Updated 1h 19m ago"' ]] || fail "a record that turns old after it was read does not say so"
+  check "$out" '[.agents[] | [.name, .notes, .stale]] == [["Old", [], false], ["An hour", [], false], ["Recent", [], false], ["Future", [], false],
+                  ["Naive", [], false], ["Garbled", [], false], ["Unwritten", [], false],
+                  ["Stale too", ["Sign-in expired", "Run `h login`."], true],
+                  ["Stale and empty", ["Limits unavailable", "Could not reach the service."], false]]' \
+    "what is wrong with an agent's numbers, and a record with no limits does not call them old"
+  ok
+  cleanup_sandbox
+
+  begin "records.js reads how old the limits are at the clock, not at the read"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  [[ $(records '"checkedText"' false 0 "$NOW") == '""' ]] || fail "limits that are not stale say nothing"
+  [[ $(records '"checkedText"' true $((NOW - 300000)) "$NOW") == '"Limits last checked 5m ago"' ]] || fail "stale limits say how old they are"
+  [[ $(records '"checkedText"' true $((NOW - 300000)) $((NOW + 3600000))) == '"Limits last checked 1h 5m ago"' ]] || fail "an hour on, the same limits are an hour older"
+  [[ $(records '"checkedText"' true 0 "$NOW") == '"Limits may be out of date"' ]] || fail "stale limits with no fetch time"
+  [[ $(records '"checkedText"' true $((NOW + 60000)) "$NOW") == '"Limits may be out of date"' ]] || fail "a fetch time from the future is not believed"
   ok
   cleanup_sandbox
 
@@ -351,7 +375,7 @@ if command -v qml6 >/dev/null; then
   QML_LOG=$SANDBOX/qml.log
   alarming() {
     local agents
-    agents=$(records '"load"' 0 "$(jq -Rs . <<<"$1")" '""' "$NOW" | jq -c .agents)
+    agents=$(records '"load"' 0 "$(jq -Rs . <<<"$1")" '""' | jq -c .agents)
     records '"alarming"' "$agents" "${2:-$NOW}"
   }
   [[ $(alarming '[]') == false ]] || fail "no agents is calm"
@@ -375,13 +399,13 @@ if command -v qml6 >/dev/null; then
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
   records_json $((NOW / 1000)) >"$SANDBOX/records.json"
-  out=$(records '"load"' 0 "$(jq -Rs . "$SANDBOX/records.json")" '""' "$NOW")
+  out=$(records '"load"' 0 "$(jq -Rs . "$SANDBOX/records.json")" '""')
   check "$out" '.error == "" and ([.agents[].name] == ["Claude Code", "OpenRouter", "DeepSeek", "Fireworks", "Codex", "Hermes", "<b>Evil</b><img src=x>"])' \
     "agents should be the used ones, in file order, with markup left alone and non-records dropped"
   check "$out" '.agents[0] | .plan == "Pro" and .tokensText == "Tokens: 1.2M today, 3.3M this week" and .multi
-                and .notes == ["Claude Code unavailable", "Check your connection."]
-                and .age == "Updated 2d 3h ago"' \
-    "Claude Code: plan, tokens, notes, and the age of a record with several accounts"
+                and .notes == ["Claude Code unavailable", "Check your connection."] and (.stale | not)' \
+    "Claude Code: plan, tokens and notes"
+  [[ $(records '"ageText"' "$(jq -c '.agents[0].updatedMs' <<<"$out")" "$NOW") == '"Updated 2d 3h ago"' ]] || fail "the age of a record with several accounts"
   # A window is read at a moment: the same one at 18:00 and three hours on.
   windows=$(jq -c '.agents[0].limits' <<<"$out")
   check "$out" '.agents[0].limits | map([.title, .percent]) == [["Session (5-hour)", 0.42], ["Weekly (7-day)", 0.95], ["Fable Weekly", 0.1]]' "the windows as the collector gave them"
@@ -395,22 +419,24 @@ if command -v qml6 >/dev/null; then
   check "${later[0]}" '. == {fraction: 0, percentText: "0%", resetText: "", high: false}' "the session window after its reset reads 0%, not its old percent"
   check "${later[1]}" '.percentText == "95%" and .high and .resetText == "resets in 3d 1h"' "the weekly window three hours on"
   check "$out" '.agents[0].accounts | map([.name, .plan, .active, (.limits | length), .notes]) ==
-                [["Personal", "Pro", true, 3, []], ["Work", "Max", false, 1, ["Sign-in expired", "Run `claude auth login`.", "Limits last checked 3h 0m ago"]]]' \
+                [["Personal", "Pro", true, 3, []], ["Work", "Max", false, 1, ["Sign-in expired", "Run `claude auth login`."]]]' \
     "accounts and their own notes"
+  check "$out" '.agents[0].accounts | map([.stale, .fetchedMs]) == [[false, 0], [true, '$((NOW - 10800000))']]' "an account's limits are stale on their own, and when they were fetched"
   check "$out" '.agents[1] | .multi == false and .plan == "Prepaid" and .limits == [] and .balance == {remainingText: "$3.50 left", detailText: "$16.50 spent of $20.00", fraction: 0.175, low: false}' \
     "a prepaid balance"
   check "$out" '.agents[2].balance | .remainingText == "CNY 1.00 left" and .detailText == "CNY 19.00 spent of CNY 20.00 (estimated)" and .low == true' \
     "a low, estimated balance in another currency"
-  check "$out" '.agents[3] | .balance == {remainingText: "€2.00 left", detailText: "", fraction: -1, low: false} and .age == "Updated 2d 3h ago" and .notes == []' \
-    "a balance with no funding figure has nothing to measure against, and a record two days old says so"
-  check "$out" '.agents[4] | .plan == "Plus" and .notes == ["Limits paused", "Start Codex to see its limits.", "Limits last checked 2h 0m ago"]' \
-    "stale limits say why and how old"
+  check "$out" '.agents[3] | .balance == {remainingText: "€2.00 left", detailText: "", fraction: -1, low: false} and .notes == []' \
+    "a balance with no funding figure has nothing to measure against"
+  [[ $(records '"ageText"' "$(jq -c '.agents[3].updatedMs' <<<"$out")" "$NOW") == '"Updated 2d 3h ago"' ]] || fail "a record two days old does not say so"
+  check "$out" '.agents[4] | .plan == "Plus" and .notes == ["Limits paused", "Start Codex to see its limits."] and .stale and .fetchedMs == '$((NOW - 7200000))'' \
+    "stale limits say why and when they were fetched"
   check "$out" '.agents[5] | .tokensText == "Tokens: 500 today, 500 this week" and .limits == [] and .balance == null and .notes == []' \
     "an agent with only local tokens, and a sign-in hint that stays hidden while all is well"
   check "$out" '.agents[6] | .plan == "" and .tokensText == "" and .balance == null and .accounts == []
                 and ([.limits[] | [.title, .percent, .resetMs]] == [["over", 1, 0]])
-                and .notes == ["Limits may be out of date"]' \
-    "hostile values are dropped or clamped, and a fetch time from the future is not believed"
+                and .notes == [] and .stale and .fetchedMs > '$NOW'' \
+    "hostile values are dropped or clamped, and a fetch time from the future is kept as it is for checkedText to disbelieve"
   [[ $(records '"alarming"' "$(jq -c .agents <<<"$out")" "$NOW") == true ]] || fail "a window at 95% and a balance at 5% should make the widget alarming"
   agents=$(jq -c .agents <<<"$out")
   out=$(records '"summary"' "$agents" "$NOW")
@@ -543,6 +569,23 @@ esac'
     "before the reset the window reads 98%, asks for attention and counts down"
   check "$out" '(.attention | not) and .tooltip == "Clock 0%" and .page.bars == [0] and (.page.texts | any(. == "0%")) and (.page.texts | any(contains("98%")) | not)' \
     "an hour on the window has reset: 0%, a calm icon and tooltip, and no countdown"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
+  ok
+  cleanup_sandbox
+
+  begin "the age of a record and of stale limits follow the clock between reads"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  # Read when the record is 30 minutes old and the limits were fetched 5 minutes ago: no age line yet.
+  # An hour on, with nothing read again, the record is old and the limits an hour older.
+  jq -nc --arg updated "$(date -u -d '-30 minutes' +%Y-%m-%dT%H:%M:%S)Z" --argjson fetched "$((($(date +%s) - 300) * 1000))" \
+    '[{id: "codex", name: "Clock", ready: true, updatedAt: $updated, limits: [{label: "Session", percent: 0.5, resetsAt: ""}],
+       limitsStale: true, limitsFetchedAt: $fetched, usageStatusText: "Limits paused"}]' >"$FIXTURE"
+  out=$(app later "")
+  check "$out" '.seen[0].page.texts | (any(startswith("Updated")) | not) and any(. == "Limits last checked 5m ago")' "the first read says the limits are minutes old and the record is fresh"
+  check "$out" '.page.texts | any(. == "Updated 1h 30m ago") and any(. == "Limits last checked 1h 5m ago") and (any(. == "Limits last checked 5m ago") | not)' \
+    "an hour on the record says it is old and the limits are an hour older"
   qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
   ok
   cleanup_sandbox

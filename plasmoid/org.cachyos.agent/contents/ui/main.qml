@@ -71,7 +71,7 @@ PlasmoidItem {
 
     function finished(source, exitCode, stdout, stderr) {
         if (source === loadCommand) {
-            const result = Records.load(exitCode, stdout, stderr, Date.now());
+            const result = Records.load(exitCode, stdout, stderr);
             agents = result.agents;
             loadError = result.error;
             updateError = failedUpdate;

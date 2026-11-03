@@ -145,19 +145,20 @@ function balanceView(balance) {
 // says so at the same age (RECORD_OLD_SECONDS).
 const RECORD_OLD_MS = 3600 * 1000;
 
-// "Updated 2d 3h ago" for a record at least an hour old. A record with no
-// updatedAt, one that does not parse, or one from the future says nothing.
-function ageText(updatedAt, now) {
-    const updated = parseTime(updatedAt);
-    return updated <= now - RECORD_OLD_MS ? "Updated " + duration(now - updated) + " ago" : "";
+// "Updated 2d 3h ago" for a record at least an hour old. updatedMs is the
+// record's updatedAt as parseTime reads it, so a record with none, one that
+// does not parse, or one from the future says nothing. Like limitState this is
+// read at the widget's clock, which moves between reads: a record that turns
+// an hour old while the popup is open says so.
+function ageText(updatedMs, now) {
+    return updatedMs <= now - RECORD_OLD_MS ? "Updated " + duration(now - updatedMs) + " ago" : "";
 }
 
-// What is wrong with an agent's numbers, one line each. A status is always
+// What is wrong with an agent's numbers, one line each: a status is always
 // said; its help only with it, or when the limits shown are old, because a
-// healthy agent may still carry its sign-in hint. The limits are called old
-// only when there are limits: a record with none has no numbers to doubt, and
-// its status already says why.
-function notes(status, help, stale, hasLimits, fetchedAt, now) {
+// healthy agent may still carry its sign-in hint. These lines do not change
+// with the clock; checkedText adds the one that does.
+function notes(status, help, stale) {
     const lines = [];
     const statusText = String(status || "");
     const helpText = String(help || "");
@@ -167,11 +168,17 @@ function notes(status, help, stale, hasLimits, fetchedAt, now) {
         if (helpText !== "")
             lines.push(helpText);
     }
-    if (stale && hasLimits) {
-        const measured = Number(fetchedAt);
-        lines.push(measured > 0 && measured <= now ? "Limits last checked " + duration(now - measured) + " ago" : "Limits may be out of date");
-    }
     return lines;
+}
+
+// How old the limits shown are, at the widget's clock: "" unless they are
+// stale. The limits are called old only when there are limits, since a record
+// with none has no numbers to doubt and its status already says why. A fetch
+// time that is missing or lies ahead of the clock says the age is unknown.
+function checkedText(stale, fetchedMs, now) {
+    if (!stale)
+        return "";
+    return fetchedMs > 0 && fetchedMs <= now ? "Limits last checked " + duration(now - fetchedMs) + " ago" : "Limits may be out of date";
 }
 
 // recentDays holds seven {date, messageCount} entries; messageCount is the
@@ -182,22 +189,26 @@ function weekTokens(days) {
 
 // An agent with two or more registered accounts lists each one's own limits;
 // the record's top-level limits describe the active account.
-function accountView(account, now) {
+function accountView(account) {
     const limits = limitViews(account.limits);
+    const stale = account.stale === true;
     return {
         name: String(account.label || account.id || "Account"),
         plan: capitalize(account.plan),
         active: account.active === true,
         limits: limits,
-        notes: notes(account.usageStatusText, account.authHelpText, account.stale === true, limits.length > 0, account.fetchedAt, now)
+        notes: notes(account.usageStatusText, account.authHelpText, stale),
+        stale: stale && limits.length > 0,
+        fetchedMs: count(account.fetchedAt)
     };
 }
 
-function agentView(record, now) {
+function agentView(record) {
     const today = count(record.todayTotalTokens);
     const week = weekTokens(record.recentDays);
-    const accounts = Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(account => accountView(account, now)) : [];
+    const accounts = Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(accountView) : [];
     const limits = limitViews(record.limits);
+    const stale = record.limitsStale === true;
     return {
         name: String(record.name || record.id || "Unknown agent"),
         ready: record.ready === true,
@@ -208,9 +219,12 @@ function agentView(record, now) {
         // How old the record is says nothing about one account, so it stays
         // apart from the notes: with several accounts each lists its own
         // limits and notes, and the agent's notes, which describe the active
-        // one, are not drawn again, but the age of the record is.
-        age: ageText(record.updatedAt, now),
-        notes: notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, limits.length > 0, record.limitsFetchedAt, now),
+        // one, are not drawn again, but the age of the record is. The times are
+        // kept as numbers for ageText and checkedText to read at the clock.
+        updatedMs: parseTime(record.updatedAt),
+        notes: notes(record.usageStatusText, record.authHelpText, stale),
+        stale: stale && limits.length > 0,
+        fetchedMs: count(record.limitsFetchedAt),
         multi: accounts.length > 1,
         accounts: accounts
     };
@@ -232,8 +246,10 @@ function failure(command, exitCode, stderr) {
 
 // The widget's one entry point: the exit code, stdout and stderr of
 // `cachyos-agent usage --json` in, {agents, error} out. agents is what to draw;
-// error is "" or the one line that says why there is nothing to draw.
-function load(exitCode, stdout, stderr, now) {
+// error is "" or the one line that says why there is nothing to draw. Nothing
+// in it depends on the clock: what does is read from it at `now` by limitState,
+// ageText and checkedText.
+function load(exitCode, stdout, stderr) {
     if (exitCode !== 0)
         return { agents: [], error: failure("cachyos-agent usage --json", exitCode, stderr) };
     let records = null;
@@ -244,7 +260,7 @@ function load(exitCode, stdout, stderr, now) {
     }
     if (!Array.isArray(records))
         return { agents: [], error: "cachyos-agent usage --json did not print a JSON array" };
-    return { agents: records.filter(isObject).map(record => agentView(record, now)).filter(isShown), error: "" };
+    return { agents: records.filter(isObject).map(agentView).filter(isShown), error: "" };
 }
 
 // The tooltip: each agent that has limits with its fullest window at `now`.

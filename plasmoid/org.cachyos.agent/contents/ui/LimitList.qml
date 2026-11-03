@@ -14,13 +14,18 @@ ColumnLayout {
     id: list
 
     property var notes: []
+    property bool stale: false
+    property double fetchedMs: 0
     property var limits: []
     property double now: 0
+
+    // How old stale limits are, like the countdowns, at the widget's clock.
+    readonly property string checked: Records.checkedText(stale, fetchedMs, now)
 
     spacing: Kirigami.Units.smallSpacing
 
     Repeater {
-        model: list.notes
+        model: list.checked === "" ? list.notes : list.notes.concat([list.checked])
 
         PlasmaComponents3.Label {
             required property string modelData

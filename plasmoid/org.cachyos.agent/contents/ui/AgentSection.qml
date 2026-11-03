@@ -7,6 +7,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
+import "../code/records.js" as Records
 
 // One agent: its name and plan, then its limits or prepaid balance, its
 // tokens, and each of its accounts when it has several. Several accounts
@@ -42,11 +43,12 @@ ColumnLayout {
     }
 
     // The age of the record, which an agent with several accounts keeps although
-    // its own notes and limits are drawn under each account instead.
+    // its own notes and limits are drawn under each account instead. It is read
+    // at the widget's clock, which moves between reads.
     PlasmaComponents3.Label {
         Layout.fillWidth: true
         visible: text !== ""
-        text: section.agent.age
+        text: Records.ageText(section.agent.updatedMs, section.now)
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
         color: Kirigami.Theme.neutralTextColor
@@ -56,6 +58,8 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: !section.agent.multi
         notes: section.agent.notes
+        stale: section.agent.stale
+        fetchedMs: section.agent.fetchedMs
         limits: section.agent.limits
         now: section.now
     }
@@ -127,6 +131,8 @@ ColumnLayout {
             LimitList {
                 Layout.fillWidth: true
                 notes: account.modelData.notes
+                stale: account.modelData.stale
+                fetchedMs: account.modelData.fetchedMs
                 limits: account.modelData.limits
                 now: section.now
             }
