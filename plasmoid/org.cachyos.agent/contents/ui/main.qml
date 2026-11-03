@@ -31,7 +31,7 @@ PlasmoidItem {
     property double now: Date.now()
 
     readonly property string problem: loadError || updateError
-    readonly property bool alarming: Records.alarming(agents)
+    readonly property bool alarming: Records.alarming(agents, now)
 
     // The executable engine runs its source name through sh -c and runs a given
     // name once at a time, so these are fixed strings and never built from data.
@@ -48,7 +48,7 @@ PlasmoidItem {
     readonly property string launchCommand: "systemd-run --user --scope --quiet -- cachyos-agent launch >/dev/null 2>&1 &"
 
     toolTipMainText: "CachyOS Agents"
-    toolTipSubText: Records.summary(agents)
+    toolTipSubText: Records.summary(agents, now)
     toolTipTextFormat: Text.PlainText
 
     function load() {

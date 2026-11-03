@@ -40,7 +40,8 @@ ColumnLayout {
             id: row
 
             required property var modelData
-            readonly property string reset: Records.resetText(modelData.resetMs, list.now)
+            // The window at the widget's clock, which moves between reads.
+            readonly property var reading: Records.limitState(modelData, list.now)
 
             Layout.fillWidth: true
             spacing: 0
@@ -56,9 +57,9 @@ ColumnLayout {
                 }
 
                 PlasmaComponents3.Label {
-                    text: row.modelData.percentText + (row.reset !== "" ? "  ·  " + row.reset : "")
+                    text: row.reading.percentText + (row.reading.resetText !== "" ? "  ·  " + row.reading.resetText : "")
                     textFormat: Text.PlainText
-                    color: row.modelData.high ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                    color: row.reading.high ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
                 }
             }
 
@@ -66,7 +67,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 from: 0
                 to: 1
-                value: row.modelData.fraction
+                value: row.reading.fraction
             }
         }
     }

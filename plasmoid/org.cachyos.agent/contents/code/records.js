@@ -60,11 +60,10 @@ function duration(ms) {
 }
 
 // The line under a limit: when its window resets. resetMs is 0 for a window
-// with no reset time. The widget calls this again as its clock ticks.
+// with no reset time. A window whose reset has passed has nothing to count
+// down to, as in the `cachyos-agent usage` report.
 function resetText(resetMs, now) {
-    if (!(resetMs > 0))
-        return "";
-    return resetMs > now ? "resets in " + duration(resetMs - now) : "resetting";
+    return resetMs > now ? "resets in " + duration(resetMs - now) : "";
 }
 
 // 1234 -> "1.2K". The threshold sits just under each unit so that 999950
@@ -82,30 +81,43 @@ function money(value, currency) {
     return (CURRENCY_SYMBOLS[code] || code + " ") + value.toFixed(2);
 }
 
-// One limit window. percent is a fraction of 0..1. A window whose reset time
-// has passed is untouched again, as the collectors keep it, not unknown, so it
-// reads 0% with nothing to count down to. A window without a percent is
-// dropped; one without a reset time is kept as it is.
-function limitView(entry, now) {
+// One limit window as the collector wrote it: percent is a fraction of 0..1,
+// resetMs is 0 for a window with no reset time that can be read. Nothing here
+// depends on the clock, because the widget reads the records every few minutes
+// and its clock moves in between: limitState says how the window reads at a
+// given moment. A window without a percent is dropped; one without a reset
+// time is kept as it is.
+function limitView(entry) {
     if (!isObject(entry))
         return null;
     const percent = Number(entry.percent);
     if (!(percent >= 0))
         return null;
     const resetMs = parseTime(entry.resetsAt);
-    const elapsed = resetMs <= now;
-    const fraction = elapsed ? 0 : Math.min(percent, 1);
     return {
         title: String(entry.title || entry.label || "Limit"),
-        fraction: fraction,
-        percentText: Math.round(fraction * 100) + "%",
-        resetMs: elapsed || Number.isNaN(resetMs) ? 0 : resetMs,
-        high: fraction >= HIGH
+        percent: Math.min(percent, 1),
+        resetMs: Number.isNaN(resetMs) ? 0 : resetMs
     };
 }
 
-function limitViews(entries, now) {
-    return Array.isArray(entries) ? entries.map(entry => limitView(entry, now)).filter(view => view !== null) : [];
+function limitViews(entries) {
+    return Array.isArray(entries) ? entries.map(limitView).filter(view => view !== null) : [];
+}
+
+// How a window reads at `now`. One whose reset time has passed is untouched
+// again, as the collectors keep it, not unknown, so it reads 0% with nothing to
+// count down to: the number the collector wrote ended with its window, however
+// long ago the records were read.
+function limitState(limit, now) {
+    const elapsed = limit.resetMs > 0 && limit.resetMs <= now;
+    const fraction = elapsed ? 0 : limit.percent;
+    return {
+        fraction: fraction,
+        percentText: Math.round(fraction * 100) + "%",
+        resetText: resetText(limit.resetMs, now),
+        high: fraction >= HIGH
+    };
 }
 
 // A prepaid agent's credit ledger. fraction is how much of the funding is
@@ -173,7 +185,7 @@ function accountView(account, now) {
         name: String(account.label || account.id || "Account"),
         plan: capitalize(account.plan),
         active: account.active === true,
-        limits: limitViews(account.limits, now),
+        limits: limitViews(account.limits),
         notes: notes(account.usageStatusText, account.authHelpText, account.stale === true, account.fetchedAt, now)
     };
 }
@@ -186,7 +198,7 @@ function agentView(record, now) {
         name: String(record.name || record.id || "Unknown agent"),
         ready: record.ready === true,
         plan: capitalize(record.tierLabel),
-        limits: limitViews(record.limits, now),
+        limits: limitViews(record.limits),
         balance: balanceView(record.balance),
         tokensText: today > 0 || week > 0 ? "Tokens: " + tokens(today) + " today, " + tokens(week) + " this week" : "",
         // How old the record is says nothing about one account, so it stays
@@ -229,18 +241,19 @@ function load(exitCode, stdout, stderr, now) {
     return { agents: records.filter(isObject).map(record => agentView(record, now)).filter(isShown), error: "" };
 }
 
-// The tooltip: each agent that has limits with its fullest window.
-function summary(agents) {
+// The tooltip: each agent that has limits with its fullest window at `now`.
+function summary(agents, now) {
     return agents
         .filter(agent => agent.limits.length > 0)
-        .map(agent => agent.name + " " + Math.round(100 * Math.max(...agent.limits.map(limit => limit.fraction))) + "%")
+        .map(agent => agent.name + " " + Math.round(100 * Math.max(...agent.limits.map(limit => limitState(limit, now).fraction))) + "%")
         .join(", ");
 }
 
 // Whether the panel icon should ask for attention, as Omarchy's bar icon
 // lights up: any limit window nearly full, or a prepaid balance down to its
 // last tenth. An agent's own limits are the account sessions start on, which
-// is the one that runs out.
-function alarming(agents) {
-    return agents.some(agent => agent.limits.some(limit => limit.high) || (agent.balance !== null && agent.balance.low));
+// is the one that runs out. Read at `now`, so a window that has reset since the
+// records were read stops asking.
+function alarming(agents, now) {
+    return agents.some(agent => agent.limits.some(limit => limitState(limit, now).high) || (agent.balance !== null && agent.balance.low));
 }

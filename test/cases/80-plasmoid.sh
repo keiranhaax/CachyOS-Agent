@@ -260,7 +260,7 @@ if command -v qml6 >/dev/null; then
   [[ $(records '"duration"' 273600000) == '"3d 4h"' ]] || fail "3d 4h"
   [[ $(records '"resetText"' 0 1000) == '""' ]] || fail "a window with no reset time should say nothing"
   [[ $(records '"resetText"' 7801000 1000) == '"resets in 2h 10m"' ]] || fail "resets in 2h 10m"
-  [[ $(records '"resetText"' 500 1000) == '"resetting"' ]] || fail "a reset time that has passed should say resetting"
+  [[ $(records '"resetText"' 500 1000) == '""' ]] || fail "a reset time that has passed has nothing to count down to"
   [[ $(records '"tokens"' 12) == '"12"' && $(records '"tokens"' 1234) == '"1.2K"' ]] || fail "small token counts"
   [[ $(records '"tokens"' 999950) == '"1.0M"' ]] || fail "999950 tokens should read 1.0M, not 1000.0K"
   [[ $(records '"tokens"' 2500000000) == '"2.5B"' ]] || fail "billions of tokens"
@@ -297,11 +297,11 @@ if command -v qml6 >/dev/null; then
   record=$(jq -nc --argjson limits "$windows" '[{id: "x", name: "X", ready: true, tierLabel: "pro", limits: $limits}]')
   for zone in UTC Europe/Madrid America/New_York; do
     out=$(TZ=$zone records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
-    check "$out" '[.agents[0].limits[] | [.percentText, .resetMs]] == [range(5) | ["95%", '$((soon * 1000))' + (if . == 2 then 123 else 0 end)]]' \
+    check "$out" '[.agents[0].limits[] | [.percent, .resetMs]] == [range(5) | [0.95, '$((soon * 1000))' + (if . == 2 then 123 else 0 end)]]' \
       "reset times with no offset, in the basic form, with an offset or with a fraction, read in $zone"
   done
   out=$(records '"load"' 0 "$(jq -Rs . <<<'[{"id": "x", "name": "X", "ready": true, "limits": [{"label": "Session", "percent": 0.5, "resetsAt": "20261103"}, {"label": "Weekly", "percent": 0.5, "resetsAt": "2026-13-45T25:61:61Z"}]}]')" '""' "$NOW")
-  check "$out" '[.agents[0].limits[] | [.percentText, .resetMs]] == [["50%", 0], ["50%", 0]]' "a date or a time that is not one has no countdown"
+  check "$out" '[.agents[0].limits[] | [.percent, .resetMs]] == [[0.5, 0], [0.5, 0]]' "a date or a time that is not one has no countdown"
   ok
   cleanup_sandbox
 
@@ -337,7 +337,7 @@ if command -v qml6 >/dev/null; then
   alarming() {
     local agents
     agents=$(records '"load"' 0 "$(jq -Rs . <<<"$1")" '""' "$NOW" | jq -c .agents)
-    records '"alarming"' "$agents"
+    records '"alarming"' "$agents" "${2:-$NOW}"
   }
   [[ $(alarming '[]') == false ]] || fail "no agents is calm"
   [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "limits": [{"label": "S", "percent": 0.89}, {"label": "W", "percent": 0.2}],
@@ -348,6 +348,11 @@ if command -v qml6 >/dev/null; then
   [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "balance": {"remaining": 0.5}}]') == false ]] || fail "a balance with no funding figure has nothing to be low against"
   [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "limits": [{"label": "S", "percent": 0.97, "resetsAt": "2026-11-02T17:59:00Z"}]}]') == false ]] \
     || fail "a window that has reset reads 0% and is calm"
+  # The icon is read again as the clock moves, not only when the records are
+  # read: a window at 98% that resets at 18:02 is alarming at 18:00 and calm at 18:03.
+  window='[{"id": "a", "name": "A", "ready": true, "limits": [{"label": "S", "percent": 0.98, "resetsAt": "2026-11-02T18:02:00Z"}]}]'
+  [[ $(alarming "$window") == true ]] || fail "98% two minutes before its reset is alarming"
+  [[ $(alarming "$window" $((NOW + 180000))) == false ]] || fail "the same window one minute after its reset is calm"
   ok
   cleanup_sandbox
 
@@ -360,12 +365,20 @@ if command -v qml6 >/dev/null; then
     "agents should be the used ones, in file order, with markup left alone and non-records dropped"
   check "$out" '.agents[0] | .plan == "Pro" and .tokensText == "Tokens: 1.2M today, 3.3M this week" and .multi
                 and .notes == ["Claude Code unavailable", "Check your connection."]
-                and ([.limits[] | [.title, .percentText, .high]] == [["Session (5-hour)", "42%", false], ["Weekly (7-day)", "95%", true], ["Fable Weekly", "0%", false]])
                 and .age == "Updated 2d 3h ago"' \
-    "Claude Code: plan, tokens, limits (an elapsed window reads 0%), and the age of a record with several accounts"
-  [[ $(records '"resetText"' "$(jq '.agents[0].limits[0].resetMs' <<<"$out")" "$NOW") == '"resets in 2h 10m"' ]] || fail "the session reset time"
-  [[ $(records '"resetText"' "$(jq '.agents[0].limits[1].resetMs' <<<"$out")" "$NOW") == '"resets in 3d 4h"' ]] || fail "the weekly reset time"
-  check "$out" '.agents[0].limits[2].resetMs == 0' "an elapsed window has no reset time"
+    "Claude Code: plan, tokens, notes, and the age of a record with several accounts"
+  # A window is read at a moment: the same one at 18:00 and three hours on.
+  windows=$(jq -c '.agents[0].limits' <<<"$out")
+  check "$out" '.agents[0].limits | map([.title, .percent]) == [["Session (5-hour)", 0.42], ["Weekly (7-day)", 0.95], ["Fable Weekly", 0.1]]' "the windows as the collector gave them"
+  for i in 0 1 2; do
+    states[i]=$(records '"limitState"' "$(jq -c ".[$i]" <<<"$windows")" "$NOW")
+    later[i]=$(records '"limitState"' "$(jq -c ".[$i]" <<<"$windows")" "$((NOW + 3 * 3600 * 1000))")
+  done
+  check "${states[0]}" '. == {fraction: 0.42, percentText: "42%", resetText: "resets in 2h 10m", high: false}' "the session window now"
+  check "${states[1]}" '. == {fraction: 0.95, percentText: "95%", resetText: "resets in 3d 4h", high: true}' "the weekly window now"
+  check "${states[2]}" '. == {fraction: 0, percentText: "0%", resetText: "", high: false}' "an elapsed window reads 0% with nothing to count down to"
+  check "${later[0]}" '. == {fraction: 0, percentText: "0%", resetText: "", high: false}' "the session window after its reset reads 0%, not its old percent"
+  check "${later[1]}" '.percentText == "95%" and .high and .resetText == "resets in 3d 1h"' "the weekly window three hours on"
   check "$out" '.agents[0].accounts | map([.name, .plan, .active, (.limits | length), .notes]) ==
                 [["Personal", "Pro", true, 3, []], ["Work", "Max", false, 1, ["Sign-in expired", "Run `claude auth login`.", "Limits last checked 3h 0m ago"]]]' \
     "accounts and their own notes"
@@ -380,12 +393,15 @@ if command -v qml6 >/dev/null; then
   check "$out" '.agents[5] | .tokensText == "Tokens: 500 today, 500 this week" and .limits == [] and .balance == null and .notes == []' \
     "an agent with only local tokens, and a sign-in hint that stays hidden while all is well"
   check "$out" '.agents[6] | .plan == "" and .tokensText == "" and .balance == null and .accounts == []
-                and ([.limits[] | [.title, .percentText, .resetMs, .high]] == [["over", "100%", 0, true]])
+                and ([.limits[] | [.title, .percent, .resetMs]] == [["over", 1, 0]])
                 and .notes == ["Limits may be out of date"]' \
     "hostile values are dropped or clamped, and a fetch time from the future is not believed"
-  [[ $(records '"alarming"' "$(jq -c .agents <<<"$out")") == true ]] || fail "a window at 95% and a balance at 5% should make the widget alarming"
-  out=$(records '"summary"' "$(jq -c .agents <<<"$out")")
+  [[ $(records '"alarming"' "$(jq -c .agents <<<"$out")" "$NOW") == true ]] || fail "a window at 95% and a balance at 5% should make the widget alarming"
+  agents=$(jq -c .agents <<<"$out")
+  out=$(records '"summary"' "$agents" "$NOW")
   [[ $out == '"Claude Code 95%, Codex 50%, <b>Evil</b><img src=x> 100%"' ]] || fail "the tooltip summary: $out"
+  out=$(records '"summary"' "$agents" "$((NOW + 4 * 86400 * 1000))")
+  [[ $out == '"Claude Code 0%, Codex 50%, <b>Evil</b><img src=x> 100%"' ]] || fail "the tooltip summary once the weekly window has reset: $out"
   ok
   cleanup_sandbox
 else
@@ -496,6 +512,23 @@ esac'
   unset FIXTURE_AFTER
   out=$(app dump "")
   check "$out" '.attention == false' "calm records should not ask for attention"
+  ok
+  cleanup_sandbox
+
+  begin "the meters, the tooltip and the panel icon follow the clock between reads"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  # A window at 98% that resets in ten minutes, read once; an hour later nothing
+  # has read the records again, but the window has reset and must read 0%.
+  jq -nc --arg reset "$(date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)" \
+    '[{id: "codex", name: "Clock", ready: true, limits: [{label: "Session", percent: 0.98, resetsAt: $reset}]}]' >"$FIXTURE"
+  out=$(app later "")
+  check "$out" '.seen[0] | .attention and .tooltip == "Clock 98%" and (.page.texts | any(contains("98%") and contains("resets in"))) and .page.bars == [0.98]' \
+    "before the reset the window reads 98%, asks for attention and counts down"
+  check "$out" '(.attention | not) and .tooltip == "Clock 0%" and .page.bars == [0] and (.page.texts | any(. == "0%")) and (.page.texts | any(contains("98%")) | not)' \
+    "an hour on the window has reset: 0%, a calm icon and tooltip, and no countdown"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
   ok
   cleanup_sandbox
 

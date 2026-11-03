@@ -3,7 +3,8 @@
 // engine running a stubbed cachyos-agent, and prints what it shows as JSON.
 //   qml6 -I stubs app.qml -- <main.qml> <actions> <expected>
 // actions is "dump", or one or more of "compact" (click the panel icon),
-// "reload" (what the widget's timer does) and the text of a button to click,
+// "reload" (what the widget's timer does), "later" (the clock moves an hour on
+// with no new read, as it does between the timer's runs) and the text of a button to click,
 // joined by "+" and done a second apart. After the last action the page is
 // printed once its agents mention <expected> (or after 10 seconds, or a second
 // when <expected> is empty); "during" is how the widget looked right after the
@@ -75,6 +76,8 @@ Item {
             app.compactRepresentationItem.clicked(null);
         } else if (action === "reload") {
             app.load();
+        } else if (action === "later") {
+            app.now += 3600 * 1000;
         } else {
             let button = null;
             walk(app.fullRepresentationItem, item => {
