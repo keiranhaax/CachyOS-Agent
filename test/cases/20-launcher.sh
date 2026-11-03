@@ -762,12 +762,17 @@ cleanup_sandbox
 
 begin "launch --local registers Ollama in pi for the run only"
 setup
-stub pi 'printf "%s|%s" "${CACHYOS_AGENT_LOCAL_MODEL-unset}" "${CACHYOS_AGENT_LOCAL_URL-unset}" >"${self%/stubs/*}/pi-env"'
+stub pi 'printf "%s|%s|%s" "${CACHYOS_AGENT_LOCAL_MODEL-unset}" "${CACHYOS_AGENT_LOCAL_URL-unset}" "${CACHYOS_AGENT_LOCAL_CTX-unset}" >"${self%/stubs/*}/pi-env"'
 choose_local_model 'qwen3:8b'
 CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local --prompt "-go now"
 expect "$RC" 0 "exit status"
 expect "$(last_call pi)" "--extension|$REPO_ROOT/data/pi-ollama.ts|--provider|ollama|--model|qwen3:8b|--|-go now" "pi arguments"
-expect "$(<"$SANDBOX/pi-env")" "qwen3:8b|http://127.0.0.1:11434/v1" "extension environment"
+expect "$(<"$SANDBOX/pi-env")" "qwen3:8b|http://127.0.0.1:11434/v1|4096" "extension environment: a model that is no recipe has Ollama's default window"
+choose_local_model 'qwen3.8-27b'
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local
+expect "$(<"$SANDBOX/pi-env")" "qwen3.8-27b|http://127.0.0.1:11434/v1|32768" "extension environment: a recipe has the context it was created with"
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local-model qwen3-coder-next
+expect "$(<"$SANDBOX/pi-env")" "qwen3-coder-next|http://127.0.0.1:11434/v1|65536" "extension environment: --local-model names a recipe too"
 [[ -f $REPO_ROOT/data/pi-ollama.ts ]] || fail "the extension is not shipped"
 ok
 cleanup_sandbox
@@ -839,7 +844,7 @@ setup
 stub_agents pi konsole
 choose_local_model 'qwen3:8b'
 run "$CA" launch --local
-contains "$(last_call konsole)" "|env|CACHYOS_AGENT_LOCAL_MODEL=qwen3:8b|CACHYOS_AGENT_LOCAL_URL=http://127.0.0.1:11434/v1|pi|--extension|" "terminal command"
+contains "$(last_call konsole)" "|env|CACHYOS_AGENT_LOCAL_MODEL=qwen3:8b|CACHYOS_AGENT_LOCAL_URL=http://127.0.0.1:11434/v1|CACHYOS_AGENT_LOCAL_CTX=4096|pi|--extension|" "terminal command"
 ok
 cleanup_sandbox
 
@@ -1075,7 +1080,7 @@ setup
 if ! command -v kwriteconfig6 >/dev/null; then
   skip "kwriteconfig6 is not installed"
 else
-  for combo in A F5 ',' Meta Meta+Ctrl Shift+Alt Meta+Meta Super+A Meta+Alt+ Meta++A 'Meta+A+' 'Meta+ ' $'Meta+\t' $'Meta+A\nB' 'Meta+A B' 'Meta+A;touch x' '-h' ''; do
+  for combo in A F5 ',' Meta Meta+Ctrl Shift+Alt Meta+Meta Super+A Meta+Alt+ Meta++A 'Meta+A+' 'Meta+ ' $'Meta+\t' $'Meta+A\nB' 'Meta+A B' 'Meta+A;touch x' '--bogus' ''; do
     run "$CA" shortcut set "$combo"
     [[ $RC == 1 ]] || fail "accepted [$combo]"
   done
@@ -1144,6 +1149,20 @@ else
     console.log(calls);
   ' "$REPO_ROOT/data/pi-ollama.ts" 2>/dev/null)
   expect "$idle" 0 "no registration without the launcher's environment"
+  # Ollama cuts every prompt at the context it loaded the model with, so the
+  # window pi plans for is the launcher's CACHYOS_AGENT_LOCAL_CTX, and short of
+  # one the smallest window Ollama defaults to.
+  window() {
+    CACHYOS_AGENT_LOCAL_MODEL='m' CACHYOS_AGENT_LOCAL_URL='http://127.0.0.1:11434/v1' "$@" \
+      node --input-type=module -e '
+        const { default: extension } = await import(process.argv[1]);
+        extension({ registerProvider: (id, config) => console.log(config.models[0].contextWindow + " " + config.models[0].maxTokens) });
+      ' "$REPO_ROOT/data/pi-ollama.ts" 2>/dev/null
+  }
+  expect "$(window env CACHYOS_AGENT_LOCAL_CTX=65536)" "65536 8192" "a recipe's window"
+  expect "$(window env CACHYOS_AGENT_LOCAL_CTX=4096)" "4096 1024" "a window of 4096 leaves room for the prompt"
+  expect "$(window env)" "4096 1024" "no window given"
+  expect "$(window env CACHYOS_AGENT_LOCAL_CTX=lots)" "4096 1024" "a window that is no number"
   ok
 fi
 cleanup_sandbox

@@ -271,7 +271,7 @@ begin "the real commands that act on their arguments do nothing when --help foll
 make_sandbox
 for tool in systemctl claude kwriteconfig6 kreadconfig6 cachyos-agent-launch notify-send; do stub "$tool"; done
 for line in "usage schedule off --help" "usage schedule on -h" "account add claude --help" "crash 1234 --help" "crash capture on --help" \
-  "crash mute plasmashell --help" "shortcut unset --help" "shortcut set Meta+A -h" "theme follow on --help" "default claude --help" \
+  "crash mute plasmashell --help" "shortcut unset --help" "shortcut set Meta+A -h" "shortcut set -h" "theme follow on --help" "default claude --help" \
   "prompt --inline --help" "account use work --help" "local use best --help" "install claude --help"; do
   # shellcheck disable=SC2086 # the words are the point
   out=$("$AGENT" $line 2>&1) || fail "'$line' failed: $out"

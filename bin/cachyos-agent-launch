@@ -333,6 +333,22 @@ resolve_local_model() {
   fi
 }
 
+# The context window the local model runs with, in tokens. Ollama cuts every
+# prompt at the window it loaded the model with and says nothing, so an agent
+# that plans for more loses the start of its conversation. A recipe is created
+# with the context in data/local-models.tsv; any other model runs with Ollama's
+# own default, which is 4096 below 24 GiB of VRAM, and that is what is assumed.
+local_context() {
+  local id context
+  while IFS=$'\t' read -r id _ _ _ context _; do
+    if [[ $id == "$local_model" && $context =~ ^[0-9]+$ ]]; then
+      printf '%s' "$context"
+      return 0
+    fi
+  done <"$CACHYOS_AGENT_ROOT/data/local-models.tsv"
+  printf '4096'
+}
+
 # --local points the agent at the Ollama model through a launch-time overlay
 # this launcher owns, never by editing the agent's own config. Only agents with
 # such an overlay can be pointed there.
@@ -366,9 +382,10 @@ apply_local() {
       ;;
     pi)
       # Pi has no inline config. An extension registers the provider for this
-      # run only, leaving ~/.pi/agent/models.json alone; it reads the model and
-      # endpoint from the environment. The flags go before any -- prompt.
-      command=(env "CACHYOS_AGENT_LOCAL_MODEL=$local_model" "CACHYOS_AGENT_LOCAL_URL=$OLLAMA_URL"
+      # run only, leaving ~/.pi/agent/models.json alone; it reads the model,
+      # endpoint and context window from the environment. The flags go before
+      # any -- prompt.
+      command=(env "CACHYOS_AGENT_LOCAL_MODEL=$local_model" "CACHYOS_AGENT_LOCAL_URL=$OLLAMA_URL" "CACHYOS_AGENT_LOCAL_CTX=$(local_context)"
         pi --extension "$CACHYOS_AGENT_ROOT/data/pi-ollama.ts" --provider ollama --model "$local_model"
         "${command[@]:1}")
       ;;
