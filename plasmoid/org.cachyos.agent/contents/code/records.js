@@ -233,3 +233,11 @@ function summary(agents) {
         .map(agent => agent.name + " " + Math.round(100 * Math.max(...agent.limits.map(limit => limit.fraction))) + "%")
         .join(", ");
 }
+
+// Whether the panel icon should ask for attention, as Omarchy's bar icon
+// lights up: any limit window nearly full, or a prepaid balance down to its
+// last tenth. An agent's own limits are the account sessions start on, which
+// is the one that runs out.
+function alarming(agents) {
+    return agents.some(agent => agent.limits.some(limit => limit.high) || (agent.balance !== null && agent.balance.low));
+}

@@ -4,6 +4,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import org.kde.kirigami as Kirigami
+import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasma5support as Plasma5Support
 import org.kde.plasma.plasmoid
 import "../code/records.js" as Records
@@ -30,6 +31,7 @@ PlasmoidItem {
     property double now: Date.now()
 
     readonly property string problem: loadError || updateError
+    readonly property bool alarming: Records.alarming(agents)
 
     // The executable engine runs its source name through sh -c and runs a given
     // name once at a time, so these are fixed strings and never built from data.
@@ -108,6 +110,11 @@ PlasmoidItem {
         running: true
         onTriggered: root.now = Date.now()
     }
+
+    // A nearly full limit or a nearly spent balance is worth a look without
+    // opening the popup: NeedsAttention is the status a widget sets to ask the
+    // shell to point it out.
+    onAlarmingChanged: Plasmoid.status = alarming ? PlasmaCore.Types.NeedsAttentionStatus : PlasmaCore.Types.ActiveStatus
 
     // Show what is true now, not what the last timer tick found.
     onExpandedChanged: {

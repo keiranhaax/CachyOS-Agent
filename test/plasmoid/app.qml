@@ -7,9 +7,11 @@
 // joined by "+" and done a second apart. After the last action the page is
 // printed once its agents mention <expected> (or after 10 seconds, or a second
 // when <expected> is empty); "during" is how the widget looked right after the
-// first action and "settled" how it looked a second after each earlier one.
+// first action and "seen" how it looked just before each action.
 // test/cases/80-plasmoid.sh reads the line qml6 logs for it.
 import QtQuick
+import org.kde.plasma.core as PlasmaCore
+import org.kde.plasma.plasmoid
 
 Item {
     id: harness
@@ -23,7 +25,7 @@ Item {
     property int waited: 0
     property int done: 0
     property var during: null
-    property var settled: []
+    property var seen: []
 
     Loader {
         id: loader
@@ -60,6 +62,7 @@ Item {
             problem: app.problem,
             refreshing: app.refreshing,
             expanded: app.expanded,
+            attention: Plasmoid.status === PlasmaCore.Types.NeedsAttentionStatus,
             tooltip: app.toolTipSubText,
             compactIcon: app.compactRepresentationItem.children[0].source,
             agents: app.agents,
@@ -86,7 +89,7 @@ Item {
     }
 
     function finish() {
-        console.log("RESULT " + JSON.stringify(Object.assign(state(), { during: during, settled: settled })));
+        console.log("RESULT " + JSON.stringify(Object.assign(state(), { during: during, seen: seen })));
         Qt.quit();
     }
 
@@ -106,8 +109,7 @@ Item {
                     harness.finish();
                 } else if (harness.done < harness.actions.length) {
                     if (harness.done === 0 || harness.waited >= 1000) {
-                        if (harness.done > 0)
-                            harness.settled.push(harness.state());
+                        harness.seen.push(harness.state());
                         harness.act(harness.actions[harness.done]);
                         harness.done++;
                         harness.waited = 0;

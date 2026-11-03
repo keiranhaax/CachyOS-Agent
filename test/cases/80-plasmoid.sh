@@ -327,6 +327,26 @@ if command -v qml6 >/dev/null; then
   ok
   cleanup_sandbox
 
+  begin "records.js is alarming for a nearly full window or a nearly spent balance, as the panel icon is in Omarchy"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  alarming() {
+    local agents
+    agents=$(records '"load"' 0 "$(jq -Rs . <<<"$1")" '""' "$NOW" | jq -c .agents)
+    records '"alarming"' "$agents"
+  }
+  [[ $(alarming '[]') == false ]] || fail "no agents is calm"
+  [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "limits": [{"label": "S", "percent": 0.89}, {"label": "W", "percent": 0.2}],
+                  "balance": {"remaining": 11, "funded": 100}}]') == false ]] || fail "89% of a window and 11% of a balance are calm"
+  [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "limits": [{"label": "S", "percent": 0.2}, {"label": "W", "percent": 0.9}]}]') == true ]] \
+    || fail "one window at 90% is alarming"
+  [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "balance": {"remaining": 10, "funded": 100}}]') == true ]] || fail "a balance at 10% of its funding is alarming"
+  [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "balance": {"remaining": 0.5}}]') == false ]] || fail "a balance with no funding figure has nothing to be low against"
+  [[ $(alarming '[{"id": "a", "name": "A", "ready": true, "limits": [{"label": "S", "percent": 0.97, "resetsAt": "2026-11-02T17:59:00Z"}]}]') == false ]] \
+    || fail "a window that has reset reads 0% and is calm"
+  ok
+  cleanup_sandbox
+
   begin "records.js load turns usage records into what the widget draws"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
@@ -358,6 +378,7 @@ if command -v qml6 >/dev/null; then
                 and ([.limits[] | [.title, .percentText, .resetMs, .high]] == [["over", "100%", 0, true]])
                 and .notes == ["Limits may be out of date"]' \
     "hostile values are dropped or clamped, and a fetch time from the future is not believed"
+  [[ $(records '"alarming"' "$(jq -c .agents <<<"$out")") == true ]] || fail "a window at 95% and a balance at 5% should make the widget alarming"
   out=$(records '"summary"' "$(jq -c .agents <<<"$out")")
   [[ $out == '"Claude Code 95%, Codex 50%, <b>Evil</b><img src=x> 100%"' ]] || fail "the tooltip summary: $out"
   ok
@@ -408,6 +429,7 @@ esac'
                 and (.page.texts | map(select(contains("resets in 2h 10m"))) | length) == 1
                 and (.page.texts | index("Claude Code unavailable") | not)' "the active account's limits and the agent's notes are drawn twice"
   check "$out" '.page.notPlain == []' "text that is not plain text"
+  check "$out" '.attention' "a window at 95% should ask the panel for attention"
   qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
   [[ $(calls_of cachyos-agent) == 'usage --json' ]] || fail "the widget should run cachyos-agent usage --json once and nothing else: $(calls_of cachyos-agent)"
   [[ $(calls_of systemd-run) == '--user --scope --quiet -- cachyos-agent launch' ]] \
@@ -455,6 +477,22 @@ esac'
   ok
   cleanup_sandbox
 
+  begin "the panel icon asks for attention only while a limit is nearly full or a balance nearly spent"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  calm='[{"id": "codex", "name": "Codex Calm", "ready": true, "limits": [{"label": "Session", "percent": 0.5, "resetsAt": ""}]}]'
+  jq -c '. + [{id: "after", name: "After Update", ready: true}]' <<<"$calm" >"$SANDBOX/after.json"
+  export FIXTURE_AFTER=$SANDBOX/after.json
+  out=$(app Refresh "After Update")
+  check "$out" '.seen[0].attention and (.attention | not)' "the icon should ask for attention at 95% and stop once the records are calm"
+  echo "$calm" >"$FIXTURE"
+  unset FIXTURE_AFTER
+  out=$(app dump "")
+  check "$out" '.attention == false' "calm records should not ask for attention"
+  ok
+  cleanup_sandbox
+
   begin "a failed update is reported and the records are still read"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
@@ -474,8 +512,8 @@ esac'
   # The read the timer or the popup makes later finds good records: the red
   # message must not stay above them until the next Refresh.
   out=$(app Refresh+reload "Claude Code")
-  check "$out" '.settled[0].problem == "cachyos-agent usage update --force failed: claude: no network"
-                and (.settled[0].page.texts | index("cachyos-agent usage update --force failed: claude: no network"))' "the read right after the failed update should still say why"
+  check "$out" '.seen[1].problem == "cachyos-agent usage update --force failed: claude: no network"
+                and (.seen[1].page.texts | index("cachyos-agent usage update --force failed: claude: no network"))' "the read right after the failed update should still say why"
   check "$out" '.problem == "" and (.page.texts | index("cachyos-agent usage update --force failed: claude: no network") | not) and (.agents | length) == 7' \
     "a later successful read should drop the failed update's message"
   [[ $(calls_of cachyos-agent) == $'usage --json\nusage update --force\nusage --json\nusage --json' ]] || fail "expected a read, the update, a read, then the later read; got: $(calls_of cachyos-agent)"
