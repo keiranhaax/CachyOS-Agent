@@ -524,6 +524,11 @@ check "$(printf 'scoped\t%s\trefs/heads/main\t%s\tother' "$SRC" "$REVIEWED")"
 [[ $status -eq 1 && $out == *"(1 in-scope commit(s) under: other)"* ]] || fail "a row with a change in scope ($status): $out"
 check "$(printf 'same\t%s\trefs/heads/main\t%s' "$SRC" "$HEAD_COMMIT")" "$(printf 'plain\t%s\trefs/heads/main\t%s' "$SRC" "$REVIEWED")"
 [[ $status -eq 1 && $out == *"current: same"* && $out == *"review required: plain"* && $out == *"1 of 2 upstream branch(es) changed"* ]] || fail "one row current, one not ($status): $out"
+# A reviewed commit the upstream no longer has (force-pushed away) cannot be compared in scope. Saying the
+# scope is clean then would report all clear when nothing could be checked.
+check "$(printf 'lost\t%s\trefs/heads/main\t0123456789abcdef0123456789abcdef01234567\twatched' "$SRC")"
+[[ $status -eq 1 && $out == *"review required: lost 0123456789ab -> ${HEAD_COMMIT:0:12} (scoped fetch failed; treating as changed)"* ]] || fail "a reviewed commit that cannot be fetched ($status): $out"
+[[ $out != *"current in scope"* ]] || fail "an unreadable scope was called current: $out"
 ok
 cleanup_sandbox
 
