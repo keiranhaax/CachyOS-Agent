@@ -44,6 +44,6 @@ if [[ -t 0 ]]; then
 fi
 
 account=$(cachyos-agent-account-state remove "$provider" "$2")
-echo "Forgot $(jq -r .label <<<"$account")."
+echo "Forgot $(jq -r "$ACCT_JQ_CLEAN"' .label | clean' <<<"$account")."
 # The usage record names the accounts that exist.
 acct_usage_refresh --limits-only "$provider"

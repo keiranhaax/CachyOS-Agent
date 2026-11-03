@@ -10,6 +10,13 @@
 
 ACCT_PROVIDERS=(claude codex grok)
 
+# jq text for any command that prints an account's label, email or plan, which
+# come from the CLI's own files and a vendor's response and can hold an escape
+# sequence: put it before the program, as in jq -r "$ACCT_JQ_CLEAN"' .label | clean'.
+# It drops every control character, C1 included (U+009B is an escape on some
+# terminals), as the usage report does; a tab would also shift columns.
+ACCT_JQ_CLEAN='def clean: if type == "string" then gsub("[\u0000-\u001f\u007f-\u009f]"; "") else . end;'
+
 # acct_is_provider <word>: whether the word names a provider with accounts.
 # Compared whole: a word that holds several names, such as "codex grok", is
 # not one of them.

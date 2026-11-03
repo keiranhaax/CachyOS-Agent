@@ -269,7 +269,7 @@ first_sign_in() {
 
 # One line naming an account: its label, and its email when it has one.
 describe() {
-  jq -r 'if type == "array" then . else [.] end | map(.label + (if .email != "" then " (" + .email + ")" else "" end)) | join(", ")'
+  jq -r "$ACCT_JQ_CLEAN"' if type == "array" then . else [.] end | map((.label | clean) + (if (.email | clean) != "" then " (" + (.email | clean) + ")" else "" end)) | join(", ")'
 }
 
 additional_sign_in() {

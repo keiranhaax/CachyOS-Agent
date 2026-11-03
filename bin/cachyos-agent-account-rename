@@ -36,6 +36,6 @@ fi
 provider=$1
 
 account=$(cachyos-agent-account-state rename "$@")
-echo "Renamed to $(jq -r .label <<<"$account"). Switch to it with: cachyos-agent account use $provider $(jq -r .id <<<"$account")"
+echo "Renamed to $(jq -r "$ACCT_JQ_CLEAN"' .label | clean' <<<"$account"). Switch to it with: cachyos-agent account use $provider $(jq -r .id <<<"$account")"
 # The usage record names the accounts.
 acct_usage_refresh --limits-only "$provider"

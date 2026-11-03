@@ -11,6 +11,7 @@ AGENT=$REPO_ROOT/bin/cachyos-agent
 
 # The stubs sign in as whoever FIX_ID and FIX_EMAIL name when they run, so one
 # test plays several accounts. FIX_NOLOGIN makes a login that writes nothing.
+# FIX_TIER and FIX_SUB set what Claude's credentials say of the plan.
 # Each login appends what it saw to $SANDBOX/logins.
 # shellcheck disable=SC2016 # a program for the stub's own bash, expanded when it runs
 CLAUDE_STUB='
@@ -23,7 +24,7 @@ if [[ ${1-} == auth && ${2-} == login ]]; then
     [[ -n ${CLAUDE_CONFIG_DIR:-} ]] || account_file=$HOME/.claude.json
     mkdir -p "$home"
     printf "{\"oauthAccount\":{\"accountUuid\":\"%s\",\"emailAddress\":\"%s\",\"organizationName\":\"Org\"}}\n" "$FIX_ID" "$FIX_EMAIL" >"$account_file"
-    printf "{\"claudeAiOauth\":{\"accessToken\":\"SECRET-ACCESS\",\"refreshToken\":\"SECRET-REFRESH\",\"rateLimitTier\":\"default_claude_max_5x\",\"subscriptionType\":\"max\"}}\n" >"$home/.credentials.json"
+    printf "{\"claudeAiOauth\":{\"accessToken\":\"SECRET-ACCESS\",\"refreshToken\":\"SECRET-REFRESH\",\"rateLimitTier\":\"%s\",\"subscriptionType\":\"%s\"}}\n" "${FIX_TIER:-default_claude_max_5x}" "${FIX_SUB:-max}" >"$home/.credentials.json"
   fi
   if [[ -n ${BROWSER:-} ]]; then "$BROWSER" https://claude.ai/oauth; fi
 else
@@ -356,6 +357,28 @@ ok
 cleanup_sandbox
 
 # ---- use, home -----------------------------------------------------------------
+
+begin "use and add print no control characters from an account's label, email or plan"
+setup
+stub notify-send
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+sign_in claude u-main main@example.com
+# What the CLI wrote is vendor text; JSON carries the escape as \u001b, and an unnamed account is
+# labelled by the start of its email.
+add_out=$(FIX_TIER=none FIX_SUB='pro\u001b[2Jx' FIX_ID=u-evil FIX_EMAIL='evil\u001b[31m@example.com' "$AGENT" account add claude)
+[[ $add_out != *$'\033'* ]] || fail "add printed an escape sequence: $(printf '%q' "$add_out")"
+[[ $add_out == *"Added evil[31m (evil[31m@example.com)."* ]] || fail "add said: $(printf '%q' "$add_out")"
+id=$(registry claude '.accounts[1].id')
+use_out=$("$AGENT" account use claude "$id")
+[[ $use_out != *$'\033'* ]] || fail "use printed an escape sequence: $(printf '%q' "$use_out")"
+[[ $use_out == "New Claude sessions now use evil[31m (Pro[2Jx). Running sessions stay on "* ]] || fail "use said: $(printf '%q' "$use_out")"
+back_out=$("$AGENT" account use claude main)
+[[ $back_out == *"Running sessions stay on evil[31m."* && $back_out != *$'\033'* ]] || fail "the account left was named: $(printf '%q' "$back_out")"
+! grep -q $'\033' "$SANDBOX/calls/notify-send" || fail "the notification carried an escape sequence"
+rm_out=$("$AGENT" account remove claude "$id" </dev/null)
+[[ $rm_out != *$'\033'* ]] || fail "remove printed an escape sequence: $(printf '%q' "$rm_out")"
+ok
+cleanup_sandbox
 
 begin "use switches the account new sessions start as and home prints its path, nothing for Main"
 setup

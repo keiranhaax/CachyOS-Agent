@@ -41,9 +41,9 @@ provider=$1
 
 result=$(cachyos-agent-account-state use "$provider" "${2:-next}")
 
-previous=$(jq -r .previous.label <<<"$result")
-label=$(jq -r .active.label <<<"$result")
-active=$(jq -r '.active.label + (if (.active.plan // "") != "" then " (" + .active.plan + ")" else "" end)' <<<"$result")
+previous=$(jq -r "$ACCT_JQ_CLEAN"' .previous.label | clean' <<<"$result")
+label=$(jq -r "$ACCT_JQ_CLEAN"' .active.label | clean' <<<"$result")
+active=$(jq -r "$ACCT_JQ_CLEAN"' (.active.plan | clean) as $plan | (.active.label | clean) + (if ($plan // "") != "" then " (" + $plan + ")" else "" end)' <<<"$result")
 
 if [[ $(jq -r .previous.id <<<"$result") == "$(jq -r .active.id <<<"$result")" ]]; then
   echo "New $ACCT_NAME sessions already use $active."
