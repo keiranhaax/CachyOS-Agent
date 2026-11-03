@@ -349,6 +349,68 @@ sign_in codex u-cx2 cx2@example.com Second
 ok
 cleanup_sandbox
 
+# ---- rename, remove ------------------------------------------------------------
+
+begin "rename changes the label and the id but leaves the home where sessions are using it"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+"$AGENT" account use claude work >/dev/null 2>&1
+out=$("$AGENT" account rename claude work Work Laptop)
+[[ $out == "Renamed to Work Laptop. Switch to it with: cachyos-agent account use claude work-laptop" ]] || fail "rename said: $out"
+[[ $(registry claude '.accounts[1] | [.id, .label, .home] | join(",")') == "work-laptop,Work Laptop,$STATE/accounts/claude/work" && -d $STATE/accounts/claude/work ]] \
+  || fail "rename moved or mislabelled the account: $(registry claude '.accounts[1]')"
+[[ $(registry claude .active) == work-laptop && $("$AGENT" account home claude) == "$STATE/accounts/claude/work" ]] || fail "the active account lost its selection"
+"$AGENT" account rename claude primary Home >/dev/null 2>&1
+[[ $(registry claude '.accounts[0] | [.id, .label, .primary] | join(",")') == "home,Home,true" ]] || fail "the primary was not renamed"
+"$AGENT" account use claude primary >/dev/null 2>&1
+[[ $(registry claude .active) == home ]] || fail "'primary' no longer selects the first login after a rename"
+"$AGENT" account rename claude home Next >/dev/null 2>&1
+[[ $(registry claude '.accounts[0].id') == next-2 ]] || fail "a reserved word became an id: $(registry claude '.accounts[0].id')"
+"$AGENT" account rename claude work-laptop Next >/dev/null 2>&1
+[[ $(registry claude '.accounts[1].id') == next-3 ]] || fail "a taken id was reused: $(registry claude '.accounts[1].id')"
+if "$AGENT" account rename claude work-laptop >/dev/null 2>&1; then fail "rename without a name was accepted"; fi
+if "$AGENT" account rename claude nobody Name >/dev/null 2>&1; then fail "an unknown account was renamed"; fi
+ok
+cleanup_sandbox
+
+begin "remove deletes only the account's home, never the primary or one a session is using"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+home=$STATE/accounts/claude/work
+mkdir -p "$HOME/.claude/projects" && echo keep >"$HOME/.claude/projects/keep.txt"
+stub cachyos-agent-usage-update
+if out=$("$AGENT" account remove claude main 2>&1 </dev/null); then fail "the primary account was removed"; fi
+[[ $out == *"can't be removed here"* ]] || fail "no explanation: $out"
+env CLAUDE_CONFIG_DIR="$home" sleep 30 &
+session=$!
+if out=$("$AGENT" account remove claude work 2>&1 </dev/null); then fail "an account in use was removed"; fi
+[[ $out == *"A running Claude session uses Work"* && -d $home ]] || fail "no refusal for a running session: $out"
+kill "$session"
+wait "$session" 2>/dev/null || true
+"$AGENT" account use claude work >/dev/null 2>&1
+out=$("$AGENT" account remove claude work </dev/null)
+[[ $out == "Forgot Work." ]] || fail "remove said: $out"
+[[ ! -e $home && -f $HOME/.claude/projects/keep.txt && -f $HOME/.claude/.credentials.json ]] || fail "remove deleted the wrong files"
+[[ $(registry claude '[.accounts[].id] | join(",")') == main && $(registry claude .active) == main ]] || fail "registry after remove: $(<"$STATE/accounts/claude.json")"
+eventually called cachyos-agent-usage-update "--limits-only" || fail "the usage record was not refreshed"
+if "$AGENT" account remove claude work >/dev/null 2>&1 </dev/null; then fail "an account was removed twice"; fi
+ok
+cleanup_sandbox
+
+begin "remove asks first in a terminal and keeps the account unless told yes"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+answer() { printf '%s\n' "$1" | script -qefc "$AGENT account remove claude work" /dev/null; }
+if out=$(answer n); then fail "declining the prompt succeeded"; fi
+[[ $out == *"Forget the claude account work?"* && -d $STATE/accounts/claude/work ]] || fail "the prompt did not protect the account: $out"
+answer y >/dev/null || fail "confirming the prompt failed"
+[[ ! -e $STATE/accounts/claude/work ]] || fail "the account survived a yes"
+ok
+cleanup_sandbox
+
 # ---- exec ----------------------------------------------------------------------
 
 begin "exec runs the provider CLI as the selected account and pins it for children"
