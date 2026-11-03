@@ -64,7 +64,8 @@ add_amd_card() {
 # `ollama list` prints, ps what `ollama ps` prints, pull-fails makes a pull
 # fail, create-fails makes a create fail, and create-hangs makes a create record
 # create-started and wait on the hang fifo for a signal. `systemctl enable|start`
-# begins the service, stop ends it, and the stubbed pacman makes an ollama
+# begins the service, stop ends it, by-hand makes the server answer without the unit
+# being active, and the stubbed pacman makes an ollama
 # appear, as installing the package would. `pacman -Q <pkg>` succeeds unless
 # not-installed-<pkg> exists, and installing <pkg> removes that file. df reports
 # 10 TB free on the models directory, a directory in the sandbox, unless a test
@@ -89,7 +90,7 @@ exit 0'
 state=${self%/stubs/*}
 case $1 in
   is-active)
-    if [[ -e $state/running ]]; then [[ ${2-} == --quiet ]] || echo active; exit 0; fi
+    if [[ -e $state/running && ! -e $state/by-hand ]]; then [[ ${2-} == --quiet ]] || echo active; exit 0; fi
     [[ ${2-} == --quiet ]] || echo inactive
     exit 3 ;;
   start | enable) : >"$state/running" ;;
@@ -633,10 +634,27 @@ expect_no_calls sudo
   || fail "pacman calls were: $(calls pacman)"
 answer y local use best
 ((RC == 0)) || fail "reply y exited $RC: $OUT"
-expect_calls sudo "pacman -S --needed ollama-cuda"
+# The running server loaded its runners before the package came, so it has to start again.
+expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl restart ollama.service"
+expect_in "Restarting ollama.service so it loads the GPU libraries."
 answer n local use best
 [[ $OUT != *"Install ollama-cuda"* ]] || fail "asked again after installing the package: $OUT"
+expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl restart ollama.service"
+ok
+cleanup_sandbox
+
+begin "a server that was not started by the unit is not restarted for the GPU package: use says so"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+: >"$SANDBOX/by-hand"
+: >"$SANDBOX/not-installed-ollama-cuda"
+answer y local use best
+((RC == 0)) || fail "use exited $RC: $OUT"
 expect_calls sudo "pacman -S --needed ollama-cuda"
+expect_in "The Ollama that is running was not started by ollama.service: restart it to load the GPU libraries."
 ok
 cleanup_sandbox
 

@@ -277,7 +277,25 @@ ensure_ollama() {
     ca_cmd_present ollama || ca_die "ollama is still not on PATH after installing $pkg"
   elif [[ $pkg != ollama ]] && ca_cmd_present pacman && ! pacman -Q "$pkg" >/dev/null 2>&1; then
     printf 'Ollama is installed without GPU support: the ollama package alone is CPU-only.\n' >&2
-    install_package "$pkg" || printf 'Continuing without it: models will run on the CPU, slowly.\n' >&2
+    if install_package "$pkg"; then
+      reload_server
+    else
+      printf 'Continuing without it: models will run on the CPU, slowly.\n' >&2
+    fi
+  fi
+}
+
+# reload_server: a running Ollama looks for its GPU runners once, when it starts, so the
+# one that was already up when the GPU package arrived keeps serving from the CPU. One
+# that is not running is started by start_service with the runners in place.
+reload_server() {
+  server_up || return 0
+  if ca_cmd_present systemctl && systemctl is-active --quiet "$SERVICE"; then
+    printf 'Restarting %s so it loads the GPU libraries.\n' "$SERVICE" >&2
+    sudo systemctl restart "$SERVICE"
+    wait_for_server
+  else
+    printf 'The Ollama that is running was not started by %s: restart it to load the GPU libraries.\n' "$SERVICE" >&2
   fi
 }
 
