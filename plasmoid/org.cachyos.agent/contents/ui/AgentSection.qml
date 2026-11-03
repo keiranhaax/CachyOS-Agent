@@ -9,7 +9,9 @@ import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
 
 // One agent: its name and plan, then its limits or prepaid balance, its
-// tokens, and each of its accounts when it has several.
+// tokens, and each of its accounts when it has several. Several accounts
+// take the place of the agent's own limits: the record's limits describe the
+// active account, which is listed with the others.
 ColumnLayout {
     id: section
 
@@ -41,6 +43,7 @@ ColumnLayout {
 
     LimitList {
         Layout.fillWidth: true
+        visible: !section.agent.multi
         notes: section.agent.notes
         limits: section.agent.limits
         now: section.now
@@ -92,7 +95,7 @@ ColumnLayout {
     }
 
     Repeater {
-        model: section.agent.accounts
+        model: section.agent.multi ? section.agent.accounts : []
 
         ColumnLayout {
             id: account

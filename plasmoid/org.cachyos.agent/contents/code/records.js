@@ -181,6 +181,7 @@ function accountView(account, now) {
 function agentView(record, now) {
     const today = count(record.todayTotalTokens);
     const week = weekTokens(record.recentDays);
+    const accounts = Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(account => accountView(account, now)) : [];
     return {
         name: String(record.name || record.id || "Unknown agent"),
         ready: record.ready === true,
@@ -189,7 +190,10 @@ function agentView(record, now) {
         balance: balanceView(record.balance),
         tokensText: today > 0 || week > 0 ? "Tokens: " + tokens(today) + " today, " + tokens(week) + " this week" : "",
         notes: ageNotes(record.updatedAt, now).concat(notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now)),
-        accounts: Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(account => accountView(account, now)) : []
+        // With several accounts each lists its own limits and notes, so the
+        // agent's, which describe the active one, are not drawn again.
+        multi: accounts.length > 1,
+        accounts: accounts
     };
 }
 
