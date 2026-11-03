@@ -1,0 +1,32 @@
+# Recipes for `cachyos-agent local`: open models Ollama can run for your agents.
+#
+# Columns, separated by one tab:
+#   id             name you type, and the model name clients send to the endpoint
+#   ollama_model   tag pulled from the Ollama library
+#   min_vram_gib   GPU memory that holds the whole model and its context cache
+#   min_ram_gib    system RAM that holds them with room left for the desktop
+#   context        tokens of context the model is created with (Ollama's own
+#                  default is 4K below 24 GiB of VRAM, too small for an agent)
+#   download_gb    size of the download in GB as the library lists it, rounded
+#                  up; `local use` asks before a download that would not leave
+#                  10 GB free on the filesystem that holds the models
+#   note           shown by `local list`
+#
+# The thresholds are estimates, rounded up: the library's download size, plus a
+# context cache sized from each model's layers and KV heads, plus 1.5 GiB of
+# compute buffers on the GPU or 8 GiB of headroom in RAM. A machine under
+# min_vram_gib still runs the model by spilling layers into RAM, only slower.
+# `local use best` takes the first row that fits in GPU memory, else the first
+# that fits in RAM, so keep the strongest model first.
+#
+# Every ollama_model was checked on https://ollama.com/library/<model>/tags on
+# 2026-11-02 (tag present, tool calling listed, size as in download_gb).
+# Re-check the tags before changing this file.
+qwen3-coder-next	qwen3-coder-next:q4_K_M	52	58	65536	52	80B MoE, 3B active per token. Agentic coding, 256K native context
+gpt-oss-120b	gpt-oss:120b	65	71	65536	65	OpenAI open-weight model for agentic tasks
+qwen3.8-27b	qwen3.8:27b	20	27	32768	18	Qwen3.8 for coding and long-horizon agentic work
+qwen3.6-35b-coding	qwen3.6:35b-a3b-coding	25	31	32768	24	35B MoE, 3B active per token. Qwen3.6 coding variant
+qwen3-coder-30b	qwen3-coder:30b	23	29	32768	19	30B MoE, 3.3B active per token. Qwen3-Coder
+devstral-small-2	devstral-small-2:24b	21	27	32768	15	Mistral 24B for tool use in codebases; needs Ollama 0.13.3 or later
+gpt-oss-20b	gpt-oss:20b	16	22	32768	14	OpenAI open-weight model for agentic tasks
+ornith-9b	ornith:9b	8	15	32768	6	Ornith 1.0 9B, built for agentic coding

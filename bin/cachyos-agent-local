@@ -1,0 +1,511 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-local (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Run open models on this machine for your agents
+# cachyos-agent:args=<list|use|start|stop|status|remove> [args]
+# cachyos-agent:examples=cachyos-agent local list | cachyos-agent local use best | cachyos-agent local status | cachyos-agent launch --local
+#
+# Open models for your agents, served by Ollama on 127.0.0.1:11434. Omarchy
+# runs its models in Podman containers; on CachyOS the Ollama package already
+# ships the service, so this is a thin layer over `ollama` and its systemd unit.
+# The contract with `cachyos-agent launch --local` is the file
+# $CACHYOS_AGENT_STATE_DIR/local/active (one model name) and the fixed endpoint.
+#
+# Test overrides, read only when set: CACHYOS_AGENT_MEMINFO is a file read in
+# place of /proc/meminfo, CACHYOS_AGENT_DRM_DIR a directory read in place of
+# /sys/class/drm, CACHYOS_AGENT_MODELS_DIR the directory whose free space is
+# checked in place of /var/lib/ollama.
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+ENDPOINT=http://127.0.0.1:11434/v1
+# The Arch package ships a system unit (User=ollama, models kept under
+# /var/lib/ollama, WantedBy=multi-user.target), not a user unit, so starting it
+# takes sudo. See the package's PKGBUILD on gitlab.archlinux.org.
+SERVICE=ollama.service
+RECIPES=$CACHYOS_AGENT_ROOT/data/local-models.tsv
+ACTIVE_FILE=$CACHYOS_AGENT_STATE_DIR/local/active
+ID_RE='^[a-z0-9][a-z0-9._-]*$'
+NUMBER_RE='^[1-9][0-9]*$'
+NVIDIA_LINE_RE='^[[:space:]]*([0-9]+)[[:space:]]*,[[:space:]]*([0-9]+)\.([0-9]+)[[:space:]]*$'
+CUDA_MIN_CC=75          # compute capability 7.5, times ten
+AMD_MIN_VRAM=4294967296 # 4 GiB, in bytes
+DISK_MARGIN_GB=10       # left free on the models' filesystem after a download
+
+# The endpoint above is the one clients are told about, so every ollama call
+# here must reach that server whatever OLLAMA_HOST says in the caller's shell.
+export OLLAMA_HOST=127.0.0.1:11434
+
+R_ID=() R_MODEL=() R_VRAM=() R_RAM=() R_CTX=() R_DL=() R_NOTE=()
+declare -A R_INDEX=()
+RAM_GIB=0
+VRAM_GIB=0
+GPU_VENDOR=none
+MODELFILE='' # the temporary Modelfile create_model writes, for its EXIT trap
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent local <command> [args]
+
+Commands:
+  list            Every recipe, and whether it fits this machine
+  use best|<id>   Install Ollama if needed, download a model and make it the
+                  one `cachyos-agent launch --local` opens an agent on
+  start           Start the Ollama service
+  stop            Stop the Ollama service and free the memory its models hold
+  status          Service state, loaded models, the active model and the endpoint
+  remove <id>     Delete a model and its download
+
+`use`, `start` and `stop` run sudo (pacman, systemctl) in this terminal, so run
+them from one. Models are served at http://127.0.0.1:11434/v1; the recipe id is the
+model name, and any API key text is accepted.
+USAGE
+}
+
+usage_error() {
+  printf '%s\n\n' "$1" >&2
+  usage >&2
+  exit 2
+}
+
+# --- Recipes -----------------------------------------------------------------
+
+# Parse data/local-models.tsv once into the R_* arrays. The file ships in the
+# package, so a bad row is a bug there and stops everything with its line number.
+# The numbers must be positive and have no leading zero: bash would read 08 as
+# a bad octal number and 010 as 8.
+load_recipes() {
+  local line id model vram ram ctx download note n=0
+  [[ -r $RECIPES ]] || ca_die "cannot read $RECIPES"
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    if [[ -z $line || $line == '#'* ]]; then continue; fi
+    IFS=$'\t' read -r id model vram ram ctx download note <<<"$line"
+    if ! [[ $id =~ $ID_RE && $model =~ ^[^[:space:]]+$ && $vram =~ $NUMBER_RE &&
+      $ram =~ $NUMBER_RE && $ctx =~ $NUMBER_RE && $download =~ $NUMBER_RE && -n $note ]]; then
+      ca_die "$RECIPES:$n: malformed recipe row"
+    fi
+    if [[ -n ${R_INDEX[$id]+x} ]]; then ca_die "$RECIPES:$n: duplicate recipe id $id"; fi
+    R_INDEX[$id]=${#R_ID[@]}
+    R_ID+=("$id") R_MODEL+=("$model") R_VRAM+=("$vram") R_RAM+=("$ram") R_CTX+=("$ctx") R_DL+=("$download") R_NOTE+=("$note")
+  done <"$RECIPES"
+  if ((${#R_ID[@]} == 0)); then ca_die "$RECIPES has no recipes"; fi
+}
+
+# recipe_index <id>: print the position of a recipe. The id is checked against
+# the id pattern first, which keeps '@' and '*' from ever reaching the lookup.
+recipe_index() {
+  [[ $1 =~ $ID_RE && -n ${R_INDEX[$1]+x} ]] || return 1
+  printf '%s\n' "${R_INDEX[$1]}"
+}
+
+# --- This machine ------------------------------------------------------------
+
+# Total RAM in GiB, rounded to the nearest. MemTotal is a little under what is
+# installed, so a 64 GiB machine reads 63.
+detect_ram() {
+  local key kb _
+  while read -r key kb _; do
+    if [[ $key == MemTotal: ]]; then
+      RAM_GIB=$(((kb + 524288) / 1048576))
+      return 0
+    fi
+  done <"${CACHYOS_AGENT_MEMINFO:-/proc/meminfo}"
+  ca_die "cannot read MemTotal from ${CACHYOS_AGENT_MEMINFO:-/proc/meminfo}"
+}
+
+# nvidia_mib: print the MiB of memory.total of every NVIDIA card the CUDA build
+# can use, added together; a card sold as 8 GB reports 8188. Arch's ollama-cuda
+# is built for compute capability 7.5 and newer (CMAKE_CUDA_ARCHITECTURES in its
+# PKGBUILD), so an older card, a GTX 10 series for one, would run on the CPU
+# whatever it holds. nvidia-smi is silent when the driver is not loaded, and a
+# line that is not "<MiB>, <major>.<minor>" counts for nothing.
+nvidia_mib() {
+  local line total=0
+  while IFS= read -r line; do
+    if [[ $line =~ $NVIDIA_LINE_RE ]] && ((10#${BASH_REMATCH[2]} * 10 + 10#${BASH_REMATCH[3]} >= CUDA_MIN_CC)); then
+      total=$((total + 10#${BASH_REMATCH[1]}))
+    fi
+  done < <(nvidia-smi --query-gpu=memory.total,compute_cap --format=csv,noheader,nounits 2>/dev/null || true)
+  echo "$total"
+}
+
+# amd_bytes: print the bytes of VRAM amdgpu reports for every card with at
+# least AMD_MIN_VRAM, added together. A smaller figure is the carve-out of an
+# integrated GPU: no card to size a model by, and not worth the ollama-rocm
+# package, which pulls in the ROCm libraries.
+amd_bytes() {
+  local line file total=0
+  for file in "${CACHYOS_AGENT_DRM_DIR:-/sys/class/drm}"/card*/device/mem_info_vram_total; do
+    [[ -r $file ]] || continue
+    IFS= read -r line <"$file" || true
+    if [[ $line =~ ^[0-9]+$ ]] && ((10#$line >= AMD_MIN_VRAM)); then total=$((total + 10#$line)); fi
+  done
+  echo "$total"
+}
+
+# GPU vendor and the VRAM of all its usable cards together, in GiB rounded to
+# the nearest. NVIDIA first, then AMD.
+detect_gpu() {
+  local total
+  GPU_VENDOR=none
+  VRAM_GIB=0
+  if ca_cmd_present nvidia-smi; then
+    total=$(nvidia_mib)
+    if ((total > 0)); then
+      GPU_VENDOR=nvidia
+      VRAM_GIB=$(((total + 512) / 1024))
+      return 0
+    fi
+  fi
+  total=$(amd_bytes)
+  if ((total > 0)); then
+    GPU_VENDOR=amd
+    VRAM_GIB=$(((total + 536870912) / 1073741824))
+  fi
+}
+
+gpu_phrase() {
+  case $GPU_VENDOR in
+    nvidia) printf 'NVIDIA GPU with %d GiB VRAM' "$VRAM_GIB" ;;
+    amd) printf 'AMD GPU with %d GiB VRAM' "$VRAM_GIB" ;;
+    *) printf 'no supported GPU' ;;
+  esac
+}
+
+# fit_of <index>: gpu when the model stays on the GPU, cpu when it only fits
+# with part or all of it in RAM (Ollama splits the layers by itself, slower),
+# no when neither does.
+fit_of() {
+  if ((VRAM_GIB >= R_VRAM[$1])); then
+    echo gpu
+  elif ((RAM_GIB >= R_RAM[$1])); then
+    echo cpu
+  else
+    echo no
+  fi
+}
+
+fit_reason() {
+  local i=$1
+  case $(fit_of "$i") in
+    gpu) printf 'fits in GPU memory' ;;
+    cpu)
+      if [[ $GPU_VENDOR == none ]]; then
+        printf 'no supported GPU, so it runs from the %d GiB of RAM, slowly' "$RAM_GIB"
+      else
+        printf 'needs %d GiB VRAM to stay on the GPU; this GPU has %d GiB, so the rest runs from RAM, slower' "${R_VRAM[i]}" "$VRAM_GIB"
+      fi
+      ;;
+    *) printf 'needs %d GiB RAM or %d GiB VRAM; this machine has %d GiB RAM and %d GiB VRAM' "${R_RAM[i]}" "${R_VRAM[i]}" "$RAM_GIB" "$VRAM_GIB" ;;
+  esac
+}
+
+# pick_best: print the index of the first recipe (the file lists the strongest
+# first) that fits in GPU memory, else the first that fits in RAM.
+pick_best() {
+  local want i
+  for want in gpu cpu; do
+    for i in "${!R_ID[@]}"; do
+      if [[ $(fit_of "$i") == "$want" ]]; then
+        echo "$i"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# --- Ollama ------------------------------------------------------------------
+
+# True when the server answers. `ollama list` is the cheapest call that needs it.
+server_up() {
+  ollama list >/dev/null 2>&1
+}
+
+wait_for_server() {
+  local _
+  for _ in {1..30}; do
+    if server_up; then return 0; fi
+    sleep 1
+  done
+  ca_die "$SERVICE did not answer after 30 seconds; see: journalctl -u $SERVICE"
+}
+
+# gpu_package: the Arch package that carries the Ollama build for this GPU. The
+# plain ollama package is CPU-only, its PKGBUILD deletes the CUDA, ROCm and
+# Vulkan runners that ollama-cuda and ollama-rocm bring back, so the GPU
+# decides what has to be installed.
+gpu_package() {
+  case $GPU_VENDOR in
+    nvidia) echo ollama-cuda ;;
+    amd) echo ollama-rocm ;;
+    *) echo ollama ;;
+  esac
+}
+
+# install_package <package>: ask first, then let pacman ask its own questions.
+# Fails when the answer is not yes, or sudo or pacman is missing.
+install_package() {
+  local answer=''
+  if ! ca_cmd_present sudo pacman; then
+    printf 'sudo or pacman is missing, so %s cannot be installed from here.\n' "$1" >&2
+    return 1
+  fi
+  printf 'Install %s with: sudo pacman -S --needed %s\n' "$1" "$1" >&2
+  printf 'Install it now? [y/N] ' >&2
+  read -r answer || true
+  case $answer in
+    [yY] | [yY][eE][sS]) sudo pacman -S --needed "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# ensure_ollama: an Ollama that can use this machine's GPU. Without Ollama the
+# install is required. An ollama with no GPU package is the silent trap: it
+# serves every model from the CPU while `list` says gpu, so the install is
+# offered again, but a no is respected (an Ollama installed by other means
+# carries its own runners, which pacman cannot see).
+ensure_ollama() {
+  local pkg
+  pkg=$(gpu_package)
+  if ! ca_cmd_present ollama; then
+    printf 'Ollama is not installed.\n' >&2
+    install_package "$pkg" || ca_die "Ollama is required; install it with 'sudo pacman -S --needed $pkg' and run this again"
+    ca_cmd_present ollama || ca_die "ollama is still not on PATH after installing $pkg"
+  elif [[ $pkg != ollama ]] && ca_cmd_present pacman && ! pacman -Q "$pkg" >/dev/null 2>&1; then
+    printf 'Ollama is installed without GPU support: the ollama package alone is CPU-only.\n' >&2
+    install_package "$pkg" || printf 'Continuing without it: models will run on the CPU, slowly.\n' >&2
+  fi
+}
+
+# start_service <systemctl verb...>: make sure the server answers, asking the
+# service manager only when it does not. An Ollama someone runs by hand also
+# counts, and starting the unit beside it would fight for the port.
+start_service() {
+  if server_up; then return 0; fi
+  ca_cmd_present sudo systemctl || ca_die "sudo and systemctl are needed to start $SERVICE"
+  sudo systemctl "$@" "$SERVICE"
+  wait_for_server
+}
+
+# listing_has <ollama list output> <name>: whether the listing shows the model,
+# with or without the :latest tag Ollama adds to a name that has none.
+listing_has() {
+  local line first
+  while IFS= read -r line; do
+    first=${line%%[[:space:]]*}
+    if [[ $first == "$2" || $first == "$2:latest" ]]; then return 0; fi
+  done <<<"$1"
+  return 1
+}
+
+# check_disk_space <index>: ask before a download that would leave less than
+# DISK_MARGIN_GB free where the service keeps its models, /var/lib/ollama (set
+# as OLLAMA_MODELS in the Arch unit, which creates it on first use, so /var/lib
+# stands in until then). That is the system filesystem, and a full one is hard
+# to recover from. A figure df does not give is not a reason to stop. Sizes are
+# the library's decimal GB.
+check_disk_space() {
+  local i=$1 dir=${CACHYOS_AGENT_MODELS_DIR:-/var/lib/ollama} avail='' answer=''
+  if [[ ! -d $dir ]]; then dir=/var/lib; fi
+  { read -r _ && read -r avail; } < <(df --output=avail -B1 -- "$dir" 2>/dev/null) || true
+  if ! [[ $avail =~ ^[0-9]+$ ]]; then
+    printf 'Could not read the free space on %s; not checking it.\n' "$dir" >&2
+    return 0
+  fi
+  if ((10#$avail >= (R_DL[i] + DISK_MARGIN_GB) * 1000000000)); then return 0; fi
+  printf '%s downloads about %d GB, and %s has %d GB free; %d GB should stay free.\n' \
+    "${R_ID[i]}" "${R_DL[i]}" "$dir" "$((10#$avail / 1000000000))" "$DISK_MARGIN_GB" >&2
+  printf 'Snapshots (snapper, for one) keep the files of a deleted model, so removing it later may not give the space back.\n' >&2
+  printf 'Download anyway? [y/N] ' >&2
+  read -r answer || true
+  case $answer in
+    [yY] | [yY][eE][sS]) ;;
+    *) ca_die "Not downloading ${R_MODEL[i]}; free some space and run this again" ;;
+  esac
+}
+
+# create_model <index>: a model named after the recipe id, built on the
+# download with the recipe's context. Ollama's own default is 4K below 24 GiB
+# of VRAM, and the OpenAI-compatible endpoint cannot ask for more per request,
+# so a context set on the model is the way an agent gets room to work. The
+# new model shares the download's files and adds almost nothing.
+# The Modelfile is removed by an EXIT trap, which bash also runs when Ctrl-C or
+# SIGTERM ends the script while `ollama create` is still working.
+create_model() {
+  local i=$1
+  mkdir -p -- "${ACTIVE_FILE%/*}"
+  MODELFILE=$(mktemp -- "${ACTIVE_FILE%/*}/Modelfile.XXXXXX")
+  trap 'rm -f -- "$MODELFILE"' EXIT
+  printf 'FROM %s\nPARAMETER num_ctx %d\n' "${R_MODEL[i]}" "${R_CTX[i]}" >"$MODELFILE"
+  ollama create "${R_ID[i]}" -f "$MODELFILE"
+}
+
+active_model() {
+  local name=''
+  if [[ -r $ACTIVE_FILE ]]; then IFS= read -r name <"$ACTIVE_FILE" || true; fi
+  printf '%s' "$name"
+}
+
+# --- Commands ----------------------------------------------------------------
+
+cmd_list() {
+  (($# == 0)) || usage_error "list takes no arguments"
+  local i fit mark active idw=2 mw=5 best=''
+  load_recipes
+  detect_ram
+  detect_gpu
+  active=$(active_model)
+  for i in "${!R_ID[@]}"; do
+    if ((${#R_ID[i]} > idw)); then idw=${#R_ID[i]}; fi
+    if ((${#R_MODEL[i]} > mw)); then mw=${#R_MODEL[i]}; fi
+  done
+  printf 'This machine: %s, %d GiB RAM\n\n' "$(gpu_phrase)" "$RAM_GIB"
+  printf '  %-*s  %-*s  %-7s  %-8s  %-4s  %s\n' "$idw" ID "$mw" MODEL CONTEXT DOWNLOAD FITS NOTE
+  for i in "${!R_ID[@]}"; do
+    fit=$(fit_of "$i")
+    mark=' '
+    if [[ ${R_ID[i]} == "$active" ]]; then mark='*'; fi
+    printf '%s %-*s  %-*s  %-7s  %-8s  %-4s  %s\n' "$mark" "$idw" "${R_ID[i]}" "$mw" "${R_MODEL[i]}" \
+      "$((R_CTX[i] / 1024))K" "${R_DL[i]} GB" "$fit" "${R_NOTE[i]}"
+    if [[ $fit != gpu ]]; then printf '    %s\n' "$(fit_reason "$i")"; fi
+  done
+  printf '\ngpu: fits in GPU memory. cpu: runs, with part or all of it in RAM. no: does not fit.\n'
+  if best=$(pick_best); then
+    printf 'cachyos-agent local use best picks %s.\n' "${R_ID[best]}"
+  else
+    printf 'No recipe fits this machine.\n'
+  fi
+  if [[ -n $active ]]; then printf '* marks the model cachyos-agent launch --local opens an agent on.\n'; fi
+}
+
+cmd_use() {
+  (($# == 1)) || usage_error "use needs best or a recipe id"
+  local want=$1 i fit
+  load_recipes
+  detect_ram
+  detect_gpu
+  if [[ $want == best ]]; then
+    i=$(pick_best) || ca_die "no recipe fits this machine; see: cachyos-agent local list"
+    printf 'Best fit for this machine: %s\n' "${R_ID[i]}"
+  else
+    i=$(recipe_index "$want") || ca_die "unknown recipe: $want (see: cachyos-agent local list)"
+    fit=$(fit_of "$i")
+    if [[ $fit == no ]]; then ca_die "${R_ID[i]} does not fit this machine: $(fit_reason "$i")"; fi
+  fi
+  printf '%s: %s\n' "${R_ID[i]}" "${R_NOTE[i]}"
+  if [[ $(fit_of "$i") == cpu ]]; then printf 'Note: %s.\n' "$(fit_reason "$i")"; fi
+
+  ensure_ollama
+  start_service enable --now
+  if ! listing_has "$(ollama list)" "${R_MODEL[i]}"; then check_disk_space "$i"; fi
+  ollama pull "${R_MODEL[i]}"
+  create_model "$i"
+  printf '%s\n' "${R_ID[i]}" | ca_atomic_write "$ACTIVE_FILE"
+
+  printf '\n%s is ready with a %dK context.\n' "${R_ID[i]}" "$((R_CTX[i] / 1024))"
+  printf '  Open an agent on it:  cachyos-agent launch --local\n'
+  printf '  Endpoint:             %s (model: %s)\n' "$ENDPOINT" "${R_ID[i]}"
+}
+
+cmd_start() {
+  (($# == 0)) || usage_error "start takes no arguments"
+  ca_cmd_present ollama || ca_die "Ollama is not installed; run: cachyos-agent local use best"
+  if server_up; then
+    printf 'Ollama is already running at %s\n' "$ENDPOINT"
+    return 0
+  fi
+  start_service start
+  printf 'Ollama is running at %s\n' "$ENDPOINT"
+}
+
+cmd_stop() {
+  (($# == 0)) || usage_error "stop takes no arguments"
+  ca_cmd_present systemctl || ca_die "systemctl is needed to stop $SERVICE"
+  if ! systemctl is-active --quiet "$SERVICE"; then
+    printf '%s is not running.\n' "$SERVICE"
+    return 0
+  fi
+  ca_cmd_present sudo || ca_die "sudo is needed to stop $SERVICE"
+  sudo systemctl stop "$SERVICE"
+  printf 'Stopped %s. Its models are unloaded and their memory is free.\n' "$SERVICE"
+}
+
+cmd_status() {
+  (($# == 0)) || usage_error "status takes no arguments"
+  local active state='unknown' i line
+  local -a loaded=()
+  load_recipes
+  active=$(active_model)
+  if ca_cmd_present systemctl; then state=$(systemctl is-active "$SERVICE" 2>&1 || true); fi
+  printf 'service:  %s (%s)\n' "$state" "$SERVICE"
+  printf 'endpoint: %s\n' "$ENDPOINT"
+  if [[ -z $active ]]; then
+    printf 'active:   none (set one with: cachyos-agent local use best)\n'
+  elif i=$(recipe_index "$active"); then
+    printf 'active:   %s (%s, %dK context)\n' "$active" "${R_MODEL[i]}" "$((R_CTX[i] / 1024))"
+  else
+    printf 'active:   %s\n' "$active"
+  fi
+  if ! ca_cmd_present ollama; then
+    printf 'ollama:   not installed (cachyos-agent local use best installs it)\n'
+    return 0
+  fi
+  if ! server_up; then
+    printf 'loaded:   the server is not answering (cachyos-agent local start)\n'
+    return 0
+  fi
+  mapfile -t loaded < <(ollama ps)
+  if ((${#loaded[@]} > 1)); then
+    printf 'loaded:\n'
+    for line in "${loaded[@]}"; do printf '  %s\n' "$line"; done
+  else
+    printf 'loaded:   nothing; Ollama loads a model when a client first asks for it\n'
+  fi
+}
+
+cmd_remove() {
+  (($# == 1)) || usage_error "remove needs a recipe id"
+  local i name listing
+  local -a gone=()
+  load_recipes
+  i=$(recipe_index "$1") || ca_die "unknown recipe: $1 (see: cachyos-agent local list)"
+  ca_cmd_present ollama || ca_die "Ollama is not installed, so there is nothing to remove"
+  listing=$(ollama list 2>/dev/null) || ca_die "the Ollama service is not running; start it first: cachyos-agent local start"
+  for name in "${R_ID[i]}" "${R_MODEL[i]}"; do
+    if listing_has "$listing" "$name"; then
+      ollama rm "$name"
+      gone+=("$name")
+    fi
+  done
+  if [[ $(active_model) == "${R_ID[i]}" ]]; then rm -f -- "$ACTIVE_FILE"; fi
+  if ((${#gone[@]} > 0)); then
+    printf 'Removed %s\n' "${gone[*]}"
+  else
+    printf '%s is not installed; nothing to remove.\n' "${R_ID[i]}"
+  fi
+}
+
+main() {
+  local cmd=${1-}
+  if (($# > 0)); then shift; fi
+  # `local <command> --help` answers like `local --help`, before the command
+  # reads the recipes or looks at the machine.
+  case ${1-} in -h | --help) cmd=--help ;; esac
+  case $cmd in
+    -h | --help) usage ;;
+    list) cmd_list "$@" ;;
+    use) cmd_use "$@" ;;
+    start) cmd_start "$@" ;;
+    stop) cmd_stop "$@" ;;
+    status) cmd_status "$@" ;;
+    remove) cmd_remove "$@" ;;
+    '') usage_error "missing command" ;;
+    *) usage_error "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"
