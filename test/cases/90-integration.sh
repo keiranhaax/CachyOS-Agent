@@ -155,8 +155,8 @@ cleanup_sandbox
 # `journalctl -o json` prints a coredump record.
 journal_entry() {
   jq -nc --arg uid "$1" --arg comm "$2" --arg pid "$3" --arg exe "$4" --arg sig "$5" \
-    '{MESSAGE_ID: "fc2e22bc6ee647b6b90729ab34a250b1", _UID: $uid, COREDUMP_COMM: $comm,
-      COREDUMP_PID: $pid, COREDUMP_EXE: $exe, COREDUMP_SIGNAL_NAME: $sig}'
+    '{MESSAGE_ID: "fc2e22bc6ee647b6b90729ab34a250b1", _UID: $uid, _EXE: "/usr/lib/systemd/systemd-coredump",
+      COREDUMP_COMM: $comm, COREDUMP_PID: $pid, COREDUMP_EXE: $exe, COREDUMP_SIGNAL_NAME: $sig}'
 }
 
 # crash_stubs: the outside of the crash chain. The prompt spans lines, which the
