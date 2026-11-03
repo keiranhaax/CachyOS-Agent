@@ -65,7 +65,6 @@ from collectors import (  # noqa: E402
   read_json,
   routed_match,
   routed_sources,
-  scan_cache_paths as shared_scan_cache_paths,
   scan_dsh_sessions,
   scan_max_age,
   scan_opencode as shared_scan_opencode,
@@ -329,10 +328,6 @@ def scan_local(stats: Stats, reuse: bool = True) -> bool:
 
 def scan_sources() -> list[Path]:
   return [opencode_db(), *pi_roots(), dsh_home(), *routed_sources()]
-
-
-def scan_cache_paths() -> tuple[Path, Path]:
-  return shared_scan_cache_paths(AGENT_ID, scan_sources())
 
 
 def cached_local_stats(max_age: float) -> tuple[dict, bool]:

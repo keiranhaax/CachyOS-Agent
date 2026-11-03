@@ -37,7 +37,6 @@ from collectors import (  # noqa: E402
   cached_scan,
   data_home,
   emit,
-  limits_cache_path as shared_limits_cache_path,
   number,
   open_json,
   opencode_db,
@@ -303,12 +302,6 @@ def probe_limits(credential):
   if not limits:
     return {"ok": False, "helpText": "OpenCode's usage endpoint returned no quota windows. Local OpenCode stats are still shown."}
   return {"ok": True, "limits": limits}
-
-
-# One cache per credential, so a machine signed in to another account never
-# shows the last one's meters.
-def limits_cache_path(token):
-  return shared_limits_cache_path(AGENT_ID, token)
 
 
 def collect_limits(force):

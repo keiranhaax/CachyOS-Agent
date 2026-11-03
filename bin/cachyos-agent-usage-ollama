@@ -39,7 +39,6 @@ from collectors import (  # noqa: E402
   cloud_model,
   config_home,
   emit,
-  limits_cache_path as shared_limits_cache_path,
   open_json,
   opencode_db,
   pi_agent_dir,
@@ -264,12 +263,6 @@ def probe_plan(access_key: str) -> str | None:
   # case, so `Plan` is read too.
   plan = str(payload.get("plan") or payload.get("Plan") or "").strip()[:64] if isinstance(payload, dict) else ""
   return plan[0].upper() + plan[1:] if plan else ""
-
-
-def limits_cache_path(access_key: str) -> Path:
-  # Keyed by the credential: another key never shows this one's allowance or
-  # plan.
-  return shared_limits_cache_path(AGENT_ID, access_key)
 
 
 def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
