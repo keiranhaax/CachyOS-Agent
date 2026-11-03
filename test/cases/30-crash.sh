@@ -177,3 +177,204 @@ names=$(bash -c '
 [[ $names == $'[firefox]\n[firefox]\n[FAIL]\n[FAIL]\n[FAIL]\n[FAIL]\n[FAIL]\n[tab?here]\n[-]\n[FAIL]' ]] || fail "unexpected names: $names"
 ok
 cleanup_sandbox
+
+# ---- the watcher --------------------------------------------------------------
+
+REAL_SLEEP=$(type -P sleep) # before a test puts a stub of its own in front of it
+
+# calls_text <cmd>: everything a stub recorded.
+calls_text() {
+  cat "$SANDBOX/calls/$1"
+}
+
+# count_files <glob>: how many files match.
+count_files() {
+  local -a matches
+  shopt -s nullglob
+  # shellcheck disable=SC2206 # the glob is the point
+  matches=($1)
+  shopt -u nullglob
+  echo "${#matches[@]}"
+}
+
+# journal_entry <uid> <comm> <pid> <exe> <signal>: a JSON line the way
+# `journalctl -o json` prints a coredump record.
+journal_entry() {
+  jq -nc --arg uid "$1" --arg comm "$2" --arg pid "$3" --arg exe "$4" --arg sig "$5" \
+    '{MESSAGE_ID: "fc2e22bc6ee647b6b90729ab34a250b1", _UID: $uid, COREDUMP_COMM: $comm,
+      COREDUMP_PID: $pid, COREDUMP_EXE: $exe, COREDUMP_SIGNAL_NAME: $sig}'
+}
+
+# watch_stubs: everything the watcher talks to. journalctl prints journal.jsonl
+# and ends, as it would when the journal goes away. Toasts and diagnoses are
+# announced concurrently, so notify-send and cachyos-agent-crash write each
+# call to a file of its own (toast.<pid>, diagnosis.<pid>) rather than to the
+# shared record, where two calls could interleave. notify-send answers
+# "diagnose" for a toast whose summary contains the text in click-on, and
+# nothing, as a dismissed toast does, for any other.
+# shellcheck disable=SC2016 # stub bodies are scripts for the stub's own shell
+watch_stubs() {
+  stub journalctl 'cat "${self%/stubs/*}/journal.jsonl"'
+  stub notify-send 'sb=${self%/stubs/*}
+printf "%s\n" "$@" >"$sb/toast.$$"
+summary=
+while (($#)); do
+  if [[ $1 == -- ]]; then summary=$2; break; fi
+  shift
+done
+if [[ -r $sb/click-on && $summary == *"$(<"$sb/click-on")"* ]]; then echo diagnose; fi'
+  stub busctl
+  stub systemd-run 'while [[ $1 != -- ]]; do shift; done; shift; exec "$@"'
+  stub cachyos-agent-crash 'printf "%s\n" "$@" >"${self%/stubs/*}/diagnosis.$$"'
+  stub cachyos-agent-default 'echo claude'
+}
+
+# run_watcher: the watcher through the dispatcher, bounded in time so a watcher
+# that does not end with the journal fails instead of hanging the suite.
+run_watcher() {
+  status=0
+  timeout 20 "$AGENT" crash watch >"$SANDBOX/watch.log" 2>&1 || status=$?
+}
+
+# wait_for <n> <glob>: wait up to five seconds for n files to match, then a
+# moment longer so a call that should not happen has the chance to.
+wait_for() {
+  local i
+  for ((i = 0; i < 50; i++)); do
+    (($(count_files "$2") >= $1)) && break
+    "$REAL_SLEEP" 0.1
+  done
+  "$REAL_SLEEP" 0.3
+}
+
+# files_joined <glob>: each matching file as one line of its lines joined by |, sorted.
+files_joined() {
+  local f
+  for f in $1; do
+    [[ -e $f ]] && paste -sd'|' "$f"
+  done | sort
+  return 0
+}
+
+begin "the watcher announces one crash per program, to its owner, and hands a click to the agent"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry $((me + 1)) sshd 1002 /usr/bin/sshd SIGSEGV
+  journal_entry "$me" mutedapp 1003 /usr/bin/mutedapp SIGABRT
+  journal_entry "$me" ignoreme 1004 /usr/bin/ignoreme SIGABRT
+  journal_entry "$me" firefox 1005 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" "" 1006 "/opt/some app/bin/odd" SIGILL
+  journal_entry "$me" cachyos-agent-us 1007 /usr/bin/python3.14 SIGSEGV
+  journal_entry "$me" x/y/zed 1008 "" SIGTRAP | jq -c 'del(.COREDUMP_EXE)'
+  echo 'this is not json'
+  journal_entry "$me" nopid "" /usr/bin/nopid SIGSEGV | jq -c 'del(.COREDUMP_PID)'
+  journal_entry "$me" "" 1011 /usr/bin/bytes SIGSEGV | jq -c '.COREDUMP_COMM = [104, 105]'
+} >"$SANDBOX/journal.jsonl"
+printf 'firefox' >"$SANDBOX/click-on"
+"$AGENT" crash mute mutedapp >/dev/null
+CACHYOS_AGENT_CRASH_IGNORE='^ignore' run_watcher
+((status == 0)) || fail "the watcher did not end cleanly with the journal ($status): $(<"$SANDBOX/watch.log")"
+wait_for 1 "$SANDBOX/diagnosis.*"
+[[ $(call_args journalctl 1) == $'-f\n-n\n0\n-o\njson\nMESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1' ]] \
+  || fail "journalctl follows the wrong thing: $(call_args journalctl 1)"
+toasts=$(for f in "$SANDBOX"/toast.*; do awk 'f { print; exit } $0 == "--" { f = 1 }' "$f"; done | sort)
+[[ $toasts == $'Process crashed: bytes\nProcess crashed: firefox\nProcess crashed: odd\nProcess crashed: zed' ]] \
+  || fail "announced the wrong crashes: $toasts"
+firefox_toast=$(grep -lx 'Process crashed: firefox' "$SANDBOX"/toast.*)
+[[ $(<"$firefox_toast") == $'--app-name=cachyos-agent\n--urgency=critical\n--icon=dialog-error\n--action=diagnose=Diagnose\n--\nProcess crashed: firefox\nDiagnose it with claude.' ]] \
+  || fail "the toast was sent with the wrong arguments: $(<"$firefox_toast")"
+[[ $(files_joined "$SANDBOX/diagnosis.*") == '1001|firefox|/usr/lib/firefox/firefox|SIGSEGV' ]] \
+  || fail "the click did not become exactly one diagnosis: $(files_joined "$SANDBOX/diagnosis.*")"
+[[ $(calls_text systemd-run) == $'--user\n--scope\n--quiet\n--collect\n--description=Diagnose crash of firefox\n--\ncachyos-agent-crash\n1001\nfirefox\n/usr/lib/firefox/firefox\nSIGSEGV' ]] \
+  || fail "the diagnosis does not run in a scope of its own: $(calls_text systemd-run)"
+ok
+cleanup_sandbox
+
+begin "a click on a crash with missing fields hands over what is known"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" "" 1006 "/opt/some app/bin/odd" SIGILL
+  journal_entry "$me" x/y/zed 1008 "" SIGTRAP | jq -c 'del(.COREDUMP_EXE)'
+  journal_entry "$me" "" 1011 /usr/bin/bytes SIGSEGV | jq -c '.COREDUMP_COMM = [104, 105]'
+  journal_entry "$me" "" 1012 "" "" | jq -c 'del(.COREDUMP_COMM, .COREDUMP_EXE, .COREDUMP_SIGNAL_NAME)'
+} >"$SANDBOX/journal.jsonl"
+printf 'Process crashed' >"$SANDBOX/click-on"
+run_watcher
+wait_for 4 "$SANDBOX/diagnosis.*"
+[[ $(files_joined "$SANDBOX/diagnosis.*") == $'1006|unknown|/opt/some app/bin/odd|SIGILL\n1008|x/y/zed|unknown|SIGTRAP\n1011|unknown|/usr/bin/bytes|SIGSEGV\n1012|unknown|unknown|unknown' ]] \
+  || fail "unexpected diagnoses: $(files_joined "$SANDBOX/diagnosis.*")"
+toasts=$(for f in "$SANDBOX"/toast.*; do awk 'f { print; exit } $0 == "--" { f = 1 }' "$f"; done | sort)
+[[ $toasts == $'Process crashed: bytes\nProcess crashed: odd\nProcess crashed: unknown\nProcess crashed: zed' ]] \
+  || fail "crashes were named wrongly: $toasts"
+ok
+cleanup_sandbox
+
+begin "the watcher says nothing until a default agent is chosen"
+make_sandbox
+watch_stubs
+stub cachyos-agent-default
+journal_entry "$(id -u)" firefox 1001 /usr/lib/firefox/firefox SIGSEGV >"$SANDBOX/journal.jsonl"
+run_watcher
+wait_for 1 "$SANDBOX/toast.*"
+((status == 0)) || fail "the watcher failed without a default agent ($status)"
+[[ $(count_files "$SANDBOX/toast.*") == 0 ]] || fail "a toast was sent with no default agent"
+ok
+cleanup_sandbox
+
+begin "the dedupe window can be turned off, and expires per program"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" firefox 1002 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" kate 1003 /usr/bin/kate SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+CACHYOS_AGENT_CRASH_DEDUPE_SECONDS=0 run_watcher
+wait_for 3 "$SANDBOX/toast.*"
+[[ $(count_files "$SANDBOX/toast.*") == 3 ]] || fail "with a zero window every crash should announce: $(count_files "$SANDBOX/toast.*") toasts"
+rm -f "$SANDBOX"/toast.*
+run_watcher
+wait_for 2 "$SANDBOX/toast.*"
+[[ $(count_files "$SANDBOX/toast.*") == 2 ]] || fail "the default window should announce firefox once and kate once: $(count_files "$SANDBOX/toast.*") toasts"
+ok
+cleanup_sandbox
+
+begin "the watcher reports a notification server that never comes up, and does not announce"
+make_sandbox
+watch_stubs
+stub busctl 'exit 1'
+stub sleep
+journal_entry "$(id -u)" firefox 1001 /usr/lib/firefox/firefox SIGSEGV >"$SANDBOX/journal.jsonl"
+run_watcher
+for ((i = 0; i < 50; i++)); do
+  grep -q 'not announced' "$SANDBOX/watch.log" && break
+  "$REAL_SLEEP" 0.1
+done
+grep -q 'no notification server: crash of firefox (PID 1001) not announced' "$SANDBOX/watch.log" || fail "no explanation in the log: $(<"$SANDBOX/watch.log")"
+[[ $(count_files "$SANDBOX/toast.*") == 0 ]] || fail "a toast was sent without a server"
+ok
+cleanup_sandbox
+
+begin "the watcher refuses settings it would misread, before it follows the journal"
+make_sandbox
+watch_stubs
+run env CACHYOS_AGENT_CRASH_IGNORE='(' "$AGENT" crash watch
+((status == 1)) && [[ $out == *"CACHYOS_AGENT_CRASH_IGNORE is not a valid extended regular expression"* ]] || fail "a broken pattern was accepted ($status): $out"
+run env CACHYOS_AGENT_CRASH_DEDUPE_SECONDS='1+1' "$AGENT" crash watch
+((status == 1)) && [[ $out == *"CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number"* ]] || fail "a non-numeric window was accepted ($status): $out"
+[[ ! -e $SANDBOX/calls/journalctl ]] || fail "the journal was followed with bad settings"
+ok
+cleanup_sandbox
+
+begin "crash watch is hidden from the listing but runs through the dispatcher"
+make_sandbox
+[[ $("$AGENT" commands) != *"cachyos-agent crash watch"* ]] || fail "the watcher is listed"
+[[ $("$AGENT" commands --all) == *"cachyos-agent crash watch "* ]] || fail "the watcher is missing from --all"
+ok
+cleanup_sandbox
