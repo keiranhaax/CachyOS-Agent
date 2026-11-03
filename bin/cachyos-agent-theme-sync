@@ -132,7 +132,9 @@ publish() {
 
 # set_setting <agent> <json-file> <key> <value>: set one top-level string in an
 # agent's settings, keeping every other key. A file that is not a JSON object is
-# left as it was.
+# left as it was. That includes one holding only whitespace or null: jq prints
+# nothing for the first and would swap an object in for the second, either way
+# a file that is not what the agent wrote and may be mid-write.
 set_setting() {
   local agent=$1 file=$2 key=$3 value=$4 data
   local -a args=(--arg key "$key" --arg value "$value")
@@ -141,7 +143,7 @@ set_setting() {
       echo "$agent: unchanged $file"
       return 0
     fi
-    data=$(jq "${args[@]}" '.[$key] = $value' "$file")
+    data=$(jq -e "${args[@]}" 'if type == "object" then .[$key] = $value else empty end' "$file")
   else
     data=$(jq -n "${args[@]}" '{($key): $value}')
   fi || { echo "$agent: cannot update $file; left as it was" >&2; return 1; }

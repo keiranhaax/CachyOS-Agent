@@ -424,6 +424,26 @@ grep -q 'theme sync failed for: claude' "$SANDBOX/err" || fail "the failure is n
 ok
 cleanup_sandbox
 
+begin "sync --activate leaves a settings file without a JSON object as it was and says so"
+sync_env
+mkdir -p "$HOME/.claude" "$HOME/.pi/agent" "$XDG_CONFIG_HOME/opencode"
+# jq prints nothing and exits 0 for a file of whitespace only; a null, a list or a string is no object either.
+for content in $'\n' $'  \t\n\n' 'null' '[]' '"dark"' '3'; do
+  for file in "$HOME/.claude/settings.json" "$HOME/.pi/agent/settings.json" "$XDG_CONFIG_HOME/opencode/tui.json"; do
+    printf '%s' "$content" >"$file"
+  done
+  status=0
+  "$SYNC" --activate --only claude,pi,opencode >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+  ((status == 1)) || fail "settings of '$content' exited $status, not 1"
+  for file in "$HOME/.claude/settings.json" "$HOME/.pi/agent/settings.json" "$XDG_CONFIG_HOME/opencode/tui.json"; do
+    cmp -s "$file" <(printf '%s' "$content") || fail "$file of '$content' was modified"
+    grep -qF "cannot update $file" "$SANDBOX/err" || fail "no explanation for $file of '$content': $(<"$SANDBOX/err")"
+  done
+  if grep -q 'set theme' "$SANDBOX/out"; then fail "claimed to set a theme in '$content': $(<"$SANDBOX/out")"; fi
+done
+ok
+cleanup_sandbox
+
 begin "sync --activate reports a Hermes that refuses the skin, after publishing to the others"
 sync_env
 make_agents
