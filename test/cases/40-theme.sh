@@ -334,6 +334,34 @@ light_colors "$XDG_CONFIG_HOME/kdeglobals"
 ok
 cleanup_sandbox
 
+# Each rendered theme against a file that was read through by a person: the checks
+# above pin a few values, but a template that put an agent's text on its own
+# background, or swapped its errors and successes, would still pass them. A change
+# to a template shows up here as a diff to review; UPDATE_GOLDEN=1 rewrites the files.
+GOLDEN=$REPO_ROOT/test/golden/theme
+# golden_check <dark|light>: what sync rendered into $THEME against $GOLDEN/<scheme>.
+golden_check() {
+  local file changes
+  for file in claude.json hermes.yaml opencode.json pi.json; do
+    if [[ -n ${UPDATE_GOLDEN-} ]]; then
+      mkdir -p "$GOLDEN/$1"
+      cp "$THEME/$file" "$GOLDEN/$1/$file"
+    elif ! changes=$(diff -u "$GOLDEN/$1/$file" "$THEME/$file"); then
+      fail "$file rendered from the $1 scheme differs from test/golden/theme/$1/$file: $(head -n 30 <<<"$changes")"
+    fi
+  done
+}
+
+begin "sync renders every agent's theme from the dark and from the light scheme exactly as the golden files say"
+sync_env
+"$SYNC" >/dev/null
+golden_check dark
+light_colors "$XDG_CONFIG_HOME/kdeglobals"
+"$SYNC" >/dev/null
+golden_check light
+ok
+cleanup_sandbox
+
 begin "sync publishes to existing agents, every Hermes profile included, and a second run changes nothing"
 sync_env
 make_agents
