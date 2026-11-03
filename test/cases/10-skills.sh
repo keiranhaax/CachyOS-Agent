@@ -182,6 +182,47 @@ rejected "kernel.md: broken link target: missing-topic.md"
 ok
 cleanup_sandbox
 
+begin "validate rejects a skill directory with no SKILL.md"
+make_sandbox
+bad_tree
+mkdir "$SANDBOX/agents/skills/ghost"
+rejected "ghost: missing SKILL.md"
+ok
+cleanup_sandbox
+
+begin "validate rejects a SKILL.md that does not start with frontmatter"
+make_sandbox
+bad_tree
+mkdir "$SANDBOX/agents/skills/ghost"
+printf '# ghost\n\nname: ghost\ndescription: not in frontmatter\n' >"$SANDBOX/agents/skills/ghost/SKILL.md"
+printf '\n- [ghost](agents/skills/ghost/SKILL.md)\n' >>"$SANDBOX/AGENTS.md" # indexed, so only the skill itself is wrong
+rejected "ghost: SKILL.md does not start with YAML frontmatter"
+ok
+cleanup_sandbox
+
+begin "validate rejects frontmatter with no description at all"
+make_sandbox
+bad_tree
+mkdir "$SANDBOX/agents/skills/ghost"
+printf -- '---\nname: ghost\n---\n# ghost\n' >"$SANDBOX/agents/skills/ghost/SKILL.md"
+printf '\n- [ghost](agents/skills/ghost/SKILL.md)\n' >>"$SANDBOX/AGENTS.md" # indexed, so only the skill itself is wrong
+rejected "ghost: frontmatter has no description"
+ok
+cleanup_sandbox
+
+begin "validate exits 2, not 1, when there is nothing to check"
+make_sandbox
+mkdir -p "$SANDBOX/no-skills"
+status=0
+out=$("$VALIDATE" "$SANDBOX/no-skills" 2>&1) || status=$?
+[[ $status -eq 2 && $out == "no agents/skills directory under $SANDBOX/no-skills" ]] || fail "a root without agents/skills ($status): $out"
+mkdir -p "$SANDBOX/no-skills/agents/skills"
+status=0
+out=$("$VALIDATE" "$SANDBOX/no-skills" 2>&1) || status=$?
+[[ $status -eq 2 && $out == "no skill subdirectories under $SANDBOX/no-skills/agents/skills" ]] || fail "an empty agents/skills ($status): $out"
+ok
+cleanup_sandbox
+
 begin "validate rejects a frontmatter name that is not the directory's"
 make_sandbox
 bad_tree
