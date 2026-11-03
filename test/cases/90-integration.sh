@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # The features working together. Every other case tests one feature with its
 # neighbours stubbed; this one runs the real chains between them through the
-# dispatcher: default -> launch -> terminal, crash -> launcher, accounts ->
-# launcher, usage -> accounts -> launcher, theme -> follow, local -> launcher,
-# and the dispatcher's metadata against the units and the README. Only what
-# lives outside this repository is stubbed: agent CLIs, the terminal,
-# notify-send, journalctl, coredumpctl, busctl, systemctl, systemd-run, ollama,
-# nvidia-smi, sudo and pacman, and the usage collectors, which reach for the
-# network. kwriteconfig6 and kreadconfig6 stay real where kconfig is installed.
+# dispatcher: default -> launch -> terminal, crash -> launcher, skills ->
+# harnesses, accounts -> launcher, usage -> accounts -> launcher, usage ->
+# widget, theme -> follow, local -> launcher, and the dispatcher's metadata
+# against the units and the README. Only what lives outside this repository is
+# stubbed: agent CLIs, the terminal, notify-send, journalctl, coredumpctl,
+# busctl, systemctl, systemd-run, ollama, nvidia-smi, sudo and pacman, and the
+# usage collectors, which reach for the network. kwriteconfig6, kreadconfig6
+# and qml6 (for the widget) stay real where they are installed; a chain that
+# needs one that is missing says so and does not fail.
 # shellcheck disable=SC2016 # a stub's body is a script for the stub's own shell
 # shellcheck source=../lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
@@ -321,13 +323,14 @@ usage_collector() {
     def window($p): {label: "Session (5-hour)", percent: $p, resetsAt: $reset};
     {schemaVersion: 1, id: "claude", name: "Claude Code", ready: true, tierLabel: "max 5x",
      updatedAt: (now | floor | todate), limits: [window($main)], limitsStale: false, limitsFetchedAt: 0,
-     usageStatusText: "", authHelpText: "", hasLocalStats: false,
+     usageStatusText: "", authHelpText: "", hasLocalStats: true, todayTotalTokens: 1234567,
+     recentDays: [{date: "2026-11-02", messageCount: 3300000}],
      accounts: [{id: "main", label: "Main", plan: "Max 5x", limits: [window($main)]},
                 {id: "work", label: "Work", plan: "Max 5x", limits: [window($work)]}]}' >"$SANDBOX/record.json"
   stub cachyos-agent-usage-claude 'registry=$XDG_STATE_HOME/cachyos-agent/accounts/claude.json
 active=main
 if [[ -f $registry ]]; then active=$(jq -r .active "$registry"); fi
-jq -c --arg active "$active" ".accounts |= map(.active = (.id == \$active))" "${self%/stubs/*}/record.json"'
+jq -c --arg active "$active" "if .accounts then .accounts |= map(.active = (.id == \$active)) else . end" "${self%/stubs/*}/record.json"'
 }
 
 begin "usage update writes the records the report and the widget read, with or without accounts"
@@ -377,6 +380,41 @@ report=$("$AGENT" usage)
 "$AGENT" usage update claude 2>/dev/null
 expect "$(jq -r '.[0].active' <<<"$("$AGENT" account list claude --json)")" work "a second update switched the account again"
 ok
+cleanup_sandbox
+
+# widget_json: the widget's main.qml run headless by test/plasmoid/app.qml, with
+# the real data engine running the real cachyos-agent, and what it shows as JSON.
+widget_json() {
+  local log=$SANDBOX/qml.log
+  QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen timeout 60 \
+    qml6 -I "$REPO_ROOT/test/plasmoid/stubs" "$REPO_ROOT/test/plasmoid/app.qml" -- \
+    "$REPO_ROOT/plasmoid/org.cachyos.agent/contents/ui/main.qml" dump "" >"$log" 2>&1 || fail "qml6 failed: $(head -c 600 "$log")"
+  sed -n 's/^qml: RESULT //p' "$log"
+}
+
+begin "the widget shows what usage update wrote, read through usage --json"
+setup
+engine=/usr/lib/qt6/plugins/plasma5support/dataengine/plasma_engine_executable.so
+if type -P qml6 >/dev/null && [[ -f $engine && -d /usr/lib/qt6/qml/org/kde/plasma/plasma5support && -d /usr/lib/qt6/qml/org/kde/plasma/extras ]]; then
+  usage_collector 0.42 0.1
+  jq -c 'del(.accounts)' "$SANDBOX/record.json" >"$SANDBOX/record.new" && mv "$SANDBOX/record.new" "$SANDBOX/record.json"
+  "$AGENT" usage update claude
+  shown=$(widget_json)
+  jq -e '.loaded and .problem == "" and ([.agents[].name] == ["Claude Code"]) and .tooltip == "Claude Code 42%" and .page.bars == [0.42] and .page.notPlain == []' <<<"$shown" >/dev/null \
+    || fail "the widget does not show the record: $shown"
+  jq -e '.page.texts | index("Max 5x") and index("Session (5-hour)") and index("42%  ·  resets in 3h 0m") and index("Tokens: 1.2M today, 3.3M this week")' <<<"$shown" >/dev/null \
+    || fail "the widget lacks the plan, the limit or the tokens: $shown"
+
+  # Several accounts: the widget lists them, as the registry-less record names them.
+  usage_collector 0.42 0.1
+  "$AGENT" usage update claude
+  shown=$(widget_json)
+  jq -e '.loaded and .problem == "" and (.page.texts | any(startswith("Main")) and any(startswith("Work")))' <<<"$shown" >/dev/null \
+    || fail "the widget does not list both accounts: $shown"
+  ok
+else
+  printf 'UNVERIFIED %s: qml6, the Plasma executable data engine or the Plasma QML modules are not installed\n' "$CURRENT_TEST"
+fi
 cleanup_sandbox
 
 # ---- theme --------------------------------------------------------------------
