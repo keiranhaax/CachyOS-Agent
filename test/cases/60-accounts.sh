@@ -17,13 +17,15 @@ exec </dev/null
 
 # The stubs sign in as whoever FIX_ID and FIX_EMAIL name when they run, so one
 # test plays several accounts. FIX_NOLOGIN makes a login that writes nothing.
-# FIX_TIER and FIX_SUB set what Claude's credentials say of the plan.
+# FIX_TIER and FIX_SUB set what Claude's credentials say of the plan, and
+# FIX_LOGINFAIL makes the CLI's login end with an error.
 # Each login appends what it saw to $SANDBOX/logins.
 # shellcheck disable=SC2016 # a program for the stub's own bash, expanded when it runs
 CLAUDE_STUB='
 if [[ ${1-} == auth && ${2-} == login ]]; then
   browser=no; [[ -z ${BROWSER:-} ]] || browser=yes
   echo "claude CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR-unset} browser=$browser" >>"$SANDBOX/logins"
+  [[ -z ${FIX_LOGINFAIL:-} ]] || exit 1
   if [[ -z ${FIX_NOLOGIN:-} ]]; then
     home=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
     account_file=$home/.claude.json
@@ -181,6 +183,36 @@ if out=$(FIX_ID=u-main FIX_EMAIL=main@example.com "$AGENT" account add claude Ag
 [[ $out == *"That's Main (main@example.com)"* ]] || fail "the refusal does not name Main: $out"
 [[ $(registry claude '.accounts | length') == 2 ]] || fail "the registry changed"
 [[ -z $(ls -A "$STATE/accounts/claude/.pending") && $(ls "$STATE/accounts/claude") == work ]] || fail "a home was left behind: $(ls -A "$STATE/accounts/claude")"
+ok
+cleanup_sandbox
+
+begin "a first sign-in that wrote no credentials is not one: no default agent, no registry, no refresh"
+setup
+# The browser was closed: the CLI exits 0 and leaves nothing behind.
+if out=$(FIX_NOLOGIN=1 "$AGENT" account add claude 2>&1); then fail "an unfinished first sign-in was accepted: $out"; fi
+[[ $out == *"signing in to Claude did not finish"* && $out != *"Signed in to Claude"* ]] || fail "the first sign-in claimed to finish: $out"
+[[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "an agent nobody signed in to became the default"
+[[ ! -e $STATE/accounts/claude.json ]] || fail "a registry was made for a sign-in that never happened"
+[[ ! -e $SANDBOX/calls/cachyos-agent-usage-update ]] || fail "usage was collected for a sign-in that never happened"
+# A login that fails outright is the same.
+if out=$(FIX_LOGINFAIL=1 "$AGENT" account add claude 2>&1); then fail "a failed first login was accepted: $out"; fi
+[[ $out == *"signing in to Claude did not finish"* && ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "a failed first login: $out"
+ok
+cleanup_sandbox
+
+begin "--reauth reports a login that did not finish and changes nothing"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+before=$(<"$STATE/accounts/claude.json")
+sleep 0.3 # the usage refreshes the sign-ins above started in the background
+rm -f "$SANDBOX/calls/cachyos-agent-usage-update"
+for who in primary work; do
+  if out=$(FIX_LOGINFAIL=1 "$AGENT" account add --reauth "$who" claude 2>&1); then fail "--reauth $who accepted a login that failed: $out"; fi
+  [[ $out == *"signing in to Claude did not finish"* && $out != *"again."* ]] || fail "--reauth $who said: $out"
+done
+[[ $(<"$STATE/accounts/claude.json") == "$before" ]] || fail "--reauth changed the registry"
+[[ ! -e $SANDBOX/calls/cachyos-agent-usage-update ]] || fail "usage was refreshed for a sign-in that did not finish"
 ok
 cleanup_sandbox
 
