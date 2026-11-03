@@ -51,8 +51,22 @@ for agent in "${COLLECTORS[@]}"; do
   grep -q '^# cachyos-agent:args=\[--force\] \[--limits-only\]$' "$file" || fail "$agent does not declare its flags"
   grep -q '^# SPDX-License-Identifier: GPL-3.0-only$' "$file" || fail "$agent has no SPDX line"
 done
+# names_omarchy <file>: whether the file names Omarchy anywhere but in its attribution
+# line. The text is captured first: `grep -v ... | grep -qi` ends the reader at the
+# first match, which kills the writer with SIGPIPE in a file bigger than a pipe, and
+# under pipefail that status turned a match into no match.
+names_omarchy() {
+  local text
+  text=$(grep -v '^# Adapted from Omarchy' "$1") || true
+  [[ ${text,,} == *omarchy* ]]
+}
 for file in "$REPO_ROOT"/lib/collectors.py "$REPO_ROOT"/bin/cachyos-agent-usage-*; do
-  if grep -v '^# Adapted from Omarchy' "$file" | grep -qi omarchy; then fail "${file##*/} still names Omarchy"; fi
+  if names_omarchy "$file"; then fail "${file##*/} still names Omarchy"; fi
+done
+# A mention near the top of the biggest file is found, wherever it stands in it.
+for line in 5 100 2000 3800; do
+  sed "${line}i # ported from omarchy scripts" "$REPO_ROOT/lib/collectors.py" >"$SANDBOX/collectors.py"
+  names_omarchy "$SANDBOX/collectors.py" || fail "a mention at line $line of lib/collectors.py was missed"
 done
 ok
 cleanup_sandbox
