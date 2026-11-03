@@ -156,6 +156,30 @@ is_json "$record" '.usageStatusText == "Waiting for auth" and .limits == [] and 
 ok
 cleanup_sandbox
 
+begin "claude keeps a reset time it can read as an instant and drops one it cannot"
+make_sandbox
+# What the service sends is not always a date: the record must hold an instant
+# or nothing, since the report and the panel both read the field as a time.
+out=$(python3 -I - "$REPO_ROOT/bin/cachyos-agent-usage-claude" <<'PY'
+import importlib.machinery, importlib.util, sys
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("claude_collector", sys.argv[1])
+module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+loader.exec_module(module)
+for sent in ("2026-06-01T10:00:00Z", "1780000000", "2026-13-45T00:00:00Z", "99999999999999999999", "soon", None):
+  print(f"{sent!r} -> {module.normalize_reset_at(sent)!r}")
+PY
+)
+expected="'2026-06-01T10:00:00Z' -> '2026-06-01T10:00:00+00:00'
+'1780000000' -> '2026-05-28T20:26:40+00:00'
+'2026-13-45T00:00:00Z' -> ''
+'99999999999999999999' -> ''
+'soon' -> ''
+None -> ''"
+[[ $out == "$expected" ]] || fail "normalize_reset_at answered: $out"
+ok
+cleanup_sandbox
+
 begin "claude reads the plan from a lapsed credential without asking the service"
 make_sandbox
 mkdir "$SANDBOX/empty"
@@ -621,6 +645,22 @@ for label in Basic Spaced Hours Compact Naked; do
 done
 row=$(grep -F "  Garbled " <<<"$out") || fail "no row for Garbled: $out"
 [[ $row == *"Garbled  60%" ]] || fail "a garbled time should print its row with no reset: [$row]"
+ok
+cleanup_sandbox
+
+begin "a reset time that is no real date reads as no reset time and does not stop the report"
+make_sandbox
+# The shape of a time passes the report's pattern while the date does not exist:
+# the claude collector keeps such a string as the service sent it, and Python
+# 3.14 reads T24:00:00 where jq does not.
+write_record claude '{schemaVersion: 1, id: "claude", name: "Claude Code", ready: true,
+  limits: [{label: "Month", percent: 0.4, resetsAt: "2026-13-45T00:00:00Z"},
+           {label: "Midnight", percent: 0.5, resetsAt: "2026-06-01T24:00:00Z"}]}'
+write_record codex '{schemaVersion: 1, id: "codex", name: "Codex", ready: true, limits: [{label: "Session", percent: 0.1}]}'
+out=$("$AGENT" usage) || fail "usage exited $? on an impossible reset time"
+[[ $out == *"Codex"* && $out == *"Session  10%"* ]] || fail "the healthy agent is missing from the report: $out"
+row=$(grep -F "  Month " <<<"$out") || fail "no row for Month: $out"
+[[ $row == *" 40%" ]] || fail "an impossible date should print its row with no reset: [$row]"
 ok
 cleanup_sandbox
 

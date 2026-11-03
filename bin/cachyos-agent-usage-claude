@@ -455,12 +455,14 @@ def normalize_reset_at(value: Any) -> str:
     try:
       return dt.datetime.fromtimestamp(ts / 1000, dt.timezone.utc).isoformat()
     except Exception:
-      return raw
+      return ""
+  # What the service sent that is no instant is no reset time: the report and
+  # the panel both read this field as a time.
   try:
     parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
     return parsed.isoformat()
   except Exception:
-    return raw
+    return ""
 
 
 def usage_bucket(payload: dict[str, Any], key: str) -> dict[str, Any] | None:

@@ -54,12 +54,15 @@ def offset_seconds:
   else capture("^(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})?$")
     | ((.h | tonumber) * 3600 + ((.m // "0") | tonumber) * 60) * (if .s == "-" then -1 else 1 end)
   end;
+# The pattern only checks the shape: month 13 and hour 24 match it and are no
+# time, and fromdateiso8601 raises on them. A time that is not one reads as no
+# reset time, like any other string, rather than stopping the whole report.
 def epoch:
   (if type == "string"
    then capture("^(?<y>[0-9]{4})-?(?<mo>[0-9]{2})-?(?<d>[0-9]{2})[T ](?<h>[0-9]{2}):?(?<mi>[0-9]{2})(?::?(?<s>[0-9]{2}))?(?:[.,][0-9]+)?(?<z>Z|[+-][0-9]{2}(?::?[0-9]{2})?)?$") // null
    else null end) as $m
   | if $m == null then null
-    else ("\($m.y)-\($m.mo)-\($m.d)T\($m.h):\($m.mi):\($m.s // "00")Z" | fromdateiso8601) - ($m.z | offset_seconds) end;
+    else (try (("\($m.y)-\($m.mo)-\($m.d)T\($m.h):\($m.mi):\($m.s // "00")Z" | fromdateiso8601) - ($m.z | offset_seconds)) catch null) end;
 
 def duration:
   if . <= 0 then "now"
