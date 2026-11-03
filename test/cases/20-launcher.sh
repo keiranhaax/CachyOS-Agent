@@ -936,6 +936,18 @@ expect "$(call_count sudo)" 1 "sudo calls"
 ok
 cleanup_sandbox
 
+begin "install says so when sudo is missing instead of failing with command not found"
+setup
+stub pacman
+run "$CA" install claude
+expect "$RC" 1 "exit status"
+contains "$ERR" "sudo is needed to install claude-code" "the reason"
+contains "$ERR" "pacman -S --needed claude-code" "what to run as root instead"
+lacks "$ERR" "command not found" "bash's own message"
+expect "$(call_count pacman)" 1 "pacman is asked only whether the repositories have the package"
+ok
+cleanup_sandbox
+
 begin "install maps the agents the repositories carry"
 setup
 stub pacman

@@ -82,6 +82,8 @@ install_repo() {
   # The CachyOS repositories carry most of these, a vanilla Arch mirror may not.
   pacman -Si -- "$PACKAGE" >/dev/null 2>&1 \
     || ca_die "$PACKAGE is not in the enabled pacman repositories (pacman -Si $PACKAGE failed)"
+  ca_cmd_present sudo \
+    || ca_die "sudo is needed to install $PACKAGE: install the sudo package, or run 'pacman -S --needed $PACKAGE' as root"
   # Run here, in the terminal the user is watching, so sudo can ask for a password.
   sudo pacman -S --needed "$PACKAGE"
 }

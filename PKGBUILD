@@ -23,6 +23,7 @@ optdepends=('libnotify>=0.8.8: desktop notifications for crash capture, usage li
             'ollama-cuda: GPU acceleration for local models on NVIDIA'
             'ollama-rocm: GPU acceleration for local models on AMD'
             'paru: install AUR-packaged agents'
+            'sudo: install agent packages and start Ollama'
             'git: update Git checkouts and check reviewed CachyOS upstreams')
 provides=('cachyos-agent-system')
 conflicts=('cachyos-agent-system')
