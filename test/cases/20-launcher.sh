@@ -928,3 +928,18 @@ else
 fi
 cleanup_sandbox
 
+# ---- the dispatcher ---------------------------------------------------------
+
+begin "the dispatcher lists the launcher commands and answers --help for each"
+setup
+commands=$("$CA" commands --json)
+for route in "cachyos-agent default" "cachyos-agent launch" "cachyos-agent prompt" "cachyos-agent install" "cachyos-agent shortcut"; do
+  jq -e --arg route "$route" '.commands | map(.route) | index($route) != null' <<<"$commands" >/dev/null || fail "$route is not listed"
+  group=${route#cachyos-agent }
+  run "$CA" "$group" --help
+  [[ $RC == 0 && $OUT == *Usage:* ]] || fail "$route --help: rc $RC, [$OUT]"
+done
+"$CA" commands --check >/dev/null || fail "commands --check"
+ok
+cleanup_sandbox
+
