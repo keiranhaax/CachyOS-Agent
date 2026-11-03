@@ -90,9 +90,11 @@ main() {
   if $installing; then
     # The terminal opened for the install becomes the agent's window.
     printf '\033[2J\033[3J\033[H'
-    exec cachyos-agent-launch --inline
+    exec cachyos-agent-launch --inline --agent "$agent"
   fi
-  exec cachyos-agent-launch
+  # By name: CACHYOS_AGENT_DEFAULT beats the file just written, and the agent
+  # to start is the one asked for.
+  exec cachyos-agent-launch --agent "$agent"
 }
 
 main "$@"

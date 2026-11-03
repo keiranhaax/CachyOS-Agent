@@ -130,10 +130,22 @@ stub_agents claude cachyos-agent-launch
 run "$CA" default claude
 expect "$RC" 0 "exit status"
 expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "claude" "saved agent"
-expect "$(last_call cachyos-agent-launch)" "" "launch arguments"
+expect "$(last_call cachyos-agent-launch)" "--agent|claude" "launch arguments"
 expect "$(call_count cachyos-agent-launch)" 1 "launch calls"
 run "$CA" default
 expect "$OUT" "claude" "read back"
+ok
+cleanup_sandbox
+
+begin "default <agent> starts the agent it names, though CACHYOS_AGENT_DEFAULT names another"
+setup
+stub_agents claude codex
+window_stub konsole
+CACHYOS_AGENT_DEFAULT=codex run "$CA" default claude
+expect "$RC" 0 "exit status"
+expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "claude" "saved agent"
+expect "$(call_count codex)" 0 "the override must not pick the agent that starts"
+expect "$(last_call claude)" "--permission-mode|auto" "the named agent starts"
 ok
 cleanup_sandbox
 
@@ -188,7 +200,7 @@ stub cachyos-agent-launch
 run "$CA" default --install codex
 expect "$RC" 0 "exit status"
 expect "$(last_call cachyos-agent-install)" "codex" "install arguments"
-expect "$(last_call cachyos-agent-launch)" "--inline" "launch arguments"
+expect "$(last_call cachyos-agent-launch)" "--inline|--agent|codex" "launch arguments"
 expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "codex" "saved agent"
 contains "$OUT" $'\033[2J' "screen cleared before the agent starts"
 ok
@@ -265,7 +277,7 @@ else
   expect "$(last_call cachyos-agent-install)" "codex" "install arguments"
   expect "$(call_count konsole)" 0 "no extra terminal at a terminal"
   expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "codex" "saved agent"
-  expect "$(last_call cachyos-agent-launch)" "" "launch arguments"
+  expect "$(last_call cachyos-agent-launch)" "--agent|codex" "launch arguments"
   ok
 fi
 cleanup_sandbox
