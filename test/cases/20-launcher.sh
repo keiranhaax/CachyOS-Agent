@@ -379,6 +379,21 @@ expect "$(last_call claude)" '--permission-mode|auto|--|-dash two words q"uote' 
 ok
 cleanup_sandbox
 
+begin "a one-word prompt cannot name one of claude's subcommands"
+setup
+stub claude
+# After -- claude still runs a lone operand that names a subcommand (update, install, doctor,
+# mcp ...) instead of seeding the session, so such a word is sent with a trailing space.
+# A prompt of several words is no subcommand and arrives as typed.
+for word in update install doctor mcp help; do
+  CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "$word"
+  expect "$(last_call claude)" "--permission-mode|auto|--|$word " "claude with the prompt $word"
+done
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "update now"
+expect "$(last_call claude)" "--permission-mode|auto|--|update now" "claude with a prompt of two words"
+ok
+cleanup_sandbox
+
 begin "a prompt that starts with @ is not taken for a file by pi"
 setup
 stub_agents pi omp
@@ -656,9 +671,9 @@ setup
 mkdir -p "$HOME/.local/bin"
 printf '#!/bin/bash\nprintf "%%s\\n" "$@" >"%s/user-install"\n' "$SANDBOX" >"$HOME/.local/bin/claude"
 chmod +x "$HOME/.local/bin/claude"
-CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "hi"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "hi there"
 expect "$RC" 0 "exit status"
-expect "$(tr '\n' '|' <"$SANDBOX/user-install")" "--permission-mode|auto|--|hi|" "arguments seen by the user's install"
+expect "$(tr '\n' '|' <"$SANDBOX/user-install")" "--permission-mode|auto|--|hi there|" "arguments seen by the user's install"
 ok
 cleanup_sandbox
 

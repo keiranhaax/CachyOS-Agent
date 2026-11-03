@@ -183,9 +183,16 @@ build_command() {
       fi
       ;;
     claude)
+      # Even after --, a lone word that names a subcommand (update, install,
+      # doctor, mcp) runs that subcommand instead of seeding the session. A
+      # trailing space makes it a message; several words never name one.
       auto=(--permission-mode auto)
       command=(claude "${auto[@]}")
-      with_prompt -- "$prompt"
+      if [[ $prompt == *[[:space:]]* ]]; then
+        with_prompt -- "$prompt"
+      else
+        with_prompt -- "$prompt "
+      fi
       ;;
     grok)
       auto=(--permission-mode bypassPermissions)
