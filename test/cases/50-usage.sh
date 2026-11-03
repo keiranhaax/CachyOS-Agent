@@ -101,15 +101,23 @@ fi
 ok
 cleanup_sandbox
 
-begin "the collectors read pi's agent dir the way pi does, with a leading ~ expanded"
+begin "the collectors read pi's agent dir the way pi does: a leading ~ expands, a blank value is none"
 make_sandbox
-mkdir -p "$SANDBOX/empty" "$HOME/pi-home"
-printf '%s\n' '{"google-antigravity": {"type": "oauth", "access": "tok", "expires": "2099-01-01T00:00:00Z", "email": "a@example.test"}}' \
-  >"$HOME/pi-home/auth.json"
-record=$(env -i PATH="$SANDBOX/empty" HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
-  XDG_CACHE_HOME="$XDG_CACHE_HOME" HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
-  PI_CODING_AGENT_DIR='~/pi-home' "$REPO_ROOT/bin/cachyos-agent-usage-agy" --force)
-is_json "$record" '.ready == true' || fail "agy did not find pi's sign-in under ~/pi-home: $record"
+mkdir -p "$SANDBOX/empty" "$HOME/pi-home" "$HOME/.pi/agent"
+auth='{"google-antigravity": {"type": "oauth", "access": "tok", "expires": "2099-01-01T00:00:00Z", "email": "a@example.test"},
+  "fireworks": {"type": "api_key", "key": "fw-FAKE"}, "synthetic": {"type": "api_key", "key": "syn-FAKE"}}'
+# The sign-in sits in only one of the two places: the dir PI_CODING_AGENT_DIR names, or the
+# default one a value of only blanks falls back to, as pi does.
+for dir in '~/pi-home' '   '; do
+  rm -f "$HOME/pi-home/auth.json" "$HOME/.pi/agent/auth.json"
+  if [[ $dir == '~/pi-home' ]]; then printf '%s\n' "$auth" >"$HOME/pi-home/auth.json"; else printf '%s\n' "$auth" >"$HOME/.pi/agent/auth.json"; fi
+  for agent in agy fireworks synthetic; do
+    record=$(env -i PATH="$SANDBOX/empty" HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+      XDG_CACHE_HOME="$XDG_CACHE_HOME" HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+      PI_CODING_AGENT_DIR="$dir" "$REPO_ROOT/bin/cachyos-agent-usage-$agent" --force)
+    is_json "$record" '.ready == true' || fail "$agent did not find pi's sign-in with PI_CODING_AGENT_DIR='$dir': $(head -c 200 <<<"$record")"
+  done
+done
 ok
 cleanup_sandbox
 

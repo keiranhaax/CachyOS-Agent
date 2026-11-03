@@ -38,6 +38,7 @@ from collectors import (  # noqa: E402
   obj,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   routed_match,
@@ -74,8 +75,7 @@ def model_name(raw):
 
 
 def pi_agent_dirs():
-  pi_agent = os.environ.get("PI_CODING_AGENT_DIR")
-  dirs = [Path(pi_agent).expanduser() if pi_agent else Path.home() / ".pi" / "agent", Path.home() / ".omp" / "agent"]
+  dirs = [pi_agent_dir(), Path.home() / ".omp" / "agent"]
   # `omp --profile=<name>` (and pi's equivalent) moves the agent tree under
   # <base>/profiles/<name>/.
   for base in (Path.home() / ".pi", Path.home() / ".omp"):

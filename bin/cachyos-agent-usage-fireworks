@@ -45,6 +45,7 @@ from collectors import (  # noqa: E402
   emit,
   number,
   open_json,
+  pi_agent_dir,
   read_json,
   scan_max_age,
   trusted_endpoint,
@@ -188,11 +189,6 @@ def read_auth_file(path: Path) -> tuple[str, str]:
   return api_key, account_id
 
 
-def pi_auth_path() -> Path:
-  agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR") or (Path.home() / ".pi" / "agent"))
-  return agent_dir / "auth.json"
-
-
 def opencode_auth_path() -> Path:
   return data_home() / "opencode" / "auth.json"
 
@@ -256,7 +252,7 @@ def credentials(auth_path: Path, config: dict[str, Any]) -> tuple[str, str]:
   api_key = (
     str(os.environ.get("FIREWORKS_API_KEY", "")).strip()
     or file_key
-    or read_pi_key(pi_auth_path())
+    or read_pi_key(pi_agent_dir() / "auth.json")
     or read_opencode_key(opencode_auth_path())
   )
   account_id = (
