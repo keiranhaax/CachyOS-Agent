@@ -50,6 +50,14 @@ readonly COREDUMP_SENDER=/usr/lib/systemd/systemd-coredump
 # a reader alive until it is answered, and critical toasts never time out.
 readonly MAX_WAITING=10
 
+# Exit status 78 (EX_CONFIG) is in the unit's RestartPreventExitStatus=. What is
+# checked below is fixed for the life of the service, so restarting it every five
+# seconds would only log the same error for as long as the session lasts.
+config_error() {
+  printf '%s: %s\n' "${0##*/}" "$1" >&2
+  exit 78
+}
+
 # Crash loops dump core repeatedly, so announce each program at most once a
 # window.
 readonly dedupe_seconds=${CACHYOS_AGENT_CRASH_DEDUPE_SECONDS:-60}
@@ -61,15 +69,15 @@ readonly ignore_pattern=${CACHYOS_AGENT_CRASH_IGNORE:-}
 # service's life: the window is evaluated as arithmetic, where a number too long
 # for 64 bits wraps around, and a pattern bash rejects makes every match fail,
 # which would read as "nothing to ignore". Nine digits is some thirty years.
-[[ $dedupe_seconds =~ ^[0-9]{1,9}$ ]] || ca_die "CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number of seconds, at most nine digits"
+[[ $dedupe_seconds =~ ^[0-9]{1,9}$ ]] || config_error "CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number of seconds, at most nine digits"
 if [[ -n $ignore_pattern ]]; then
   status=0
   # shellcheck disable=SC2319 # bash documents status 2 for [[ =~ ]] with an invalid regex
   [[ '' =~ $ignore_pattern ]] || status=$?
-  ((status != 2)) || ca_die "CACHYOS_AGENT_CRASH_IGNORE is not a valid extended regular expression"
+  ((status != 2)) || config_error "CACHYOS_AGENT_CRASH_IGNORE is not a valid extended regular expression"
 fi
 for cmd in journalctl jq notify-send busctl systemd-run; do
-  ca_cmd_present "$cmd" || ca_die "$cmd not found"
+  ca_cmd_present "$cmd" || config_error "$cmd not found"
 done
 
 # Plasma's shell owns org.freedesktop.Notifications, so a plasmashell crash

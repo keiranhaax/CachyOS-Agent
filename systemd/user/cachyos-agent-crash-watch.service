@@ -20,6 +20,9 @@ Type=simple
 ExecStart=/usr/bin/cachyos-agent-crash-watch
 Restart=always
 RestartSec=5
+# The watcher exits 78 (EX_CONFIG) when a setting or a tool it needs is wrong.
+# A restart would not fix that, so it stays stopped and the journal says why.
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=graphical-session.target

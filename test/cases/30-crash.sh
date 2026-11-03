@@ -198,7 +198,8 @@ count_files() {
 }
 
 # journal_entry <uid> <comm> <pid> <exe> <signal>: a JSON line the way
-# `journalctl -o json` prints a coredump record.
+# `journalctl -o json` prints a coredump record. _EXE is the sender, which
+# journald fills in itself: here systemd-coredump, as on a real machine.
 journal_entry() {
   jq -nc --arg uid "$1" --arg comm "$2" --arg pid "$3" --arg exe "$4" --arg sig "$5" \
     '{MESSAGE_ID: "fc2e22bc6ee647b6b90729ab34a250b1", _UID: $uid, _EXE: "/usr/lib/systemd/systemd-coredump",
@@ -331,7 +332,6 @@ firefox_toast=$(grep -lx 'Process crashed: firefox' "$SANDBOX"/toast.*)
 ok
 cleanup_sandbox
 
-begin "mutes and the ignore pattern follow the executable's name, not the truncated comm"
 begin "the watcher believes only what systemd-coredump journaled"
 make_sandbox
 watch_stubs
@@ -367,6 +367,7 @@ grep -q '10 crash notifications are waiting' "$SANDBOX/watch.log" || fail "the d
 ok
 cleanup_sandbox
 
+begin "mutes and the ignore pattern follow the executable's name, not the truncated comm"
 make_sandbox
 watch_stubs
 me=$(id -u)
@@ -394,7 +395,6 @@ wait_for 1 "$SANDBOX/toast.*"
 ok
 cleanup_sandbox
 
-begin "a click on a crash with missing fields hands over what is known"
 begin "a mute made with a name that has a backslash or a control character holds"
 make_sandbox
 watch_stubs
@@ -416,6 +416,7 @@ wait_for 1 "$SANDBOX/toast.*"
 ok
 cleanup_sandbox
 
+begin "a click on a crash with missing fields hands over what is known"
 make_sandbox
 watch_stubs
 me=$(id -u)
@@ -486,7 +487,7 @@ wait_for 2 "$SANDBOX/toast.*"
 [[ $(count_files "$SANDBOX/toast.*") == 2 ]] || fail "a window of 000 should announce every crash: $(count_files "$SANDBOX/toast.*") toasts"
 rm -f "$SANDBOX"/toast.* "$SANDBOX/calls/journalctl"
 run env CACHYOS_AGENT_CRASH_DEDUPE_SECONDS=99999999999999999999 "$AGENT" crash watch
-((status == 1)) && [[ $out == *"CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number"* ]] || fail "an overflowing window was accepted ($status): $out"
+((status == 78)) && [[ $out == *"CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number"* ]] || fail "an overflowing window was accepted ($status): $out"
 [[ ! -e $SANDBOX/calls/journalctl ]] || fail "the journal was followed with an overflowing window"
 ok
 cleanup_sandbox
@@ -599,9 +600,9 @@ begin "the watcher refuses settings it would misread, before it follows the jour
 make_sandbox
 watch_stubs
 run env CACHYOS_AGENT_CRASH_IGNORE='(' "$AGENT" crash watch
-((status == 1)) && [[ $out == *"CACHYOS_AGENT_CRASH_IGNORE is not a valid extended regular expression"* ]] || fail "a broken pattern was accepted ($status): $out"
+((status == 78)) && [[ $out == *"CACHYOS_AGENT_CRASH_IGNORE is not a valid extended regular expression"* ]] || fail "a broken pattern was accepted, or not refused as a configuration error ($status): $out"
 run env CACHYOS_AGENT_CRASH_DEDUPE_SECONDS='1+1' "$AGENT" crash watch
-((status == 1)) && [[ $out == *"CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number"* ]] || fail "a non-numeric window was accepted ($status): $out"
+((status == 78)) && [[ $out == *"CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number"* ]] || fail "a non-numeric window was accepted, or not refused as a configuration error ($status): $out"
 [[ ! -e $SANDBOX/calls/journalctl ]] || fail "the journal was followed with bad settings"
 ok
 cleanup_sandbox
@@ -867,7 +868,7 @@ begin "the shipped unit follows the session on Wayland and X11 and restarts"
 make_sandbox
 for expected in 'After=graphical-session.target' 'PartOf=graphical-session.target' 'WantedBy=graphical-session.target' \
   'ConditionEnvironment=|WAYLAND_DISPLAY' 'ConditionEnvironment=|DISPLAY' 'ConditionFileIsExecutable=/usr/bin/notify-send' \
-  'ExecStart=/usr/bin/cachyos-agent-crash-watch' 'Restart=always' 'RestartSec=5'; do
+  'ExecStart=/usr/bin/cachyos-agent-crash-watch' 'Restart=always' 'RestartSec=5' 'RestartPreventExitStatus=78'; do
   grep -qxF -- "$expected" "$SHIPPED_UNIT" || fail "the unit has no line '$expected'"
 done
 ok
