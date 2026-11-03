@@ -1,0 +1,235 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent:summary=Show agent limits, balances and token usage; to filter, put -- or --json before the agent names, because a bare name runs that agent's collector
+# cachyos-agent:args=[--json] [--] [agent...]
+# cachyos-agent:examples=cachyos-agent usage | cachyos-agent usage --json | cachyos-agent usage -- claude codex | cachyos-agent usage --json claude codex
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+USAGE_DIR=$CACHYOS_AGENT_STATE_DIR/usage
+# The timer refreshes every 15 minutes, so a record this old means the updates
+# are failing or switched off, and its numbers are not today's.
+RECORD_OLD_SECONDS=3600
+
+usage() {
+  cat <<'EOF'
+Usage: cachyos-agent usage [--json] [--] [agent...]
+
+Show each agent's limit windows, balance, tokens and prompts from the records
+that `cachyos-agent usage update` writes. With agent names, show only those.
+--json prints the raw records as one JSON array, in file order.
+
+Through the dispatcher, a first word that names a collector runs that
+collector: `cachyos-agent usage claude` prints a fresh raw record, it does not
+filter this report. Put an option first to filter: `cachyos-agent usage --json
+claude`, or `cachyos-agent usage -- claude` for text.
+EOF
+}
+
+# The report, over an array of records. Every field was written by a collector
+# and a collector can be wrong, so a field of the wrong type must print as
+# nothing and never stop the report: that is what arr, num and text are for.
+JQ_REPORT=$(
+  cat <<'JQ'
+def ljust($n): . + (" " * ([$n - length, 0] | max));
+def rjust($n): (" " * ([$n - length, 0] | max)) + .;
+def arr: if type == "array" then . else [] end;
+def num: if type == "number" then . else 0 end;
+# A string from a record goes to a terminal, and a vendor's response can put an
+# escape sequence in one: drop every control character, C1 included (U+009B is
+# an escape on some terminals), and with them any newline that would start a
+# line of its own.
+def clean: gsub("[\u0000-\u001f\u007f-\u009f]"; "");
+def text: if type == "string" then clean else "" end;
+def capitalized: if length > 0 then (.[0:1] | ascii_upcase) + .[1:] else . end;
+
+# ISO 8601 with an optional fraction and offset. A time without an offset is
+# UTC, which is how the collectors read one too.
+def offset_seconds:
+  if . == null or . == "Z" then 0
+  else capture("^(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})$")
+    | ((.h | tonumber) * 3600 + (.m | tonumber) * 60) * (if .s == "-" then -1 else 1 end)
+  end;
+def epoch:
+  (if type == "string"
+   then capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})?$") // null
+   else null end) as $m
+  | if $m == null then null else ($m.t + "Z" | fromdateiso8601) - ($m.z | offset_seconds) end;
+
+def duration:
+  if . <= 0 then "now"
+  else (. / 60 | floor) as $m | ($m / 60 | floor) as $h | ($h / 24 | floor) as $d
+    | if $d > 0 then "\($d)d \($h % 24)h"
+      elif $h > 0 then "\($h)h \($m % 60)m"
+      else "\([$m, 1] | max)m" end
+  end;
+
+def scaled($div; $suffix): ((. / $div * 10 | round) / 10 | tostring) + $suffix;
+def tokens:
+  if . >= 999950000 then scaled(1e9; "B")
+  elif . >= 999950 then scaled(1e6; "M")
+  elif . >= 1000 then scaled(1e3; "k")
+  else tostring end;
+
+def currency_prefix:
+  ((. // "USD") | tostring | clean | ascii_upcase) as $c
+  | if $c == "USD" then "$" elif $c == "EUR" then "€" elif $c == "GBP" then "£" else $c + " " end;
+def money($currency):
+  num as $v
+  | (($v | fabs) * 100 | round) as $cents
+  | (if $v < 0 then "-" else "" end) + ($currency | currency_prefix)
+    + "\($cents / 100 | floor)." + (($cents % 100 | tostring) | rjust(2) | gsub(" "; "0"));
+
+# One row per limit window that has a usable percentage. A window whose reset
+# time has passed is untouched again, so it reads 0% with no reset to wait for.
+def limit_rows($now):
+  [ (.limits | arr)[] | select(type == "object" and (.percent | type) == "number" and .percent >= 0)
+    | (.resetsAt | epoch) as $reset
+    | ($reset != null and $reset <= $now) as $elapsed
+    | ((if $elapsed then 0 else (.percent * 100 | round) end | tostring) + "%") as $pct
+    | [(.label | text), $pct]
+      + (if $reset != null and ($elapsed | not) then ["resets in \($reset - $now | duration)"] else [] end) ];
+
+def balance_rows:
+  (.balance // null) as $b
+  | if ($b | type) != "object" then []
+    else [["Balance",
+      (if $b.estimated == true then "about " else "" end)
+      + ($b.remaining | money($b.currency)) + " left"
+      + (if ($b.funded | num) > 0
+         then " of \($b.funded | money($b.currency)) (spent \($b.spent | money($b.currency)))"
+         else "" end)]] end;
+
+def token_rows:
+  ([(.recentDays | arr)[] | select(type == "object") | .messageCount | num] | add // 0) as $week
+  | (.todayTotalTokens | num) as $today
+  | if .hasLocalStats == true or $today > 0 or $week > 0
+    then [["Tokens", "today \($today | tokens), this week \($week | tokens)"
+           + (if .scope == "account" then " (whole account)" else "" end)]]
+    else [] end;
+
+def prompt_rows:
+  if .hasPromptStats != false and ((.totalPrompts | num) > 0 or (.todayPrompts | num) > 0)
+  then [["Prompts", "today \(.todayPrompts | num), all time \(.totalPrompts | num)"]]
+  else [] end;
+
+def aligned($indent):
+  (map(.[0] | length) | max // 0) as $w
+  | map($indent + (.[0] | ljust($w)) + (.[1:] | map("  " + .) | join("")));
+
+# What keeps the numbers from being current: said beside the last numbers
+# known, which stay on show. Lines come without indent.
+def stale_lines($stale; $fetched_ms; $now):
+  (.usageStatusText | text) as $status
+  | (.authHelpText | text) as $help
+  | ( if $stale then
+        ["limits are stale" + (if ($fetched_ms | num) > 0
+                               then " (last checked \($now - ($fetched_ms | num) / 1000 | duration) ago)"
+                               else "" end)]
+      else [] end )
+    + ( if $status != "" and $help != "" then ["! \($status): \($help)"]
+        elif $status != "" then ["! \($status)"]
+        elif $stale and $help != "" then ["! \($help)"]
+        else [] end );
+
+def account_lines($now):
+  (.stale == true) as $stale
+  | ["    " + (.label | text)
+     + (if (.plan | text) != "" then "  " + (.plan | text) else "" end)
+     + (if .active == true then "  (active)" else "" end)]
+    + (limit_rows($now) | aligned("      "))
+    + (stale_lines($stale; .fetchedAt; $now) | map("      " + .));
+
+def record_lines($now; $old_seconds):
+  (.limitsStale == true) as $stale
+  | (.updatedAt | epoch) as $updated
+  | (if $updated != null and $now - $updated >= $old_seconds
+     then "  (updated \($now - $updated | duration) ago)" else "" end) as $age
+  | [(.name | text)
+     + (if (.tierLabel | text) != "" then "  " + (.tierLabel | text | capitalized) else "" end)
+     + $age]
+    + ((limit_rows($now) + balance_rows + token_rows + prompt_rows) | aligned("  "))
+    + (stale_lines($stale; .limitsFetchedAt; $now) | map("  " + .))
+    + (if (.accounts | arr | length) > 0
+       then ["  Accounts"] + [(.accounts | arr)[] | select(type == "object") | account_lines($now)[]]
+       else [] end);
+
+# A record of an agent that is not in use here is left out, unless the person
+# named it: then it says so instead of vanishing.
+[.[] | select(type == "object")
+     | if .ready == true then record_lines($now; $old_seconds) | join("\n")
+       elif $named then "\(.name | text): not in use on this machine"
+       else empty end]
+| join("\n\n")
+JQ
+)
+
+main() {
+  # LC_ALL beats LC_COLLATE, so it is the one to set for the same file order in
+  # every locale; nothing else here depends on the locale.
+  local LC_ALL=C json=false named=false agent file report
+  local -a want=() files=() valid=() missing=()
+
+  while (($# > 0)); do
+    case $1 in
+      -h | --help)
+        usage
+        return 0
+        ;;
+      --json) json=true ;;
+      --)
+        shift
+        want+=("$@")
+        break
+        ;;
+      -*) ca_die "unknown option: $1 (see --help)" ;;
+      *) want+=("$1") ;;
+    esac
+    shift
+  done
+  for agent in "${want[@]}"; do
+    [[ $agent =~ ^[[:alnum:]_][[:alnum:]_-]*$ ]] || ca_die "not an agent name: $agent"
+  done
+
+  if ((${#want[@]} > 0)); then named=true; fi
+
+  # C collation (set above): the file order is the same in every locale.
+  shopt -s nullglob
+  files=("$USAGE_DIR"/*.json)
+  shopt -u nullglob
+
+  for file in "${files[@]}"; do
+    agent=${file##*/}
+    agent=${agent%.json}
+    if ((${#want[@]} > 0)) && [[ " ${want[*]} " != *" $agent "* ]]; then continue; fi
+    if jq -e 'type == "object"' "$file" >/dev/null 2>&1; then
+      valid+=("$file")
+    else
+      printf '%s: skipping %s, which is not a usage record\n' "${0##*/}" "$file" >&2
+    fi
+  done
+  for agent in "${want[@]}"; do
+    [[ -f $USAGE_DIR/$agent.json ]] || missing+=("$agent")
+  done
+
+  if $json; then
+    if ((${#valid[@]} > 0)); then jq -cs . "${valid[@]}"; else echo '[]'; fi
+  elif ((${#valid[@]} > 0)); then
+    report=$(jq -rs --argjson now "$(date +%s)" --argjson old_seconds "$RECORD_OLD_SECONDS" \
+      --argjson named "$named" "$JQ_REPORT" "${valid[@]}")
+    # Every record can say the agent is not in use, which the report leaves out.
+    printf '%s\n' "${report:-No agent is in use on this machine (run: cachyos-agent usage update after signing in to one)}"
+  elif ((${#want[@]} == 0)); then
+    echo "No usage records yet. Run: cachyos-agent usage update"
+  fi
+
+  if ((${#missing[@]} > 0)); then
+    printf '%s: no usage record for: %s (run: cachyos-agent usage update %s)\n' \
+      "${0##*/}" "${missing[*]}" "${missing[*]}" >&2
+    return 1
+  fi
+}
+
+main "$@"

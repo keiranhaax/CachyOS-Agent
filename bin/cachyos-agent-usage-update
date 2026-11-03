@@ -1,0 +1,165 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-usage-update (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Regenerate the agent usage records
+# cachyos-agent:args=[--force] [--limits-only] [--except <agent>] [agent...]
+# cachyos-agent:examples=cachyos-agent usage update | cachyos-agent usage update claude | cachyos-agent usage update --except codex
+set -euo pipefail
+
+# Each cachyos-agent-usage-<agent> collector prints one display-ready JSON
+# record; this writes them to $CACHYOS_AGENT_STATE_DIR/usage/ where
+# `cachyos-agent usage` and the Plasma widget read them. Adding an agent is
+# adding a collector: any cachyos-agent-usage-* executable beside this one is
+# picked up, except the commands that are not collectors.
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+USAGE_DIR=$CACHYOS_AGENT_STATE_DIR/usage
+ACCOUNTS_DIR=$CACHYOS_AGENT_STATE_DIR/accounts
+# Commands in the usage group that are not collectors. The report is
+# cachyos-agent-usage itself, which the glob below does not match.
+NOT_COLLECTORS=(update schedule)
+
+AGENTS=()        # every collector found, by agent name
+ONLY=()          # the agents named on the command line; empty means all
+declare -A EXCLUDED=()
+
+usage() {
+  cat <<'EOF'
+Usage: cachyos-agent usage update [--force] [--limits-only] [--except <agent>] [agent...]
+
+Run the collectors and write one record per agent to
+$XDG_STATE_HOME/cachyos-agent/usage/. With agent names, run only those;
+--except leaves one out and can be repeated. --force reuses nothing from earlier
+runs, --limits-only asks only for fresh limits and reuses recent local scans.
+
+The collectors read API keys from the environment first. Run from your shell
+this sees what the shell exports; run by the timer (`cachyos-agent usage
+schedule`) it sees only the systemd user manager's environment, so a key set
+only in config.fish or .bashrc is missing there. Keep keys in
+~/.config/environment.d/*.conf, or in ~/.config/cachyos-agent/<agent>.json for
+the collectors that read it.
+EOF
+}
+
+# collect <agent> [flag...]: run one collector and replace the agent's record
+# only when it printed a JSON object, so a collector that fails or prints
+# rubbish leaves the previous record where it was.
+collect() {
+  local agent=$1 record
+  shift
+  if ! record=$("cachyos-agent-usage-$agent" "$@") || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$record"; then
+    printf '%s: %s collector failed\n' "${0##*/}" "$agent" >&2
+    return 1
+  fi
+  printf '%s\n' "$record" | ca_atomic_write "$USAGE_DIR/$agent.json"
+}
+
+# Fresh limits are when switching accounts near a limit gets decided. A switch
+# changes which account the record's own limits describe, so that record is
+# collected once more; the limits probes it repeats are still cached.
+autoswitch() {
+  local agent switched status=0
+  for agent in claude codex grok; do
+    wanted "$agent" && [[ -f $ACCOUNTS_DIR/$agent.json ]] || continue
+    switched=$(cachyos-agent-account-state autoswitch "$agent") || {
+      printf '%s: account autoswitch failed for %s\n' "${0##*/}" "$agent" >&2
+      status=1
+      continue
+    }
+    if [[ -n $switched ]]; then
+      collect "$agent" --limits-only || status=1
+    fi
+  done
+  return "$status"
+}
+
+# in_list <name> <item...>: whether the name is one of the items, compared whole.
+in_list() {
+  local name=$1 item
+  shift
+  for item in "$@"; do
+    [[ $item == "$name" ]] && return 0
+  done
+  return 1
+}
+
+# wanted <agent>: not excluded, and named when anything was named.
+wanted() {
+  [[ -z ${EXCLUDED[$1]-} ]] || return 1
+  ((${#ONLY[@]} > 0)) || return 0
+  in_list "$1" "${ONLY[@]}"
+}
+
+# Fill AGENTS from the collectors beside this script, in byte order in every
+# locale. LC_ALL overrides LC_COLLATE, so it is LC_ALL that has to be set.
+discover() {
+  local LC_ALL=C file agent skip
+  for file in "$CACHYOS_AGENT_BIN"/cachyos-agent-usage-*; do
+    [[ -f $file && -x $file ]] || continue
+    agent=${file##*/cachyos-agent-usage-}
+    for skip in "${NOT_COLLECTORS[@]}"; do
+      [[ $agent != "$skip" ]] || continue 2
+    done
+    AGENTS+=("$agent")
+  done
+}
+
+main() {
+  local -a flags=() pids=()
+  local agent pid status=0
+
+  while (($# > 0)); do
+    case $1 in
+      -h | --help)
+        usage
+        return 0
+        ;;
+      --force | --limits-only) flags+=("$1") ;;
+      --except)
+        EXCLUDED[${2:?--except needs an agent}]=1
+        shift
+        ;;
+      -*) ca_die "unknown option: $1 (see --help)" ;;
+      *) ONLY+=("$1") ;;
+    esac
+    shift
+  done
+
+  discover
+  for agent in "${ONLY[@]}" "${!EXCLUDED[@]}"; do
+    in_list "$agent" "${AGENTS[@]}" || ca_die "no collector for agent: $agent (known: ${AGENTS[*]})"
+  done
+  mkdir -p "$USAGE_DIR"
+
+  # Accounts can be signed in to someone else since they were added; the
+  # records name them from the registry, so bring it up to date first.
+  if [[ -d $ACCOUNTS_DIR ]] && ca_cmd_present cachyos-agent-account-state; then
+    cachyos-agent-account-state refresh || {
+      printf '%s: account refresh failed\n' "${0##*/}" >&2
+      status=1
+    }
+  fi
+
+  # Collectors forced together read the Codex rollouts they share once between
+  # them, whenever each gets to them, by knowing when this refresh began.
+  # EPOCHREALTIME uses the locale's decimal separator, a comma in many.
+  export CACHYOS_AGENT_USAGE_REFRESH_AT=${EPOCHREALTIME/,/.}
+
+  for agent in "${AGENTS[@]}"; do
+    wanted "$agent" || continue
+    collect "$agent" "${flags[@]}" &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+
+  if ca_cmd_present cachyos-agent-account-state; then
+    autoswitch || status=1
+  fi
+  return "$status"
+}
+
+main "$@"
