@@ -12,31 +12,96 @@ cd "$REPO_ROOT"
 # Every document that shows commands or repeats a list from the code.
 DOCS=(README.md AGENTS.md MAINTENANCE.md packaging/README.md cachyos-agent.install agents/skills/*/*.md)
 
-begin "every cachyos-agent command in the documents resolves to a command"
+# shellcheck source=../doc-commands.sh
+source "$REPO_ROOT/test/doc-commands.sh"
+
+# catalog_and_groups: set $catalog (one route and its args metadata per line, tab
+# separated) and $groups from the dispatcher, hidden commands included.
+catalog_and_groups() {
+  local all
+  all=$("$AGENT" commands --json --all)
+  groups=$(jq -r '.commands | map(.group) | unique[]' <<<"$all"
+    printf 'commands\nversion\n')
+  catalog=$(jq -r '.commands[] | [(.route | sub("^cachyos-agent "; "")), (.args // "")] | @tsv' <<<"$all"
+    printf 'commands\t[--all] [--json] [--check]\nversion\t\n')
+}
+
+begin "every cachyos-agent command in the documents is a command the dispatcher has, with an action it takes"
 make_sandbox
-routes=$("$AGENT" commands --json --all | jq -r '.commands[] | .route | ltrimstr("cachyos-agent ")')
-declare -A is_route=() is_group=([commands]=1 [version]=1)
-while IFS= read -r route; do
-  is_route[$route]=1
-  is_group[${route%% *}]=1
-done <<<"$routes"
-unresolved=()
+catalog_and_groups
 for doc in "${DOCS[@]}"; do
-  # Only what is quoted or starts a line counts: a sentence may say
-  # "cachyos-agent runtime", a code span or a command line may not.
-  while IFS= read -r mention; do
-    read -ra words <<<"${mention#*cachyos-agent }"
-    group=${words[0]-}
-    [[ -n $group ]] || continue
-    [[ -n ${is_group[$group]-} ]] || { unresolved+=("$doc: $mention"); continue; }
-    # A group of subcommands alone is its help; given more words, one must be a subcommand.
-    [[ -n ${is_route[$group]-} || ${#words[@]} -eq 1 ]] && continue
-    [[ -n ${words[1]-} && -n ${is_route["$group ${words[1]}"]-} ]] || unresolved+=("$doc: $mention")
-  done < <(grep -ohE "(^|[\`\"'])[[:space:]]*cachyos-agent( [a-z][a-z0-9-]*)+" "$doc" || true)
+  bad=$(unknown_commands "$doc" "$catalog" "$groups")
+  [[ -z $bad ]] || fail "$doc shows commands or arguments that do not exist: $(tr '\n' ',' <<<"$bad")"
 done
-if ((${#unresolved[@]} > 0)); then
-  fail "no such command: $(printf '%s; ' "${unresolved[@]}")"
-fi
+ok
+cleanup_sandbox
+
+begin "the check of documented commands sees what it is looking for"
+make_sandbox
+catalog_and_groups
+# A command that is no route, and an action a route does not take (local pause, usage
+# schedul on), in each form a document shows one, while the words a route does take,
+# free ones included, pass.
+cat >"$SANDBOX/doc.md" <<'DOC'
+Run `cachyos-agent account use work` or `cachyos-agent crash capture on`; the `cachyos-agent` package.
+
+```
+$ cachyos-agent usage --json
+cachyos-agent theme sync --activate
+sudo pacman -S cachyos-agent cachyos-keyring
+```
+
+Not commands: `cachyos-agent-launch`, `cachyos-agent package`, `cachyos-agent account switch`, `cachyos-agent frobnicate`.
+
+```
+cachyos-agent account switch work
+cachyos-agent account
+```
+
+Commands that take free arguments, and the actions of those that do not:
+
+```
+cachyos-agent local use best
+cachyos-agent shortcut set Meta+Ctrl+Shift+A
+cachyos-agent default claude
+cachyos-agent install claude
+cachyos-agent prompt fix the build
+cachyos-agent usage update claude codex
+cachyos-agent usage claude
+cachyos-agent usage schedule on
+cachyos-agent crash mute firefox
+cachyos-agent account mode auto 90
+cachyos-agent launch --pick
+cachyos-agent commands --check
+```
+
+Not commands, in a block:
+
+```
+cachyos-agent local pause
+cachyos-agent shortcut remove
+cachyos-agent default clude
+cachyos-agent usage schedul on
+cachyos-agent crash captur on
+cachyos-agent theme follow onn
+cachyos-agent launch pi
+cachyos-agent usage claude codex
+cachyos-agent version now
+```
+
+Not commands, in prose:
+
+cachyos-agent crash captur now
+- cachyos-agent usage schedul off
+echo "  cachyos-agent local pauze"
+Say 'cachyos-agent default clude' and `cachyos-agent crash mute firefox off`.
+DOC
+seen=$(doc_commands "$SANDBOX/doc.md" | LC_ALL=C sort -u | tr '\n' ',')
+[[ $seen == "account,account mode auto,account switch,account switch work,account use work,commands,crash captur now,crash captur on,crash capture on,crash mute firefox,crash mute firefox off,default claude,default clude,frobnicate,install claude,launch,launch pi,local pause,local pauze,local use best,package,prompt fix the build,shortcut remove,shortcut set,theme follow onn,theme sync,usage,usage claude,usage claude codex,usage schedul off,usage schedul on,usage schedule on,usage update claude codex,version now," ]] \
+  || fail "the reader does not see the commands it should: $seen"
+bad=$(unknown_commands "$SANDBOX/doc.md" "$catalog" "$groups" | tr '\n' ',')
+[[ $bad == "cachyos-agent account switch,cachyos-agent account switch work,cachyos-agent crash captur now,cachyos-agent crash captur on,cachyos-agent default clude,cachyos-agent frobnicate,cachyos-agent launch pi,cachyos-agent local pause,cachyos-agent local pauze,cachyos-agent package,cachyos-agent shortcut remove,cachyos-agent theme follow onn,cachyos-agent usage claude codex,cachyos-agent usage schedul off,cachyos-agent usage schedul on,cachyos-agent version now," ]] \
+  || fail "the check does not catch exactly the commands that do not exist: $bad"
 ok
 cleanup_sandbox
 
