@@ -368,6 +368,18 @@ expect "$(last_call claude)" '--permission-mode|auto|--|-dash two words q"uote' 
 ok
 cleanup_sandbox
 
+begin "a prompt that starts with @ is not taken for a file by pi"
+setup
+stub_agents pi omp
+# pi reads an @path after -- as a file to attach, and fails on one that is no file;
+# a leading space keeps the prompt a message. omp reads everything after -- as messages.
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --prompt "@src/main.rs explain this"
+expect "$(last_call pi)" "--| @src/main.rs explain this" "pi"
+CACHYOS_AGENT_DEFAULT=omp run "$CA" launch --inline --prompt "@src/main.rs explain this"
+expect "$(last_call omp)" "--auto-approve|--|@src/main.rs explain this" "omp"
+ok
+cleanup_sandbox
+
 begin "prompt without --inline opens the terminal, with no arguments it shows usage"
 setup
 stub opencode
