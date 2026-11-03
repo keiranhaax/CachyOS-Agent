@@ -380,6 +380,30 @@ else
   [[ -f $pkg/usr/share/licenses/cachyos-agent/LICENSE ]] || fail "LICENSE is missing"
   "$VALIDATE" "$staged" >/dev/null 2>&1 || fail "validator rejected the installed package layout"
 
+  # Everything the commands read at run time, and everything the desktop looks for, is in the
+  # package: each file the checkout holds in these directories is staged where it is used.
+  # The directories are copied whole, so a file added later is checked without an edit here.
+  while IFS= read -r file; do
+    case $file in
+      bin/*) [[ $(readlink -f "$pkg/usr/bin/${file#bin/}") == "$staged/$file" ]] || fail "/usr/bin/${file#bin/} does not resolve to the data root"; continue ;;
+      lib/* | data/* | shell/* | agents/*) want=$staged/$file ;;
+      desktop/*) want=$pkg/usr/share/applications/${file#desktop/} ;;
+      systemd/user/*) want=$pkg/usr/lib/systemd/user/${file#systemd/user/} ;;
+      plasmoid/*) want=$pkg/usr/share/plasma/plasmoids/${file#plasmoid/} ;;
+    esac
+    cmp -s "$REPO_ROOT/$file" "$want" || fail "$file is not in the package at ${want#"$pkg"}"
+  done < <(cd "$REPO_ROOT" && find bin lib data shell agents desktop systemd/user plasmoid -type f -not -path '*/__pycache__/*' | sort)
+
+  # Commands that read those files, run from the staged /usr/bin with nothing on PATH to help.
+  staged_env=(env -i HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" PATH=/usr/bin:/bin)
+  mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
+  "${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" theme sync >/dev/null 2>&1 || fail "the staged theme sync failed"
+  for rendered in claude.json hermes.yaml opencode.json pi.json; do
+    [[ -s $XDG_STATE_HOME/cachyos-agent/theme/$rendered ]] || fail "the staged theme sync rendered no $rendered: it needs data/themed/ and the shell helpers"
+  done
+  recipes=$("${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" local list 2>&1) || fail "the staged local list failed: $recipes"
+  [[ $recipes == *qwen3-coder-next* ]] || fail "the staged local list does not show the recipes of data/local-models.tsv: $recipes"
+
   # Without PATH help, every lookup must start from the symlink's real path.
   if ! out=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$pkg/usr/bin/cachyos-agent" commands --check 2>&1); then
     fail "staged /usr/bin/cachyos-agent could not check its commands: $out"
