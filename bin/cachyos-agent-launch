@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Adapted from Omarchy bin/omarchy-agent (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
 # cachyos-agent:summary=Launch the default coding agent in a terminal
-# cachyos-agent:args=[--inline] [--pick] [--agent <id>] [--prompt <text>]
-# cachyos-agent:examples=cachyos-agent launch | cachyos-agent launch --inline | cachyos-agent launch --agent codex
+# cachyos-agent:args=[--inline] [--pick] [--local] [--local-model <name>] [--agent <id>] [--prompt <text>]
+# cachyos-agent:examples=cachyos-agent launch | cachyos-agent launch --inline | cachyos-agent launch --local | cachyos-agent launch --agent codex
 set -euo pipefail
 
 # shellcheck source=../lib/common.sh
@@ -11,8 +11,13 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 # shellcheck source=../lib/launcher.sh
 source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
 
+# Where `cachyos-agent local` serves the model: Ollama's OpenAI-compatible API.
+OLLAMA_URL=http://127.0.0.1:11434/v1
+
 inline=false
 pick=false
+use_local=false
+local_model=''
 agent_override=''
 prompt=''
 
@@ -24,7 +29,7 @@ prompt_via_clipboard='' # display name of an agent that cannot take a starting p
 
 usage() {
   cat <<EOF2
-Usage: cachyos-agent launch [--inline] [--pick] [--agent <id>] [--prompt <text>]
+Usage: cachyos-agent launch [--inline] [--pick] [--local] [--local-model <name>] [--agent <id>] [--prompt <text>]
 
 Start the default agent (see: cachyos-agent default) in a terminal window.
 The agent runs unattended, in its own don't-stop-to-ask mode; the flags are
@@ -32,6 +37,9 @@ printed to stderr as it starts.
 
   --inline              run in this terminal instead of opening a window
   --pick                with no default agent, list the choices
+  --local               run a local Ollama model: the one chosen with
+                        cachyos-agent local use (pi, or OpenCode without pi)
+  --local-model <name>  use this Ollama model instead of the chosen one
   --agent <id>          start this agent instead of the default
   --prompt <text>       give the agent a first message
 EOF2
@@ -65,6 +73,15 @@ parse_args() {
         pick=true
         shift
         ;;
+      --local)
+        use_local=true
+        shift
+        ;;
+      --local-model)
+        use_local=true
+        local_model=${2:?--local-model needs a model name}
+        shift 2
+        ;;
       --agent)
         agent_override=${2:?--agent needs an agent id}
         shift 2
@@ -84,9 +101,26 @@ parse_args() {
 
 # Set agent and agent_name: --agent, or else the default.
 choose_agent() {
-  local name=$agent_override
+  local name=$agent_override candidate
   if [[ -z $name ]]; then
     name=$(cachyos-agent-default)
+  fi
+
+  # Only agents with a launch-time overlay can be pointed at the local model.
+  # When the default can't, or none is set, the local model opens in pi, or
+  # OpenCode without pi: the agents panel launches it whether or not a default
+  # was chosen.
+  if $use_local && [[ $name != pi && $name != opencode ]]; then
+    name=''
+    for candidate in pi opencode; do
+      if ca_agent_present "$candidate"; then
+        name=$candidate
+        break
+      fi
+    done
+    if [[ -z $name ]]; then
+      refuse "No agent can run a local model" "Local models run in pi or OpenCode. Install one with: cachyos-agent install opencode"
+    fi
   fi
 
   # No default is chosen for you, so there is nothing to launch until one is.
@@ -277,6 +311,58 @@ build_command() {
   esac
 }
 
+# The model to run: --local-model, else the one `cachyos-agent local use`
+# chose, kept in the first line of local/active.
+resolve_local_model() {
+  local active=$CACHYOS_AGENT_STATE_DIR/local/active
+  if [[ -z $local_model && -f $active ]]; then
+    read -r local_model <"$active" || true
+  fi
+  if [[ -z $local_model ]]; then
+    refuse "No local model chosen" "Choose one with: cachyos-agent local use <model>"
+  fi
+}
+
+# --local points the agent at the Ollama model through a launch-time overlay
+# this launcher owns, never by editing the agent's own config. Only agents with
+# such an overlay can be pointed there.
+apply_local() {
+  local config major
+  case $agent in
+    opencode)
+      # The model and its provider ride in OPENCODE_CONFIG_CONTENT, the inline
+      # config that outranks the user's files: an OpenAI-compatible provider
+      # at the Ollama endpoint (https://opencode.ai/docs/providers/#ollama).
+      config=$(jq -nc --arg model "$local_model" --arg url "$OLLAMA_URL" '{
+        "$schema": "https://opencode.ai/config.json",
+        provider: {ollama: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Ollama (local)",
+          options: {baseURL: $url},
+          models: {($model): {name: $model}}
+        }},
+        model: ("ollama/" + $model)
+      }')
+      command=(env "OPENCODE_CONFIG_CONTENT=$config" "${command[@]}")
+      # OpenCode 2 attaches to a shared background service that never sees the
+      # inline config, so it needs a private one of its own; OpenCode 1 has no
+      # such flag and rejects it.
+      major=$(opencode --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)
+      if [[ $major != 1 ]]; then
+        command+=(--standalone)
+      fi
+      ;;
+    pi)
+      # Pi has no inline config. An extension registers the provider for this
+      # run only, leaving ~/.pi/agent/models.json alone; it reads the model and
+      # endpoint from the environment. The flags go before any -- prompt.
+      command=(env "CACHYOS_AGENT_LOCAL_MODEL=$local_model" "CACHYOS_AGENT_LOCAL_URL=$OLLAMA_URL"
+        pi --extension "$CACHYOS_AGENT_ROOT/data/pi-ollama.ts" --provider ollama --model "$local_model"
+        "${command[@]:1}")
+      ;;
+  esac
+}
+
 # An agent with no way to take a starting prompt still opens, with the prompt
 # on the clipboard to paste as its first message, so a prompted launch from the
 # panel or a crash report is not lost. With no clipboard tool the prompt is
@@ -341,6 +427,9 @@ pin_account() {
 # The unattended modes are the point, so they are never silent.
 announce() {
   local what=$agent_name
+  if $use_local; then
+    what+=" on local model $local_model ($OLLAMA_URL)"
+  fi
   if ((${#auto[@]})); then
     printf 'cachyos-agent: starting %s with %s, which does not stop to ask before acting\n' "$what" "${auto[*]}" >&2
   else
@@ -357,8 +446,14 @@ main() {
     cd "$HOME/Work"
   fi
 
+  if $use_local; then
+    resolve_local_model
+  fi
   choose_agent
   build_command
+  if $use_local; then
+    apply_local
+  fi
   if [[ -n $prompt && -n $prompt_via_clipboard ]]; then
     hand_over_prompt
   fi

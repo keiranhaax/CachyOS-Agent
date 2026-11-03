@@ -532,6 +532,107 @@ expect "$(<"$SANDBOX/env")" "unset" "nothing is set"
 ok
 cleanup_sandbox
 
+# ---- launch --local --------------------------------------------------------
+
+# choose_local_model <name>: choose the active model the way `cachyos-agent local use` does.
+choose_local_model() {
+  mkdir -p "$XDG_STATE_HOME/cachyos-agent/local"
+  printf '%s\n' "$1" >"$XDG_STATE_HOME/cachyos-agent/local/active"
+}
+
+# stub_opencode <version>: an opencode that prints <version> for --version and
+# otherwise saves the inline config it was given.
+stub_opencode() {
+  stub opencode 'if [[ ${1-} == --version ]]; then echo "'"$1"'"; else printf "%s" "${OPENCODE_CONFIG_CONTENT-}" >"${self%/stubs/*}/opencode-config"; fi'
+  }
+
+begin "launch --local without a chosen model says how to choose one"
+setup
+stub_opencode 2.2.5
+run "$CA" launch --inline --local
+expect "$RC" 1 "exit status"
+contains "$ERR" "cachyos-agent local use <model>" "hint"
+expect "$(call_count opencode)" 0 "nothing started"
+ok
+cleanup_sandbox
+
+begin "launch --local points OpenCode at Ollama through inline config"
+setup
+stub_opencode 2.2.5
+choose_local_model 'qwen3:8b'
+CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --local --prompt "go"
+expect "$RC" 0 "exit status"
+expect "$(last_call opencode)" "--auto|--prompt|go|--standalone" "OpenCode 2 gets a private server"
+config=$(<"$SANDBOX/opencode-config")
+jq -e '.model == "ollama/qwen3:8b"' <<<"$config" >/dev/null || fail "model is not ollama/qwen3:8b: $config"
+jq -e '.provider.ollama | .npm == "@ai-sdk/openai-compatible" and .options.baseURL == "http://127.0.0.1:11434/v1"' <<<"$config" >/dev/null \
+  || fail "provider is not the Ollama endpoint: $config"
+jq -e '.provider.ollama.models | keys == ["qwen3:8b"]' <<<"$config" >/dev/null || fail "models are not just the chosen one: $config"
+contains "$ERR" "local model qwen3:8b (http://127.0.0.1:11434/v1)" "announcement names the model"
+ok
+cleanup_sandbox
+
+begin "launch --local leaves --standalone off for OpenCode 1 and takes --local-model over the chosen one"
+setup
+stub_opencode 1.19.5
+choose_local_model 'qwen3:8b'
+CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --local-model 'hf.co/org/model:Q4_K_M'
+expect "$(last_call opencode)" "--auto" "OpenCode 1 arguments"
+jq -e '.model == "ollama/hf.co/org/model:Q4_K_M" and (.provider.ollama.models | keys == ["hf.co/org/model:Q4_K_M"])' \
+  <"$SANDBOX/opencode-config" >/dev/null || fail "--local-model was not used: $(<"$SANDBOX/opencode-config")"
+ok
+cleanup_sandbox
+
+begin "launch --local registers Ollama in pi for the run only"
+setup
+stub pi 'printf "%s|%s" "${CACHYOS_AGENT_LOCAL_MODEL-unset}" "${CACHYOS_AGENT_LOCAL_URL-unset}" >"${self%/stubs/*}/pi-env"'
+choose_local_model 'qwen3:8b'
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local --prompt "-go now"
+expect "$RC" 0 "exit status"
+expect "$(last_call pi)" "--extension|$REPO_ROOT/data/pi-ollama.ts|--provider|ollama|--model|qwen3:8b|--|-go now" "pi arguments"
+expect "$(<"$SANDBOX/pi-env")" "qwen3:8b|http://127.0.0.1:11434/v1" "extension environment"
+[[ -f $REPO_ROOT/data/pi-ollama.ts ]] || fail "the extension is not shipped"
+ok
+cleanup_sandbox
+
+begin "launch --local falls back to pi, then OpenCode, when the default cannot run a local model"
+setup
+stub_agents claude pi
+stub_opencode 2.2.5
+choose_local_model 'qwen3:8b'
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --local
+expect "$(call_count claude)" 0 "the default must not run"
+expect "$(call_count pi)" 1 "pi comes first"
+rm "$SANDBOX/stubs/pi"
+run "$CA" launch --inline --local --agent claude
+expect "$(last_call opencode)" "--auto|--standalone" "OpenCode without pi"
+rm "$SANDBOX/stubs/opencode"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --local
+expect "$RC" 1 "no local-capable agent"
+contains "$ERR" "cachyos-agent install opencode" "install hint"
+expect "$(call_count claude)" 0 "claude must not run"
+ok
+cleanup_sandbox
+
+begin "launch --local needs no default agent"
+setup
+stub pi
+choose_local_model 'qwen3:8b'
+run "$CA" launch --inline --local
+expect "$RC" 0 "exit status"
+expect "$(call_count pi)" 1 "pi started"
+ok
+cleanup_sandbox
+
+begin "launch --local opens the terminal like any launch"
+setup
+stub_agents pi konsole
+choose_local_model 'qwen3:8b'
+run "$CA" launch --local
+contains "$(last_call konsole)" "-e|env|CACHYOS_AGENT_LOCAL_MODEL=qwen3:8b|CACHYOS_AGENT_LOCAL_URL=http://127.0.0.1:11434/v1|pi|--extension|" "terminal command"
+ok
+cleanup_sandbox
+
 # ---- install ---------------------------------------------------------------
 
 begin "install uses pacman for a repository package, in the visible terminal"
@@ -648,5 +749,33 @@ for agent in "${ALL_AGENTS[@]}"; do
   [[ $RC == 1 ]] || fail "install $agent exited $RC with nothing installed"
 done
 ok
+cleanup_sandbox
+
+# ---- desktop entry, shell functions, pi extension --------------------------
+
+begin "the pi extension registers the Ollama provider only when the launcher asks"
+setup
+if ! command -v node >/dev/null || (($(node -p 'process.versions.node.split(".")[0]') < 24)); then
+  skip "node 24 or newer, which runs TypeScript files, is not installed"
+else
+  registered=$(CACHYOS_AGENT_LOCAL_MODEL='qwen3:8b' CACHYOS_AGENT_LOCAL_URL='http://127.0.0.1:11434/v1' \
+    node --input-type=module -e '
+      const { default: extension } = await import(process.argv[1]);
+      const calls = [];
+      extension({ registerProvider: (id, config) => calls.push({ id, config }) });
+      console.log(JSON.stringify(calls));
+    ' "$REPO_ROOT/data/pi-ollama.ts" 2>/dev/null)
+  jq -e 'length == 1 and .[0].id == "ollama" and .[0].config.baseUrl == "http://127.0.0.1:11434/v1"
+         and .[0].config.api == "openai-completions" and (.[0].config.models | map(.id) == ["qwen3:8b"])' \
+    <<<"$registered" >/dev/null || fail "unexpected registration: $registered"
+  idle=$(node --input-type=module -e '
+    const { default: extension } = await import(process.argv[1]);
+    let calls = 0;
+    extension({ registerProvider: () => calls++ });
+    console.log(calls);
+  ' "$REPO_ROOT/data/pi-ollama.ts" 2>/dev/null)
+  expect "$idle" 0 "no registration without the launcher's environment"
+  ok
+fi
 cleanup_sandbox
 
