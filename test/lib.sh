@@ -60,6 +60,9 @@ ok() {
 # stubs/ dir placed first on PATH, and calls/ where stubs record their argv.
 # Variables that would leak the real user's agents or terminal into a test are
 # cleared, and the session bus is hidden so notifications cannot reach a desktop.
+# That includes everything the product itself exports into the agent sessions it
+# launches (the CACHYOS_AGENT_ pins and local model), so the suite gives the same
+# result inside such a session, and what a systemd unit or a CLI's login sets.
 make_sandbox() {
   SANDBOX=$(cd "$(mktemp -d)" && pwd -P) # canonical, so paths compare equal to readlink -f
   SANDBOXES+=("$SANDBOX")
@@ -70,7 +73,8 @@ make_sandbox() {
   export XDG_CACHE_HOME=$HOME/.cache
   export XDG_RUNTIME_DIR=$SANDBOX/run
   unset HERMES_HOME CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME TERMINAL \
-    CACHYOS_AGENT_DEFAULT CACHYOS_SKILLS_SRC DBUS_SESSION_BUS_ADDRESS
+    CACHYOS_SKILLS_SRC DBUS_SESSION_BUS_ADDRESS "${!CACHYOS_AGENT_@}" \
+    INVOCATION_ID BROWSER PI_CODING_AGENT_DIR OPENCODE_CONFIG_CONTENT
   PATH=$SANDBOX/stubs:$BASE_PATH
 }
 

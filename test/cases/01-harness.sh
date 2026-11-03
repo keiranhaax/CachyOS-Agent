@@ -24,6 +24,21 @@ done
 ok
 cleanup_sandbox
 
+begin "make_sandbox clears what the product exports into the agent sessions it launches"
+# A suite run from inside a session that `cachyos-agent launch` started inherits
+# these: the account pins (empty for the primary account), the local model the
+# launcher points pi at, and what a systemd unit or a CLI's login sets.
+product=(CACHYOS_AGENT_CLAUDE_HOME CACHYOS_AGENT_CODEX_HOME CACHYOS_AGENT_GROK_HOME CACHYOS_AGENT_LOCAL_MODEL
+  CACHYOS_AGENT_LOCAL_URL CACHYOS_AGENT_LOCAL_CTX CACHYOS_AGENT_STATE_DIR INVOCATION_ID BROWSER PI_CODING_AGENT_DIR OPENCODE_CONFIG_CONTENT)
+for var in "${product[@]}"; do export "$var=/leaked"; done
+export CACHYOS_AGENT_CLAUDE_HOME= # the pin of the primary account is set and empty
+make_sandbox
+for var in "${product[@]}"; do
+  [[ -z ${!var+set} ]] || fail "$var survived make_sandbox"
+done
+ok
+cleanup_sandbox
+
 begin "a case exits nonzero after a failed assertion, with nothing to call at the end"
 make_sandbox
 if run_case 'begin "deliberate"; make_sandbox; [[ 1 == 2 ]] || fail "must fail"; ok; cleanup_sandbox'; then
