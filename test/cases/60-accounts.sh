@@ -975,6 +975,24 @@ active_is main || fail "the account changed without a click"
 ok
 cleanup_sandbox
 
+begin "without a desktop a message sent to a stderr nobody reads is said again where it can be read"
+# `account use`, add, remove and rename start the usage refresh, and so the autoswitch, with
+# stderr on /dev/null. The offer and the all-over message are all there is to tell the user.
+for over in '0.97 0.1|Switch new sessions to it with: cachyos-agent account use claude work' '0.97 0.97|All Claude accounts are over 95%'; do
+  two_accounts
+  unset DBUS_SESSION_BUS_ADDRESS
+  # shellcheck disable=SC2086 # two numbers
+  usage_record ${over%%|*}
+  "$AGENT" account state autoswitch claude 2>/dev/null
+  [[ -z $(registry claude .alert) ]] || fail "an alert was kept for a message nobody read: $(registry claude .alert)"
+  err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
+  [[ $err == *"${over#*|}"* ]] || fail "the message was not said where stderr is kept: $err"
+  err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
+  [[ -z $err ]] || fail "the message was said again after it was read: $err"
+  cleanup_sandbox
+done
+ok
+
 begin "refresh brings the registry up to date with who each home is signed in as"
 setup
 sign_in claude u-main main@example.com

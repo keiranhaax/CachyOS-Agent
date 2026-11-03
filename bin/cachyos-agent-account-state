@@ -809,15 +809,27 @@ def can_notify() -> bool:
   return bool(shutil.which("notify-send") and bus)
 
 
-# True when the message reached a desktop, or there is none to reach: stderr is
-# then the channel, and saying it again at every refresh would only fill the
-# journal. False when a notification service is there and did not take it.
+# Whether what this process prints on stderr goes anywhere: a terminal, or the
+# journal for a unit. The refresh `account use` and its siblings start in the
+# background sends it to /dev/null.
+def stderr_kept() -> bool:
+  try:
+    return not os.path.samestat(os.fstat(2), os.stat(os.devnull))
+  except OSError:
+    return False
+
+
+# True when the message reached a desktop, or there is none to reach and stderr
+# is kept: that is then the channel, and saying it again at every refresh would
+# only fill the journal. False when a notification service is there and did not
+# take it, or when it went to a stderr nobody reads, so the next refresh says it
+# again.
 def notify(title: str, body: str) -> bool:
   desktop = can_notify()
   if desktop and subprocess.run([*NOTIFY, "--", title, body], check=False).returncode == 0:
     return True
   print(f"{title}: {body}", file=sys.stderr)
-  return not desktop
+  return not desktop and stderr_kept()
 
 
 # What a waiter started in a unit of its own needs from this run: the gate
@@ -856,7 +868,7 @@ def start_waiter(waiter: list[str]) -> bool:
 # returns and lets go of the registry lock. Without a desktop, or when the
 # waiter can't be started, the notification would be one nothing can answer,
 # so the way to switch is printed instead. Like notify(), this is False when a
-# desktop was there and the offer was not made to it.
+# desktop was there and the offer was not made to it, or the text went nowhere.
 def offer_switch(provider: str, target: dict[str, Any], title: str, body: str) -> bool:
   command = f"cachyos-agent account use {provider} {target['id']}"
   script = str(Path(__file__).resolve())
@@ -865,7 +877,7 @@ def offer_switch(provider: str, target: dict[str, Any], title: str, body: str) -
   if desktop and start_waiter(waiter):
     return True
   print(f"{title}: {body} Switch new sessions to it with: {command}", file=sys.stderr)
-  return not desktop
+  return not desktop and stderr_kept()
 
 
 # Plasma shows "switch" as a button and runs "default" when the notification
