@@ -30,15 +30,20 @@ with ExecStart pointing at the checkout; `off` removes them again.
 EOF
 }
 
-# A path inside ExecStart= is split on spaces and has $ and % expanded, so
-# quote it and double what systemd would otherwise read as syntax.
-exec_quote() {
-  local s=$1
-  s=${s//\\/\\\\}
-  s=${s//\"/\\\"}
-  s=${s//%/%%}
-  s=${s//\$/\$\$}
-  printf '"%s"' "$s"
+# The ExecStart= line for an executable. systemd splits the line on spaces and
+# expands %, so quote the path and double the %. The executable is never
+# expanded as a variable, unlike an argument, so a $ stays as it is. systemd
+# refuses quotes, backslashes and control characters in the executable
+# whatever escaping they get, so say so here rather than write a unit it will
+# not load. Call it directly, not inside $( ) in an argument, or its failure
+# would be lost.
+exec_start() {
+  case $1 in
+    *\"* | *\'* | *\\* | *[[:cntrl:]]*)
+      ca_die "cannot run the timer from $1: systemd refuses quotes, backslashes and control characters in an ExecStart path"
+      ;;
+  esac
+  printf 'ExecStart="%s"\n' "${1//%/%%}"
 }
 
 is_generated() {
@@ -53,7 +58,7 @@ render() {
   printf '%s from %s\n' "$MARKER" "$CACHYOS_AGENT_ROOT"
   while IFS= read -r line || [[ -n $line ]]; do
     if [[ $line == ExecStart=* ]]; then
-      printf 'ExecStart=%s\n' "$(exec_quote "$CACHYOS_AGENT_BIN/cachyos-agent-usage-update")"
+      exec_start "$CACHYOS_AGENT_BIN/cachyos-agent-usage-update"
     else
       printf '%s\n' "$line"
     fi

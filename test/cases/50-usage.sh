@@ -540,18 +540,48 @@ make_root
 ok
 cleanup_sandbox
 
+# make_checkout <dir>: a copy of the data root laid out like a Git checkout,
+# with the shipped units, for a test that needs an odd path.
+make_checkout() {
+  mkdir -p "$1/systemd"
+  cp -r "$ROOT/bin" "$ROOT/lib" "$ROOT/VERSION" "$1/"
+  cp -r "$REPO_ROOT/systemd/user" "$1/systemd/"
+}
+
 begin "schedule quotes a checkout path that systemd would otherwise split or expand"
 make_sandbox
 stub systemctl
 make_root
+# A space splits the word, % starts a specifier and is doubled. A $ stays as it
+# is: systemd expands variables in the arguments, never in the executable.
 odd="$SANDBOX/my checkout 50%/a\$b"
-mkdir -p "$odd"
-cp -r "$ROOT/bin" "$ROOT/lib" "$ROOT/VERSION" "$odd/"
-mkdir -p "$odd/systemd"
-cp -r "$REPO_ROOT/systemd/user" "$odd/systemd/"
+make_checkout "$odd"
 "$odd/bin/cachyos-agent-usage-schedule" on
-grep -qxF "ExecStart=\"$SANDBOX/my checkout 50%%/a\$\$b/bin/cachyos-agent-usage-update\"" \
-  "$XDG_CONFIG_HOME/systemd/user/cachyos-agent-usage-update.service" || fail "the path was not escaped: $(<"$XDG_CONFIG_HOME/systemd/user/cachyos-agent-usage-update.service")"
+units=$XDG_CONFIG_HOME/systemd/user
+grep -qxF "ExecStart=\"$SANDBOX/my checkout 50%%/a\$b/bin/cachyos-agent-usage-update\"" \
+  "$units/cachyos-agent-usage-update.service" || fail "the path was not escaped: $(<"$units/cachyos-agent-usage-update.service")"
+if command -v systemd-analyze >/dev/null; then
+  # What systemd reads is what counts: a line that looks right can name a path that does not exist.
+  problems=$(systemd-analyze --user verify "$units/cachyos-agent-usage-update.service" "$units/cachyos-agent-usage-update.timer" 2>&1 \
+    | grep cachyos-agent-usage-update || true)
+  [[ -z $problems ]] || fail "systemd rejects the generated unit: $problems"
+fi
+ok
+cleanup_sandbox
+
+begin "schedule on refuses a checkout path that systemd cannot run and writes nothing"
+make_sandbox
+stub systemctl
+make_root
+# systemd refuses these in the executable of ExecStart= however they are escaped.
+for name in 'q"uote' "q'uote" 'back\slash' $'tab\tname'; do
+  make_checkout "$SANDBOX/$name"
+  if "$SANDBOX/$name/bin/cachyos-agent-usage-schedule" on 2>"$SANDBOX/err"; then fail "on succeeded from $(printf '%q' "$name")"; fi
+  grep -q 'systemd refuses' "$SANDBOX/err" || fail "refusal for $(printf '%q' "$name") not explained: $(<"$SANDBOX/err")"
+  [[ ! -e $XDG_CONFIG_HOME/systemd ]] || fail "units were written for $(printf '%q' "$name")"
+  [[ ! -e $SANDBOX/calls/systemctl ]] || fail "systemctl ran for $(printf '%q' "$name")"
+  rm -rf -- "${SANDBOX:?}/$name"
+done
 ok
 cleanup_sandbox
 
