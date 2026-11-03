@@ -45,18 +45,21 @@ def clean: gsub("[\u0000-\u001f\u007f-\u009f]"; "");
 def text: if type == "string" then clean else "" end;
 def capitalized: if length > 0 then (.[0:1] | ascii_upcase) + .[1:] else . end;
 
-# ISO 8601 with an optional fraction and offset. A time without an offset is
-# UTC, which is how the collectors read one too.
+# ISO 8601 in every form the collectors let through, which is what Python's
+# fromisoformat reads: the date and time with or without their separators, a
+# fraction after . or ,, and an offset as Z, +HH, +HH:MM or +HHMM. A time
+# without an offset is UTC, as the collectors and the panel widget read it too.
 def offset_seconds:
   if . == null or . == "Z" then 0
-  else capture("^(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})$")
-    | ((.h | tonumber) * 3600 + (.m | tonumber) * 60) * (if .s == "-" then -1 else 1 end)
+  else capture("^(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})?$")
+    | ((.h | tonumber) * 3600 + ((.m // "0") | tonumber) * 60) * (if .s == "-" then -1 else 1 end)
   end;
 def epoch:
   (if type == "string"
-   then capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})?$") // null
+   then capture("^(?<y>[0-9]{4})-?(?<mo>[0-9]{2})-?(?<d>[0-9]{2})[T ](?<h>[0-9]{2}):?(?<mi>[0-9]{2})(?::?(?<s>[0-9]{2}))?(?:[.,][0-9]+)?(?<z>Z|[+-][0-9]{2}(?::?[0-9]{2})?)?$") // null
    else null end) as $m
-  | if $m == null then null else ($m.t + "Z" | fromdateiso8601) - ($m.z | offset_seconds) end;
+  | if $m == null then null
+    else ("\($m.y)-\($m.mo)-\($m.d)T\($m.h):\($m.mi):\($m.s // "00")Z" | fromdateiso8601) - ($m.z | offset_seconds) end;
 
 def duration:
   if . <= 0 then "now"

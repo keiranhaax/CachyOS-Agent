@@ -571,6 +571,37 @@ printf '%s\n' '{"id":"odd","name":"Odd","ready":true,"limits":"nope","recentDays
 ok
 cleanup_sandbox
 
+begin "the report reads a reset time in every form the collectors let through"
+make_sandbox
+now=$(date +%s)
+reset=$((now + 2 * 3600 + 13 * 60 + 30))
+# The same instant five ways: basic form, a space separator with a comma
+# fraction, +HH and +HHMM offsets, and a time with no offset, which is UTC.
+# The last one has no seconds, so it is written 30 s later to land on the
+# same minute boundary as the others.
+# shellcheck disable=SC2016 # the $names are jq variables
+write_record claude --arg basic "$(date -u -d "@$reset" +%Y%m%dT%H%M%SZ)" \
+  --arg spaced "$(date -u -d "@$reset" '+%Y-%m-%d %H:%M:%S,5Z')" \
+  --arg hours "$(TZ=Etc/GMT-2 date -d "@$reset" +%Y-%m-%dT%H:%M:%S+02)" \
+  --arg compact "$(TZ=Etc/GMT+5 date -d "@$reset" +%Y-%m-%dT%H:%M:%S-0500)" \
+  --arg naked "$(date -u -d "@$((reset + 30))" +%Y-%m-%dT%H:%M)" '
+  {schemaVersion: 1, id: "claude", name: "Claude Code", ready: true,
+   limits: [{label: "Basic", percent: 0.1, resetsAt: $basic},
+            {label: "Spaced", percent: 0.2, resetsAt: $spaced},
+            {label: "Hours", percent: 0.3, resetsAt: $hours},
+            {label: "Compact", percent: 0.4, resetsAt: $compact},
+            {label: "Naked", percent: 0.5, resetsAt: $naked},
+            {label: "Garbled", percent: 0.6, resetsAt: "tomorrow"}]}'
+out=$("$AGENT" usage)
+for label in Basic Spaced Hours Compact Naked; do
+  row=$(grep -F "  $label " <<<"$out") || fail "no row for $label: $out"
+  [[ $row == *"  resets in 2h 13m" ]] || fail "$label is not read as the same instant: [$row]"
+done
+row=$(grep -F "  Garbled " <<<"$out") || fail "no row for Garbled: $out"
+[[ $row == *"Garbled  60%" ]] || fail "a garbled time should print its row with no reset: [$row]"
+ok
+cleanup_sandbox
+
 # ---- the timer -------------------------------------------------------------------
 
 begin "the shipped units run the update on a 15 minute timer"
