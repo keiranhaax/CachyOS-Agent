@@ -458,6 +458,21 @@ rm_out=$("$AGENT" account remove claude "$id" </dev/null)
 ok
 cleanup_sandbox
 
+begin "a refusal names the account without the control characters of its email"
+setup
+sign_in claude u-main main@example.com
+# The vendor's profile holds the escape; the registry keeps it, and so does a label made from it.
+sign_in claude u-evil 'evil\u001b[2Jme@example.test'
+bad='evil\u001b[2Jme@example.test'
+if out=$(FIX_ID=u-evil FIX_EMAIL=$bad "$AGENT" account add claude Again 2>&1); then fail "the same account was added twice"; fi
+[[ $out == *"That's evil[2Jme (evil[2Jme@example.test). Try again"* && $out != *$'\033'* ]] || fail "add's refusal said: $(printf '%q' "$out")"
+if out=$(FIX_ID=u-evil FIX_EMAIL=$bad "$AGENT" account add --reauth main claude 2>&1); then fail "another account's login was accepted as Main's"; fi
+[[ $out == *"That's evil[2Jme (evil[2Jme@example.test), not Main."* && $out != *$'\033'* ]] || fail "the label in --reauth's refusal said: $(printf '%q' "$out")"
+if out=$(FIX_ID=u-other FIX_EMAIL=$bad "$AGENT" account add --reauth evil-2jme claude 2>&1); then fail "a stranger was accepted as the account"; fi
+[[ $out == *"That's evil[2Jme@example.test, not evil[2Jme."* && $out != *$'\033'* ]] || fail "the email in --reauth's refusal said: $(printf '%q' "$out")"
+ok
+cleanup_sandbox
+
 begin "use switches the account new sessions start as and home prints its path, nothing for Main"
 setup
 [[ -z $("$AGENT" account home claude) && $? == 0 ]] || fail "home printed something before any account exists"
