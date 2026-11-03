@@ -14,7 +14,8 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 
 usage() {
   echo "Usage: cachyos-agent prompt [--inline] [--] <prompt...>"
-  echo "Launch the default agent and give it the prompt. -- ends the options, for a prompt that starts with a dash."
+  echo "Launch the default agent and give it the prompt. -- ends the options, for a prompt that starts with a dash"
+  echo "or holds the word -h or --help, which would otherwise show this help."
 }
 
 inline=()

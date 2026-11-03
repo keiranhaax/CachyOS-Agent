@@ -239,6 +239,51 @@ out=$("$TREE_AGENT" multi --help)
 ok
 cleanup_sandbox
 
+begin "a --help later on the line shows the command's help and does not run it"
+make_sandbox
+make_tree
+add_command cachyos-agent-multi "cachyos-agent:summary=Multi root" "cachyos-agent:args=<pid>" "cachyos-agent:examples=cachyos-agent multi 1 | cachyos-agent multi 2"
+add_command cachyos-agent-multi-mute "cachyos-agent:summary=Multi mute" "cachyos-agent:args=[on|off]"
+add_command cachyos-agent-lone "cachyos-agent:summary=Lone command" "cachyos-agent:args=[--force] <name>"
+add_command cachyos-agent-multi-hidden "cachyos-agent:summary=Pass-through" "cachyos-agent:hidden=true"
+# A command prints its own usage for a leading --help (checked above); a later
+# one would be taken as a value or a label by most commands, which then act.
+for line in "multi 1234 --help" "multi 1234 -h" "multi mute off --help" "lone --force x --help" "lone x -h"; do
+  # shellcheck disable=SC2086 # the words are the point
+  out=$("$TREE_AGENT" $line)
+  [[ $out == *"cachyos-agent "* && $out != "cachyos-agent-"* ]] || fail "'$line' did not show help, or ran the command: $out"
+done
+out=$("$TREE_AGENT" multi 1234 --help)
+[[ $out == *"cachyos-agent multi <pid>"* && $out == *"Multi root"* && $out == *"e.g. cachyos-agent multi 1"* ]] || fail "the help of multi is wrong: $out"
+[[ $out != *"Multi mute"* ]] || fail "the help of multi lists another command: $out"
+out=$("$TREE_AGENT" lone --force x --help)
+[[ $out == *"cachyos-agent lone [--force] <name>"* && $out == *"Lone command"* ]] || fail "the help of lone is wrong: $out"
+# After --, a help flag belongs to the command, and so does one in a hidden command's words.
+[[ $("$TREE_AGENT" multi 1234 -- --help) == "cachyos-agent-multi:1234 -- --help" ]] || fail "--help after -- did not reach the command"
+[[ $("$TREE_AGENT" multi mute -- --help) == "cachyos-agent-multi-mute:-- --help" ]] || fail "--help after -- on a subcommand did not reach the command"
+[[ $("$TREE_AGENT" multi hidden claude --help) == "cachyos-agent-multi-hidden:claude --help" ]] || fail "a hidden command did not get its --help"
+# A leading --help is still the command's own.
+[[ $("$TREE_AGENT" lone --help) == "cachyos-agent-lone:--help" ]] || fail "lone --help did not reach the command"
+ok
+cleanup_sandbox
+
+begin "the real commands that act on their arguments do nothing when --help follows them"
+make_sandbox
+for tool in systemctl claude kwriteconfig6 kreadconfig6 cachyos-agent-launch notify-send; do stub "$tool"; done
+for line in "usage schedule off --help" "usage schedule on -h" "account add claude --help" "crash 1234 --help" "crash capture on --help" \
+  "crash mute plasmashell --help" "shortcut unset --help" "shortcut set Meta+A -h" "theme follow on --help" "default claude --help" \
+  "prompt --inline --help" "account use work --help" "local use best --help" "install claude --help"; do
+  # shellcheck disable=SC2086 # the words are the point
+  out=$("$AGENT" $line 2>&1) || fail "'$line' failed: $out"
+  [[ $out == *"cachyos-agent "* && $out == *"e.g. "* || $out == "Usage:"* ]] || fail "'$line' did not show help: $out"
+done
+for tool in systemctl claude kwriteconfig6 kreadconfig6 cachyos-agent-launch notify-send; do
+  [[ ! -e $SANDBOX/calls/$tool ]] || fail "$tool was run by a --help: $(<"$SANDBOX/calls/$tool")"
+done
+[[ ! -e $XDG_STATE_HOME/cachyos-agent && ! -e $XDG_CONFIG_HOME/cachyos-agent ]] || fail "a --help wrote state or configuration"
+ok
+cleanup_sandbox
+
 begin "a bare group without a command of its own shows group help"
 make_sandbox
 make_tree

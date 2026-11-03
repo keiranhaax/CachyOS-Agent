@@ -346,7 +346,7 @@ Prefer rollback through Limine snapshots or snapper over heroic undo. When publi
 
 ## Command reference
 
-`cachyos-agent <group> <command>` runs the executable `cachyos-agent-<group>-<command>`. `cachyos-agent <group> --help` shows a group, `cachyos-agent <command> --help` shows one command without running it, and `cachyos-agent commands --json` is the machine-readable list. This table is the output of `cachyos-agent commands`, and `test/cases/85-docs.sh` fails when it drifts.
+`cachyos-agent <group> <command>` runs the executable `cachyos-agent-<group>-<command>`. `cachyos-agent <group> --help` shows a group, `cachyos-agent <command> --help` shows one command without running it (`-h`, or a `--help` anywhere before a `--`, does the same), and `cachyos-agent commands --json` is the machine-readable list. This table is the output of `cachyos-agent commands`, and `test/cases/85-docs.sh` fails when it drifts.
 
 | Command | What it does |
 |---|---|
