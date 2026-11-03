@@ -2,7 +2,7 @@
 
 Read this before you launch, configure, or look into the agent runtime from inside an agent session: the default agent, prompts sent to another agent, usage limits, subscription accounts, crash notifications, theme sync, or local models.
 
-`cachyos-agent` is a harness-neutral set of Bash commands shipped by the `cachyos-agent` package, modelled on Omarchy's agent experience. It is not part of CachyOS itself. Find what it can do with `cachyos-agent commands`, as [`SKILL.md`](SKILL.md) describes under Command Discovery.
+`cachyos-agent` is a harness-neutral set of Bash commands shipped by the `cachyos-agent` package, modeled on Omarchy's agent experience. It is not part of CachyOS itself. Find what it can do with `cachyos-agent commands`, as [`SKILL.md`](SKILL.md) describes under Command Discovery.
 
 ## Hands off unless the user asked
 
@@ -11,7 +11,7 @@ Agents started through the runtime run unattended, and most of the runtime chang
 - `cachyos-agent default <agent>` changes the default agent, installs the agent if it is missing, and launches it at once.
 - `cachyos-agent launch` and `cachyos-agent prompt` open another agent that does not stop to ask before acting.
 - `cachyos-agent crash capture on|off`, `usage schedule on|off`, `theme follow on|off` and `shortcut set|unset` enable or disable units and shortcuts.
-- `cachyos-agent account add|use|remove|rename|mode` changes which subscription new sessions use, and `add` opens a browser sign-in only the user can finish. Never log out of an agent's CLI to add an account: that revokes the saved sign-in.
+- `cachyos-agent account add|use|remove|rename|mode` changes which subscription new sessions use. `add` opens a browser sign-in only the user can finish, and on a machine with no default agent it makes that provider the default. Never log out of an agent's CLI to add an account: that revokes the saved sign-in.
 - `cachyos-agent theme sync --activate` edits another agent's own settings file.
 - `cachyos-agent install`, `local use`, `local start` and `local stop` run `sudo` (pacman, paru, systemctl) and need a terminal the user is watching. `local use` also downloads tens of GB. Never add `--noconfirm`.
 - `cachyos-agent crash mute <program>` is offered at the end of a crash diagnosis and run only when the user says yes.
@@ -69,7 +69,7 @@ Only sessions started with `cachyos-agent launch` or `cachyos-agent account exec
 
 ## Theme sync
 
-`cachyos-agent theme sync` reads the active Plasma colour scheme (`kdeglobals`) and writes a theme named `cachyos` for Hermes, Claude Code, Pi and OpenCode. Without `--activate` it only publishes to agents whose config directory exists and switches none of them. `theme follow on` repeats the sync whenever `kdeglobals` changes. The rendered files stay in `theme/` in the state directory. Claude Code and Pi reload a changed theme file while running (a `themes/` folder created after Claude Code started needs one restart), and OpenCode needs a restart or `/theme`.
+`cachyos-agent theme sync` reads the active Plasma color scheme (`kdeglobals`) and writes a theme named `cachyos` for Hermes, Claude Code, Pi and OpenCode. Without `--activate` it only publishes to agents whose config directory exists and switches none of them. `theme follow on` repeats the sync whenever `kdeglobals` changes. The rendered files stay in `theme/` in the state directory. Claude Code and Pi reload a changed theme file while running (a `themes/` folder created after Claude Code started needs one restart), and OpenCode needs a restart or `/theme`.
 
 ## Local models
 
