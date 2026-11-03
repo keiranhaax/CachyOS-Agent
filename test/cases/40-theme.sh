@@ -5,6 +5,11 @@
 # shellcheck source=../lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 
+# The sync honors this variable for Pi's directory and make_sandbox leaves it
+# alone, so a Pi user who exports it would have this case write into their real
+# agent directory. Cleared here, once, for every case below.
+unset PI_CODING_AGENT_DIR
+
 # render <palette-file>: the template on stdin through theme_render, run the way
 # a command runs it (common.sh first), in its own process.
 render() {
