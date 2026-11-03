@@ -273,7 +273,8 @@ else
   stub cachyos-agent-install 'touch "${self%/*}/codex"; chmod +x "${self%/*}/codex"'
   stub cachyos-agent-launch
   stub konsole
-  SHELL=/bin/bash script -qec "$CA default codex" /dev/null </dev/null >/dev/null
+  # tty_run's quoting, so a checkout path with a space survives script's own shell
+  SHELL=/bin/bash script -qec "$(printf '%q ' "$CA" default codex)" /dev/null </dev/null >/dev/null
   expect "$(last_call cachyos-agent-install)" "codex" "install arguments"
   expect "$(call_count konsole)" 0 "no extra terminal at a terminal"
   expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "codex" "saved agent"

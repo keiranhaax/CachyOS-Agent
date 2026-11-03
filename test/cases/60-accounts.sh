@@ -509,7 +509,7 @@ begin "remove asks first in a terminal and keeps the account unless told yes"
 setup
 sign_in claude u-main main@example.com
 sign_in claude u-work work@example.com Work
-answer() { printf '%s\n' "$1" | script -qefc "$AGENT account remove claude work" /dev/null; }
+answer() { printf '%s\n' "$1" | script -qefc "$(printf '%q ' "$AGENT" account remove claude work)" /dev/null; }
 if out=$(answer n); then fail "declining the prompt succeeded"; fi
 [[ $out == *"Forget the claude account work?"* && -d $STATE/accounts/claude/work ]] || fail "the prompt did not protect the account: $out"
 answer y >/dev/null || fail "confirming the prompt failed"
