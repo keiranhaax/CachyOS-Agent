@@ -507,7 +507,7 @@ units=$XDG_CONFIG_HOME/systemd/user
 "$SCHEDULE" on
 rm "$SANDBOX/calls/systemctl"
 "$SCHEDULE" off
-[[ $(calls systemctl) == $'--user disable --now cachyos-agent-usage-update.timer\n--user daemon-reload' ]] \
+[[ $(calls systemctl) == $'--user cat cachyos-agent-usage-update.timer\n--user disable --now cachyos-agent-usage-update.timer\n--user daemon-reload' ]] \
   || fail "unexpected systemctl calls: $(calls systemctl)"
 [[ ! -e $units/cachyos-agent-usage-update.service && ! -e $units/cachyos-agent-usage-update.timer ]] || fail "generated units remain"
 printf '[Timer]\nOnBootSec=1h\n' >"$units/cachyos-agent-usage-update.timer"
@@ -548,6 +548,24 @@ make_checkout() {
   cp -r "$REPO_ROOT/systemd/user" "$1/systemd/"
 }
 
+# fake_systemd: a systemctl that knows the timer only while a unit file sits in
+# the user's config directory or $XDG_RUNTIME_DIR/packaged exists, and fails on
+# cat and disable for a unit it does not know, as the real one does.
+fake_systemd() {
+  stub systemctl "$(
+    cat <<'EOF'
+case "$*" in
+  *" cat "* | *" disable "*)
+    if [[ ! -e $XDG_CONFIG_HOME/systemd/user/cachyos-agent-usage-update.timer && ! -e $XDG_RUNTIME_DIR/packaged ]]; then
+      echo "Failed: Unit cachyos-agent-usage-update.timer does not exist" >&2
+      exit 1
+    fi
+    ;;
+esac
+EOF
+  )"
+}
+
 begin "schedule quotes a checkout path that systemd would otherwise split or expand"
 make_sandbox
 stub systemctl
@@ -582,6 +600,49 @@ for name in 'q"uote' "q'uote" 'back\slash' $'tab\tname'; do
   [[ ! -e $SANDBOX/calls/systemctl ]] || fail "systemctl ran for $(printf '%q' "$name")"
   rm -rf -- "${SANDBOX:?}/$name"
 done
+ok
+cleanup_sandbox
+
+begin "schedule off can be repeated and works when the timer was never turned on"
+make_sandbox
+fake_systemd
+"$SCHEDULE" off || fail "off failed on a machine that never ran on"
+[[ $(calls systemctl) == '--user cat cachyos-agent-usage-update.timer' ]] || fail "off touched an unknown timer: $(calls systemctl)"
+"$SCHEDULE" on
+"$SCHEDULE" off || fail "off failed after on"
+rm "$SANDBOX/calls/systemctl"
+"$SCHEDULE" off || fail "a second off failed"
+[[ $(calls systemctl) == '--user cat cachyos-agent-usage-update.timer' ]] || fail "a second off disabled again: $(calls systemctl)"
+[[ ! -e $XDG_CONFIG_HOME/systemd/user/cachyos-agent-usage-update.service ]] || fail "generated units remain"
+# An installed timer is disabled, and nothing is removed.
+touch "$XDG_RUNTIME_DIR/packaged"
+rm "$SANDBOX/calls/systemctl"
+"$SCHEDULE" off
+[[ $(calls systemctl) == $'--user cat cachyos-agent-usage-update.timer\n--user disable --now cachyos-agent-usage-update.timer' ]] \
+  || fail "off did not disable the installed timer: $(calls systemctl)"
+ok
+cleanup_sandbox
+
+begin "schedule on from the package retires the units it wrote for a checkout"
+make_sandbox
+fake_systemd
+units=$XDG_CONFIG_HOME/systemd/user
+"$SCHEDULE" on
+# The package is installed and the checkout is gone: only the installed units
+# remain, and a copy in ~/.config would shadow them and run the vanished checkout.
+make_root
+touch "$XDG_RUNTIME_DIR/packaged"
+rm "$SANDBOX/calls/systemctl"
+"$ROOT/bin/cachyos-agent-usage-schedule" on
+[[ $(calls systemctl) == $'--user cat cachyos-agent-usage-update.timer\n--user disable --now cachyos-agent-usage-update.timer\n--user daemon-reload\n--user enable --now cachyos-agent-usage-update.timer' ]] \
+  || fail "unexpected systemctl calls: $(calls systemctl)"
+[[ ! -e $units/cachyos-agent-usage-update.service && ! -e $units/cachyos-agent-usage-update.timer ]] || fail "generated units remain"
+# A unit the user wrote is theirs: it stays, and is not disabled behind their back.
+printf '[Timer]\nOnBootSec=1h\n' >"$units/cachyos-agent-usage-update.timer"
+rm "$SANDBOX/calls/systemctl"
+"$ROOT/bin/cachyos-agent-usage-schedule" on
+[[ $(calls systemctl) == '--user enable --now cachyos-agent-usage-update.timer' ]] || fail "on touched a foreign unit: $(calls systemctl)"
+[[ -f $units/cachyos-agent-usage-update.timer ]] || fail "the foreign unit was removed"
 ok
 cleanup_sandbox
 

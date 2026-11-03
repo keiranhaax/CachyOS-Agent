@@ -91,15 +91,35 @@ remove_checkout_units() {
   if $removed; then systemctl --user daemon-reload; fi
 }
 
+# disable and stop the timer if systemd knows it: disabling a unit that does
+# not exist is an error, and off must hold however often it is run.
+disable_timer() {
+  if systemctl --user cat "$TIMER" >/dev/null 2>&1; then
+    systemctl --user disable --now "$TIMER"
+  fi
+}
+
+# A unit in ~/.config shadows the one in /usr/lib/systemd/user, so the copies
+# written for a checkout must go once the package provides the units, or the
+# timer would keep running a checkout that may no longer exist. Only a unit
+# that carries the mark is ours to remove, and the timer is disabled first,
+# while systemd can still find it.
+retire_checkout_units() {
+  if is_generated "$USER_UNITS/$TIMER"; then disable_timer; fi
+  remove_checkout_units
+}
+
 schedule_on() {
   if [[ -f $CHECKOUT_UNITS/$TIMER ]]; then
     install_checkout_units
+  else
+    retire_checkout_units
   fi
   systemctl --user enable --now "$TIMER"
 }
 
 schedule_off() {
-  systemctl --user disable --now "$TIMER"
+  disable_timer
   remove_checkout_units
 }
 
