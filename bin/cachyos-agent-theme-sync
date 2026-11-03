@@ -32,7 +32,8 @@ the theme, and no agent switches to it, so a theme the agent's user chose
 stays. --activate creates the directories and makes cachyos the agent's theme.
 
   hermes    $HERMES_HOME/skins and every profile's skins/ (needs a config.yaml,
-            i.e. Hermes has run); --activate runs: hermes skin use cachyos
+            i.e. Hermes has run; --activate fails without one); --activate
+            runs: hermes skin use cachyos
   claude    $CLAUDE_CONFIG_DIR/themes/cachyos.json; --activate sets theme to
             custom:cachyos in settings.json. Running sessions reload the file,
             except that a themes/ folder created after Claude Code started
@@ -166,10 +167,16 @@ present() {
 # get the skin, none are made, and one that cannot take it does not cost the
 # others. The config.yaml is what Hermes writes once it has run: the skills
 # provisioner creates $HERMES_HOME for every machine, so the directory alone
-# proves nothing.
+# proves nothing. Without one, a plain sync has nothing to do, but --activate
+# was asked for a skin in use and cannot deliver it, which fails like a missing
+# hermes command does.
 sync_hermes() {
   local home=${HERMES_HOME:-$HOME/.hermes} profile status=0
   if [[ ! -f $home/config.yaml ]]; then
+    if ((ACTIVATE == 1)); then
+      echo "hermes: cannot activate, $home/config.yaml not found; launch Hermes once first" >&2
+      return 1
+    fi
     echo "hermes: skipped, $home/config.yaml not found; launch Hermes once first"
     return 0
   fi

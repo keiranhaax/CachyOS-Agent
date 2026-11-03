@@ -375,6 +375,22 @@ unset HERMES_HOME CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR
 ok
 cleanup_sandbox
 
+begin "sync --activate fails for a Hermes that has not run yet, as it does for a missing hermes command"
+sync_env
+mkdir -p "$HOME/.hermes"
+status=0
+"$SYNC" --activate --only hermes >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "activating without a config.yaml exited $status, not 1"
+grep -q "cannot activate.*$HOME/.hermes/config.yaml" "$SANDBOX/err" || fail "no explanation on stderr: $(<"$SANDBOX/err")"
+grep -q 'theme sync failed for: hermes' "$SANDBOX/err" || fail "the failure is not summarized: $(<"$SANDBOX/err")"
+[[ ! -s $SANDBOX/out ]] || fail "reported success on stdout: $(<"$SANDBOX/out")"
+[[ ! -e $HOME/.hermes/skins && ! -e $SANDBOX/calls/hermes ]] || fail "a skin was published or hermes was run without a config.yaml"
+: >"$HOME/.hermes/config.yaml"
+"$SYNC" --activate --only hermes >/dev/null
+[[ -s $HOME/.hermes/skins/cachyos.yaml && $(<"$SANDBOX/calls/hermes") == $'skin\nuse\ncachyos' ]] || fail "activation did not work once Hermes had a config.yaml"
+ok
+cleanup_sandbox
+
 begin "sync --activate sets each agent's theme, keeps its other settings and creates what is missing"
 sync_env
 mkdir -p "$HOME/.claude" "$HOME/.hermes"
@@ -400,7 +416,7 @@ mkdir -p "$HOME/.claude" "$XDG_CONFIG_HOME/opencode" "$SANDBOX/dotfiles"
 printf '{"theme":"dark","model":"opus"}\n' >"$SANDBOX/dotfiles/settings.json"
 ln -s "$SANDBOX/dotfiles/settings.json" "$HOME/.claude/settings.json"
 printf '{"keybinds":{"leader":"ctrl+x"},"theme":"tokyonight","scroll_speed":3}\n' >"$XDG_CONFIG_HOME/opencode/tui.json"
-"$SYNC" --activate >/dev/null
+"$SYNC" --activate --only claude,opencode >/dev/null
 [[ -L $HOME/.claude/settings.json ]] || fail "the symlinked settings.json was replaced by a file"
 [[ $(jq -c . "$SANDBOX/dotfiles/settings.json") == '{"theme":"custom:cachyos","model":"opus"}' ]] || fail "the link's target was not updated"
 [[ $(jq -c . "$XDG_CONFIG_HOME/opencode/tui.json") == '{"keybinds":{"leader":"ctrl+x"},"theme":"cachyos","scroll_speed":3}' ]] || fail "tui.json lost a key"
@@ -413,7 +429,7 @@ mkdir -p "$XDG_CONFIG_HOME/opencode" "$HOME/.claude"
 printf '{\n  // my theme\n  "theme": "nord"\n}\n' >"$XDG_CONFIG_HOME/opencode/tui.jsonc"
 printf '{"theme": "dark",}\n' >"$HOME/.claude/settings.json"
 status=0
-"$SYNC" --activate >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+"$SYNC" --activate --only claude,pi,opencode >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
 ((status == 1)) || fail "a broken settings.json should fail the sync, got $status"
 [[ ! -e $XDG_CONFIG_HOME/opencode/tui.json ]] || fail "tui.json was created beside a tui.jsonc"
 grep -q 'not editing .*tui.jsonc' "$SANDBOX/out" || fail "no word about tui.jsonc"
