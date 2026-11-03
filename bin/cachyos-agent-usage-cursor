@@ -64,7 +64,7 @@ class CursorError(Exception):
   def __init__(self, message: str, auth: bool = False, transport: bool = False) -> None:
     super().__init__(message)
     self.auth = auth
-    # Nothing answered at all, so the panel should try again soon.
+    # Nothing answered at all, so `usage update` should try again soon.
     self.transport = transport
 
 
@@ -126,7 +126,7 @@ class CursorClient:
       if error.status:
         raise CursorError(f"Cursor's dashboard returned status {error.status}.") from error
       # A reply cut short came from a server that answered, so it is no
-      # reason to ask the panel for a sooner retry.
+      # reason to ask for a sooner retry.
       if error.cut_short:
         raise CursorError("Cursor's dashboard cut its reply short.") from error
       # No route, no DNS, refused, reset or timed out: nothing answered.

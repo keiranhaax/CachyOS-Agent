@@ -155,7 +155,7 @@ Every agent in use has a usage record: its plan, its limit windows with the time
 
 ```bash
 cachyos-agent usage                  # the report, from the records already written
-cachyos-agent usage update           # collect fresh records now (--force, --limits-only, --except <agent>)
+cachyos-agent usage update           # collect fresh records now (--force, --limits-only, --except <agent>); an agent whose service was unreachable is tried once more after 30 s
 cachyos-agent usage schedule on      # a systemd user timer: refresh every 15 minutes
 cachyos-agent usage -- claude codex  # only these agents
 cachyos-agent usage --json claude    # the raw records, as a JSON array

@@ -659,7 +659,7 @@ def collect_limits(access_token: str, expires_at_ms: int, refresh_expires_at_ms:
     return result
 
   # The first probe after login often fires before DHCP has handed out a
-  # route. Ask the shell to try again sooner than its regular interval.
+  # route. Ask `usage update` to try again sooner than the timer's interval.
   if probe.get("transport"):
     result["retryAdvised"] = True
   if fallback:

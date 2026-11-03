@@ -348,7 +348,7 @@ def collect_limits(api_key: str, base_url: str, force: bool) -> dict[str, Any]:
       return result
 
   # A transport failure reached no server — typically the seconds after login
-  # before the network is up — so ask the shell to retry sooner. A kept
+  # before the network is up — so ask `usage update` to retry sooner. A kept
   # window whose reset has passed comes back at zero.
   fallback, fetched_at = cache.kept()
   result["retryAdvised"] = failure.transport

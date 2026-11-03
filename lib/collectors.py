@@ -50,7 +50,8 @@ prints exactly that, with `ready` false and the widget skips it):
 - `limits`: `[{label, percent, resetsAt, title?}]`, `percent` in 0..1,
   `resetsAt` ISO or "" and never null; `limitsStale` and `limitsFetchedAt`
   (epoch ms, 0 for never) say whether they were kept past a failed check.
-  `retryAdvised` is true only when the service could not be reached at all.
+  `retryAdvised` is true only when the service could not be reached at all;
+  `cachyos-agent usage update` then runs that collector once more after 30 s.
 - `balance`: `{remaining, funded, spent, currency, estimated}` for prepaid
   accounts. `accounts` and `accountSwitch` appear only when two or more
   accounts are registered.

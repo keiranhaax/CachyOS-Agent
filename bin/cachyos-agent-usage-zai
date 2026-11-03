@@ -330,8 +330,8 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
       return result
 
   # A transport failure reached no server — typically the seconds after login
-  # before the network is up — so ask the shell to retry sooner than its
-  # regular interval.
+  # before the network is up — so ask `usage update` to retry sooner than the
+  # timer's interval.
   if probe.get("transport"):
     result["retryAdvised"] = True
   # A kept window whose reset has passed comes back at zero: the allowance it

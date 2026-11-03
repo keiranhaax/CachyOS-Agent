@@ -100,7 +100,7 @@ CREDENTIALS_PATH = CREDENTIALS_DIR / "kimi-code.json"
 
 
 class KimiError(Exception):
-  # `retry` marks a service that couldn't be reached at all, so the panel
+  # `retry` marks a service that couldn't be reached at all, so `usage update`
   # tries again soon; `refused` marks a credential Kimi turned down, which
   # only signing in again (or a new key) repairs; `missing` marks no
   # credential at all.

@@ -362,6 +362,41 @@ done
 ok
 cleanup_sandbox
 
+begin "update tries an unreachable service once more after 30 seconds, and only that agent"
+make_sandbox
+make_root
+stub sleep
+# alpha cannot reach its service on the first run and can on the second; beta
+# never can; gamma is fine; delta fails, and its old record still advises a retry.
+# shellcheck disable=SC2016 # the $ is for the collector's own shell
+add_collector alpha 'if [[ $(grep -c "^alpha " "'"$SANDBOX"'/order") == 1 ]]; then echo "{\"id\":\"alpha\",\"retryAdvised\":true}"; else echo "{\"id\":\"alpha\"}"; fi'
+add_collector beta 'echo "{\"id\":\"beta\",\"retryAdvised\":true}"'
+add_collector gamma 'echo "{\"id\":\"gamma\"}"'
+add_collector delta 'exit 3'
+mkdir -p "$USAGE"
+printf '{"id":"delta","retryAdvised":true}\n' >"$USAGE/delta.json"
+if "$ROOT/bin/cachyos-agent-usage-update" --force 2>/dev/null; then fail "update succeeded although delta failed"; fi
+[[ $(grep -c '^alpha ' "$SANDBOX/order") == 2 ]] || fail "alpha was not retried exactly once: $(<"$SANDBOX/order")"
+[[ $(grep -c '^beta ' "$SANDBOX/order") == 2 ]] || fail "beta was retried more or less than once: $(<"$SANDBOX/order")"
+[[ $(grep -c '^gamma ' "$SANDBOX/order") == 1 ]] || fail "gamma was retried: $(<"$SANDBOX/order")"
+[[ $(grep -c '^delta ' "$SANDBOX/order") == 1 ]] || fail "delta was retried: $(<"$SANDBOX/order")"
+grep -qx 'alpha --limits-only' "$SANDBOX/order" || fail "the retry should ask only for fresh limits: $(<"$SANDBOX/order")"
+[[ $(<"$SANDBOX/calls/sleep") == 30 ]] || fail "update did not wait 30 seconds once: $(<"$SANDBOX/calls/sleep")"
+is_json "$(<"$USAGE/alpha.json")" 'has("retryAdvised") | not' || fail "alpha still advises a retry after it was reached"
+is_json "$(<"$USAGE/beta.json")" '.retryAdvised == true' || fail "beta's record lost its advice"
+ok
+cleanup_sandbox
+
+begin "update does not wait when no collector advises a retry"
+make_sandbox
+make_root
+stub sleep
+add_collector alpha 'echo "{\"id\":\"alpha\"}"'
+"$ROOT/bin/cachyos-agent-usage-update"
+[[ ! -e $SANDBOX/calls/sleep ]] || fail "update slept without a collector asking for a retry"
+ok
+cleanup_sandbox
+
 begin "update refreshes the account registry first and re-collects after a switch"
 make_sandbox
 make_root

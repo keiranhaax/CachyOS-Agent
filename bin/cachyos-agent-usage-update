@@ -20,8 +20,10 @@ ACCOUNTS_DIR=$CACHYOS_AGENT_STATE_DIR/accounts
 # Commands in the usage group that are not collectors. The report is
 # cachyos-agent-usage itself, which the glob below does not match.
 NOT_COLLECTORS=(update schedule)
+RETRY_AFTER=30    # seconds before an agent that advised a retry is asked again
 
 AGENTS=()        # every collector found, by agent name
+COLLECTED=()     # the agents the last collect_all got a record from
 ONLY=()          # the agents named on the command line; empty means all
 declare -A EXCLUDED=()
 
@@ -33,6 +35,8 @@ Run the collectors and write one record per agent to
 $XDG_STATE_HOME/cachyos-agent/usage/. With agent names, run only those;
 --except leaves one out and can be repeated. --force reuses nothing from earlier
 runs, --limits-only asks only for fresh limits and reuses recent local scans.
+A collector that could not reach its service at all, as in the seconds after
+login before the network is up, is run once more after 30 seconds.
 
 The collectors read API keys from the environment first. Run from your shell
 this sees what the shell exports; run by the timer (`cachyos-agent usage
@@ -54,6 +58,53 @@ collect() {
     return 1
   fi
   printf '%s\n' "$record" | ca_atomic_write "$USAGE_DIR/$agent.json"
+}
+
+# collect_all <flag...> -- <agent...>: collect the agents side by side and wait
+# for them. The agents that wrote a record are left in COLLECTED; the result is
+# nonzero when any collector failed.
+collect_all() {
+  local -a flags=() pids=() agents=()
+  local agent index status=0
+  while [[ $1 != -- ]]; do
+    flags+=("$1")
+    shift
+  done
+  shift
+  for agent; do
+    collect "$agent" "${flags[@]}" &
+    pids+=($!)
+    agents+=("$agent")
+  done
+  COLLECTED=()
+  for index in "${!pids[@]}"; do
+    if wait "${pids[index]}"; then
+      COLLECTED+=("${agents[index]}")
+    else
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+# A collector that could not reach its service at all, typically in the seconds
+# after login before the network is up, writes retryAdvised into its record.
+# Honor it with one sooner try instead of waiting out the timer's 15 minutes. Only
+# the advising agents run again, and only once, so an outage at one provider does
+# not put every other collector on a treadmill; a run that reaches the service
+# clears the flag. An agent whose collector just failed keeps its old record,
+# and with it an old advice, so only the agents collected now are looked at.
+retry_unreachable() {
+  local agent
+  local -a again=()
+  for agent in "${COLLECTED[@]}"; do
+    if jq -e '.retryAdvised == true' "$USAGE_DIR/$agent.json" >/dev/null 2>&1; then
+      again+=("$agent")
+    fi
+  done
+  ((${#again[@]} > 0)) || return 0
+  sleep "$RETRY_AFTER"
+  collect_all --limits-only -- "${again[@]}"
 }
 
 # Fresh limits are when switching accounts near a limit gets decided. A switch
@@ -107,8 +158,8 @@ discover() {
 }
 
 main() {
-  local -a flags=() pids=()
-  local agent pid status=0
+  local -a flags=() wanted_agents=()
+  local agent status=0
 
   while (($# > 0)); do
     case $1 in
@@ -148,13 +199,10 @@ main() {
   export CACHYOS_AGENT_USAGE_REFRESH_AT=${EPOCHREALTIME/,/.}
 
   for agent in "${AGENTS[@]}"; do
-    wanted "$agent" || continue
-    collect "$agent" "${flags[@]}" &
-    pids+=($!)
+    if wanted "$agent"; then wanted_agents+=("$agent"); fi
   done
-  for pid in "${pids[@]}"; do
-    wait "$pid" || status=1
-  done
+  collect_all "${flags[@]}" -- "${wanted_agents[@]}" || status=1
+  retry_unreachable || status=1
 
   if ca_cmd_present cachyos-agent-account-state; then
     autoswitch || status=1
