@@ -81,7 +81,7 @@ records_json() {
     -e "s/@FETCHED3H@/$(((now - 10800) * 1000))/" <<'EOF'
 [
   {
-    "id": "claude", "name": "Claude Code", "ready": true, "tierLabel": "pro",
+    "id": "claude", "name": "Claude Code", "ready": true, "tierLabel": "pro", "updatedAt": "@OLD@",
     "usageStatusText": "Claude Code unavailable", "authHelpText": "Check your connection.",
     "limits": [
       {"label": "Session (5-hour)", "percent": 0.42, "resetsAt": "@SESSION@"},
@@ -324,10 +324,10 @@ if command -v qml6 >/dev/null; then
      {id: "h", name: "Stale too", ready: true, balance: balance, updatedAt: $old, limitsStale: true, limitsFetchedAt: 0,
       usageStatusText: "Sign-in expired", authHelpText: "Run `h login`."}]')
   out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
-  check "$out" '[.agents[] | [.name, .notes]] == [["Old", ["Updated 2d 3h ago"]], ["An hour", ["Updated 1h 0m ago"]], ["Recent", []], ["Future", []],
-                  ["Naive", ["Updated 2h 0m ago"]], ["Garbled", []], ["Unwritten", []],
-                  ["Stale too", ["Updated 2d 3h ago", "Sign-in expired", "Run `h login`.", "Limits may be out of date"]]]' \
-    "only a record at least an hour old says how old it is, before anything else"
+  check "$out" '[.agents[] | [.name, .age, .notes]] == [["Old", "Updated 2d 3h ago", []], ["An hour", "Updated 1h 0m ago", []], ["Recent", "", []], ["Future", "", []],
+                  ["Naive", "Updated 2h 0m ago", []], ["Garbled", "", []], ["Unwritten", "", []],
+                  ["Stale too", "Updated 2d 3h ago", ["Sign-in expired", "Run `h login`.", "Limits may be out of date"]]]' \
+    "only a record at least an hour old says how old it is, apart from what is wrong with its numbers"
   ok
   cleanup_sandbox
 
@@ -360,8 +360,9 @@ if command -v qml6 >/dev/null; then
     "agents should be the used ones, in file order, with markup left alone and non-records dropped"
   check "$out" '.agents[0] | .plan == "Pro" and .tokensText == "Tokens: 1.2M today, 3.3M this week" and .multi
                 and .notes == ["Claude Code unavailable", "Check your connection."]
-                and ([.limits[] | [.title, .percentText, .high]] == [["Session (5-hour)", "42%", false], ["Weekly (7-day)", "95%", true], ["Fable Weekly", "0%", false]])' \
-    "Claude Code: plan, tokens, limits (an elapsed window reads 0%)"
+                and ([.limits[] | [.title, .percentText, .high]] == [["Session (5-hour)", "42%", false], ["Weekly (7-day)", "95%", true], ["Fable Weekly", "0%", false]])
+                and .age == "Updated 2d 3h ago"' \
+    "Claude Code: plan, tokens, limits (an elapsed window reads 0%), and the age of a record with several accounts"
   [[ $(records '"resetText"' "$(jq '.agents[0].limits[0].resetMs' <<<"$out")" "$NOW") == '"resets in 2h 10m"' ]] || fail "the session reset time"
   [[ $(records '"resetText"' "$(jq '.agents[0].limits[1].resetMs' <<<"$out")" "$NOW") == '"resets in 3d 4h"' ]] || fail "the weekly reset time"
   check "$out" '.agents[0].limits[2].resetMs == 0' "an elapsed window has no reset time"
@@ -372,7 +373,7 @@ if command -v qml6 >/dev/null; then
     "a prepaid balance"
   check "$out" '.agents[2].balance | .remainingText == "CNY 1.00 left" and .detailText == "CNY 19.00 spent of CNY 20.00 (estimated)" and .low == true' \
     "a low, estimated balance in another currency"
-  check "$out" '.agents[3] | .balance == {remainingText: "€2.00 left", detailText: "", fraction: -1, low: false} and .notes == ["Updated 2d 3h ago"]' \
+  check "$out" '.agents[3] | .balance == {remainingText: "€2.00 left", detailText: "", fraction: -1, low: false} and .age == "Updated 2d 3h ago" and .notes == []' \
     "a balance with no funding figure has nothing to measure against, and a record two days old says so"
   check "$out" '.agents[4] | .plan == "Plus" and .notes == ["Limits paused", "Start Codex to see its limits.", "Limits last checked 2h 0m ago"]' \
     "stale limits say why and how old"
@@ -425,7 +426,8 @@ esac'
                 and index("Tokens: 1.2M today, 3.3M this week") and index("Work · Max") and index("<b>Evil</b><img src=x>")' \
     "the page lacks a name, plan, limit, balance, tokens line, account or the raw agent name"
   check "$out" '.page.texts | any(contains("42%") and contains("resets in 2h 10m"))' "a limit shows its percent and reset time"
-  check "$out" '.page.texts | index("Updated 2d 3h ago")' "the page does not say that a record is two days old"
+  check "$out" '.page.texts | map(select(. == "Updated 2d 3h ago")) | length == 2' \
+    "the page should say that two records are two days old, the one with several accounts as well as the one with a single balance"
   check "$out" '.page.bars == [0.42, 0.95, 0, 0.8, 0.175, 0.05, 0.5, 1]' "meters of accounts, balances and limits, in page order, with the active account's limits once"
   # With several accounts the record's own limits and notes describe the active
   # one, which is listed below with the others, so the agent does not repeat them.

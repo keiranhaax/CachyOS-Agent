@@ -41,6 +41,17 @@ ColumnLayout {
         }
     }
 
+    // The age of the record, which an agent with several accounts keeps although
+    // its own notes and limits are drawn under each account instead.
+    PlasmaComponents3.Label {
+        Layout.fillWidth: true
+        visible: text !== ""
+        text: section.agent.age
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        color: Kirigami.Theme.neutralTextColor
+    }
+
     LimitList {
         Layout.fillWidth: true
         visible: !section.agent.multi

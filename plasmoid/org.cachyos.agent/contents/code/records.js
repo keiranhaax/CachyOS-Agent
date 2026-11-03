@@ -135,9 +135,9 @@ const RECORD_OLD_MS = 3600 * 1000;
 
 // "Updated 2d 3h ago" for a record at least an hour old. A record with no
 // updatedAt, one that does not parse, or one from the future says nothing.
-function ageNotes(updatedAt, now) {
+function ageText(updatedAt, now) {
     const updated = parseTime(updatedAt);
-    return updated <= now - RECORD_OLD_MS ? ["Updated " + duration(now - updated) + " ago"] : [];
+    return updated <= now - RECORD_OLD_MS ? "Updated " + duration(now - updated) + " ago" : "";
 }
 
 // What is wrong with an agent's numbers, one line each. A status is always
@@ -189,9 +189,12 @@ function agentView(record, now) {
         limits: limitViews(record.limits, now),
         balance: balanceView(record.balance),
         tokensText: today > 0 || week > 0 ? "Tokens: " + tokens(today) + " today, " + tokens(week) + " this week" : "",
-        notes: ageNotes(record.updatedAt, now).concat(notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now)),
-        // With several accounts each lists its own limits and notes, so the
-        // agent's, which describe the active one, are not drawn again.
+        // How old the record is says nothing about one account, so it stays
+        // apart from the notes: with several accounts each lists its own
+        // limits and notes, and the agent's notes, which describe the active
+        // one, are not drawn again, but the age of the record is.
+        age: ageText(record.updatedAt, now),
+        notes: notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now),
         multi: accounts.length > 1,
         accounts: accounts
     };
