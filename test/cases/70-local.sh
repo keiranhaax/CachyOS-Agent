@@ -164,9 +164,8 @@ while IFS=$'\t' read -r id model vram ram ctx note; do
   seen[$id]=1
   [[ $id =~ ^[a-z0-9][a-z0-9._-]*$ ]] || fail "bad id $id"
   [[ $model =~ ^[a-z0-9._/-]+:[A-Za-z0-9._-]+$ ]] || fail "$id: $model is not name:tag"
-  [[ $vram =~ ^[0-9]+$ && $ram =~ ^[0-9]+$ ]] || fail "$id: limits are not numbers"
-  ((ram > 0 && vram > 0)) || fail "$id: a limit is zero"
-  ((ctx >= 32768)) || fail "$id: context $ctx is too small for an agent"
+  [[ $vram =~ ^[1-9][0-9]*$ && $ram =~ ^[1-9][0-9]*$ ]] || fail "$id: limits are not positive numbers without a leading zero"
+  [[ $ctx =~ ^[1-9][0-9]*$ ]] && ((ctx >= 32768)) || fail "$id: context $ctx is too small for an agent"
   [[ -n $note ]] || fail "$id: no note"
 done <"$REPO_ROOT/data/local-models.tsv"
 ((rows >= 5)) || fail "only $rows recipes"
@@ -174,7 +173,7 @@ run_real=$("$AGENT" local list 2>&1 </dev/null)
 for id in "${!seen[@]}"; do
   [[ $run_real == *" $id "* ]] || fail "list through the real dispatcher does not show $id"
 done
-grep -q '2026-' "$REPO_ROOT/data/local-models.tsv" || fail "the header does not record the date the tags were checked"
+grep -Eq '^#.*[0-9]{4}-[0-9]{2}-[0-9]{2}' "$REPO_ROOT/data/local-models.tsv" || fail "the header does not record the date the tags were checked"
 ok
 cleanup_sandbox
 
@@ -273,6 +272,12 @@ rows=(
   $'broken\tbroken:1b\tmany\t16\t32768\tvram is not a number'
   $'broken\tbroken:1b\t8\tmany\t32768\tram is not a number'
   $'broken\tbroken:1b\t8\t16\tbig\tcontext is not a number'
+  $'broken\tbroken:1b\t08\t16\t32768\tvram has a leading zero, which bash reads as octal'
+  $'broken\tbroken:1b\t8\t010\t32768\tram has a leading zero'
+  $'broken\tbroken:1b\t8\t16\t032768\tcontext has a leading zero'
+  $'broken\tbroken:1b\t0\t16\t32768\tvram is zero'
+  $'broken\tbroken:1b\t8\t0\t32768\tram is zero'
+  $'broken\tbroken:1b\t8\t16\t0\tcontext is zero'
   $'broken\tbroken:1b\t8\t16\t32768'
   $'broken\tbroken:1b\t8\t16\t32768\t'
   $'Broken\tbroken:1b\t8\t16\t32768\tid has a capital'

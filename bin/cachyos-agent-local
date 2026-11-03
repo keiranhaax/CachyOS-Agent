@@ -27,6 +27,7 @@ SERVICE=ollama.service
 RECIPES=$CACHYOS_AGENT_ROOT/data/local-models.tsv
 ACTIVE_FILE=$CACHYOS_AGENT_STATE_DIR/local/active
 ID_RE='^[a-z0-9][a-z0-9._-]*$'
+NUMBER_RE='^[1-9][0-9]*$'
 
 # The endpoint above is the one clients are told about, so every ollama call
 # here must reach that server whatever OLLAMA_HOST says in the caller's shell.
@@ -67,6 +68,8 @@ usage_error() {
 
 # Parse data/local-models.tsv once into the R_* arrays. The file ships in the
 # package, so a bad row is a bug there and stops everything with its line number.
+# The numbers must be positive and have no leading zero: bash would read 08 as
+# a bad octal number and 010 as 8.
 load_recipes() {
   local line id model vram ram ctx note n=0
   [[ -r $RECIPES ]] || ca_die "cannot read $RECIPES"
@@ -74,8 +77,8 @@ load_recipes() {
     n=$((n + 1))
     if [[ -z $line || $line == '#'* ]]; then continue; fi
     IFS=$'\t' read -r id model vram ram ctx note <<<"$line"
-    if ! [[ $id =~ $ID_RE && $model =~ ^[^[:space:]]+$ && $vram =~ ^[0-9]+$ &&
-      $ram =~ ^[0-9]+$ && $ctx =~ ^[0-9]+$ && -n $note ]]; then
+    if ! [[ $id =~ $ID_RE && $model =~ ^[^[:space:]]+$ && $vram =~ $NUMBER_RE &&
+      $ram =~ $NUMBER_RE && $ctx =~ $NUMBER_RE && -n $note ]]; then
       ca_die "$RECIPES:$n: malformed recipe row"
     fi
     if [[ -n ${R_INDEX[$id]+x} ]]; then ca_die "$RECIPES:$n: duplicate recipe id $id"; fi
