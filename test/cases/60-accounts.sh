@@ -285,6 +285,29 @@ out=$("$AGENT" account add claude)
 ok
 cleanup_sandbox
 
+begin "add reads its options wherever they stand, and keeps a dash-leading label behind --"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+: >"$SANDBOX/logins"
+ADD=$REPO_ROOT/bin/cachyos-agent-account-add
+# Help after the provider is help, not a label that starts a real sign-in.
+out=$("$ADD" claude --help 2>&1) || true
+[[ $out == "Usage: cachyos-agent account add"* ]] || fail "claude --help did not print usage: $out"
+if out=$("$ADD" claude --bogus 2>&1); then fail "an unknown option after the provider was accepted"; fi
+[[ $out == "Usage: cachyos-agent account add"* ]] || fail "--bogus after the provider did not print usage: $out"
+[[ ! -s $SANDBOX/logins ]] || fail "a sign-in started for an option: $(<"$SANDBOX/logins")"
+[[ $(registry claude '.accounts | length') == 2 ]] || fail "an option became an account: $(registry claude '[.accounts[].label]')"
+# --reauth after the provider is the same request as before it.
+FIX_ID=u-work FIX_EMAIL=work@example.com "$ADD" claude --reauth work >/dev/null 2>&1 || true
+[[ $(<"$SANDBOX/logins") == "claude CLAUDE_CONFIG_DIR=$STATE/accounts/claude/work browser=yes" ]] || fail "--reauth after the provider did not sign work in again: $(<"$SANDBOX/logins")"
+[[ $(registry claude '.accounts | length') == 2 ]] || fail "--reauth after the provider added an account"
+# A label that has to start with a dash goes after --.
+FIX_ID=u-odd FIX_EMAIL=odd@example.com "$ADD" claude -- --odd >/dev/null 2>&1 || true
+[[ $(registry claude '.accounts[2] | .id + "/" + .label') == "odd/--odd" ]] || fail "the label after -- was not kept: $(registry claude '.accounts[2]')"
+ok
+cleanup_sandbox
+
 begin "add explains how to install a missing CLI, and checks the provider first"
 setup
 mkdir "$SANDBOX/tools"

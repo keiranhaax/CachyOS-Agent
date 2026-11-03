@@ -29,8 +29,14 @@ is refused, and an added account's earlier sign-in is put back.
 EOF
 }
 
+Options may stand anywhere before --. A label that starts with a dash goes
+after it: cachyos-agent account add claude -- -side.
+
 reauth=''
-while [[ ${1-} == -* ]]; do
+words=()
+while (($#)); do
+# Options are read wherever they stand: a word after the provider that starts
+# with a dash is an option, never a label that would start a real sign-in.
   case $1 in
     -h | --help)
       usage
@@ -44,15 +50,21 @@ while [[ ${1-} == -* ]]; do
       fi
       shift
       ;;
-    *)
+    --)
+      shift
+      words+=("$@")
+      break
+      ;;
+    -*)
       usage >&2
       exit 1
       ;;
   esac
   shift
+    *) words+=("$1") ;;
 done
 
-acct_args "$@"
+acct_args "${words[@]}"
 set -- "${ACCT_ARGS[@]}"
 if ! acct_provider "${1-}"; then
   usage >&2
