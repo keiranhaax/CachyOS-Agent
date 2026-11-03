@@ -75,15 +75,21 @@ autoswitch() {
   return "$status"
 }
 
-# wanted <agent>: not excluded, and named when anything was named.
-wanted() {
-  local candidate
-  [[ -z ${EXCLUDED[$1]-} ]] || return 1
-  ((${#ONLY[@]} > 0)) || return 0
-  for candidate in "${ONLY[@]}"; do
-    [[ $candidate == "$1" ]] && return 0
+# in_list <name> <item...>: whether the name is one of the items, compared whole.
+in_list() {
+  local name=$1 item
+  shift
+  for item in "$@"; do
+    [[ $item == "$name" ]] && return 0
   done
   return 1
+}
+
+# wanted <agent>: not excluded, and named when anything was named.
+wanted() {
+  [[ -z ${EXCLUDED[$1]-} ]] || return 1
+  ((${#ONLY[@]} > 0)) || return 0
+  in_list "$1" "${ONLY[@]}"
 }
 
 # Fill AGENTS from the collectors beside this script.
@@ -122,7 +128,7 @@ main() {
 
   discover
   for agent in "${ONLY[@]}" "${!EXCLUDED[@]}"; do
-    [[ " ${AGENTS[*]} " == *" $agent "* ]] || ca_die "no collector for agent: $agent (known: ${AGENTS[*]})"
+    in_list "$agent" "${AGENTS[@]}" || ca_die "no collector for agent: $agent (known: ${AGENTS[*]})"
   done
   mkdir -p "$USAGE_DIR"
 

@@ -280,6 +280,14 @@ if "$ROOT/bin/cachyos-agent-usage-update" nothere 2>"$SANDBOX/err"; then fail "a
 grep -q 'no collector for agent: nothere' "$SANDBOX/err" || fail "unknown agent not explained: $(<"$SANDBOX/err")"
 [[ ! -e $SANDBOX/order ]] || fail "a collector ran despite the unknown agent"
 if "$ROOT/bin/cachyos-agent-usage-update" --nonsense 2>/dev/null; then fail "an unknown option was accepted"; fi
+# One argument holding two known names is a typo, not a request for either.
+for args in "alpha beta" "alp"; do
+  if "$ROOT/bin/cachyos-agent-usage-update" "$args" 2>"$SANDBOX/err"; then fail "'$args' was accepted as an agent name"; fi
+  grep -q 'no collector for agent' "$SANDBOX/err" || fail "'$args' not explained: $(<"$SANDBOX/err")"
+  if "$ROOT/bin/cachyos-agent-usage-update" --except "$args" 2>"$SANDBOX/err"; then fail "--except '$args' was accepted"; fi
+  grep -q 'no collector for agent' "$SANDBOX/err" || fail "--except '$args' not explained: $(<"$SANDBOX/err")"
+done
+[[ ! -e $SANDBOX/order && ! -e $USAGE ]] || fail "a collector ran or a record was written for a name that matched none"
 ok
 cleanup_sandbox
 
