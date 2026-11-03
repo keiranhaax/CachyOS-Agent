@@ -124,6 +124,19 @@ expect "$OUT" "pi" "CACHYOS_AGENT_DEFAULT overrides the file"
 ok
 cleanup_sandbox
 
+begin "default prints the agent's id when the choice is an alias, and an unknown name as typed"
+setup
+CACHYOS_AGENT_DEFAULT=claude-code run "$CA" default
+expect "$RC:$OUT" "0:claude" "alias in the environment"
+mkdir -p "$XDG_CONFIG_HOME/cachyos-agent"
+echo gemini-cli >"$XDG_CONFIG_HOME/cachyos-agent/default-agent"
+run "$CA" default
+expect "$RC:$OUT" "0:agy" "alias in the saved file"
+CACHYOS_AGENT_DEFAULT=openclaw run "$CA" default
+expect "$RC:$OUT" "0:openclaw" "a name that is no agent, so launch can say what it refused"
+ok
+cleanup_sandbox
+
 begin "default <agent> saves it and launches"
 setup
 stub_agents claude cachyos-agent-launch

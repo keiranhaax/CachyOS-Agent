@@ -817,6 +817,19 @@ if out=$("$AGENT" account use side 2>&1); then fail "a default agent without acc
 ok
 cleanup_sandbox
 
+begin "a provider left out is found when the default agent is chosen by an alias"
+setup
+stub notify-send
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+export CACHYOS_AGENT_DEFAULT=claude-code
+"$AGENT" account use work >/dev/null 2>&1 || fail "use did not accept claude-code as the default agent"
+[[ $(registry claude .active) == work ]] || fail "use did not act on claude"
+[[ $("$AGENT" account mode auto 80) == "Claude switches new sessions"*"at 80%." ]] || fail "mode did not act on claude"
+unset CACHYOS_AGENT_DEFAULT
+ok
+cleanup_sandbox
+
 # ---- commands ------------------------------------------------------------------
 
 begin "every account command is routed, documented and answers --help"

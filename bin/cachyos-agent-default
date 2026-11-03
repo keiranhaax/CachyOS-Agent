@@ -29,13 +29,19 @@ Agents: ${CA_AGENT_IDS[*]}
 EOF2
 }
 
-# Silent when unset rather than defaulting: no agent is picked for you.
+# Silent when unset rather than defaulting: no agent is picked for you. The id
+# is printed, not an alias typed into the variable or the file (claude-code),
+# because what reads this compares it with ids. A name that is no agent is
+# printed as it is, so the launcher can say what it refused.
 print_default() {
   local agent=${CACHYOS_AGENT_DEFAULT:-}
   if [[ -z $agent && -f $AGENT_FILE ]]; then
     read -r agent <"$AGENT_FILE" || true
   fi
   if [[ -n $agent ]]; then
+    if ca_agent_resolve "$agent"; then
+      agent=$CA_AGENT
+    fi
     printf '%s\n' "$agent"
   fi
 }
