@@ -49,7 +49,7 @@ CONSUMED=0          # set by resolve: how many words named it
 # of every executable cachyos-agent-* file. C collation keeps a group's own
 # command ahead of its subcommands whatever the user's locale is.
 load_commands() {
-  local LC_COLLATE=C file bin line n
+  local LC_ALL=C file bin line n
   local re='^#[[:space:]]*cachyos-agent:([a-z]+)=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$'
   BINS=()
   for file in "$BIN_DIR"/cachyos-agent-*; do
@@ -152,7 +152,7 @@ problem() {
 # instead), and must not sit under a built-in group, which the dispatcher
 # answers first.
 commands_check() {
-  local LC_COLLATE=C file bin group
+  local LC_ALL=C file bin group
   for file in "$BIN_DIR"/cachyos-agent-*; do
     [[ -f $file ]] || continue
     [[ -x $file ]] || problem "${file##*/} is not executable"
