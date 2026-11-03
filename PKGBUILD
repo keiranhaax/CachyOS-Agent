@@ -7,14 +7,21 @@ pkgdesc='CachyOS agent runtime and skills for AI coding agents'
 arch=('any')
 url='https://github.com/keiranhaax/CachyOS-Agent'
 license=('GPL-3.0-only')
-depends=('bash' 'jq' 'python' 'coreutils' 'systemd')
+depends=('bash' 'jq' 'python' 'coreutils' 'gawk' 'systemd')
 makedepends=('git')
-optdepends=('libnotify: desktop notifications for crash capture'
+optdepends=('libnotify>=0.8.8: desktop notifications for crash capture, usage limits and account switching'
             'konsole: terminal for launched agents'
             'alacritty: terminal for launched agents'
             'kconfig: Plasma global shortcut and theme sync helpers'
             'plasma-desktop: agents panel widget'
+            'qt6-tools: paste a prompt through Klipper when the agent has no prompt flag'
+            'wl-clipboard: paste a prompt through the Wayland clipboard when Klipper is absent'
+            'xdg-utils: open a private browser window when adding a subscription account'
+            'ripgrep: scan pi and omp sessions for usage records'
+            'github-cli: Copilot usage through the gh login'
             'ollama: run local models for your agents'
+            'ollama-cuda: GPU acceleration for local models on NVIDIA'
+            'ollama-rocm: GPU acceleration for local models on AMD'
             'paru: install AUR-packaged agents'
             'git: update Git checkouts and check reviewed CachyOS upstreams')
 provides=('cachyos-agent-system')
@@ -44,6 +51,7 @@ package() {
   # the real files live under the data root and /usr/bin holds only symlinks.
   install -d "$pkgdir/usr/bin"
   for script in bin/*; do
+    [[ -f $script ]] || continue # a stray __pycache__ from a local py_compile is not a command
     name=${script##*/}
     install -Dm755 "$script" "$datadir/bin/$name"
     ln -s "../share/$pkgname/bin/$name" "$pkgdir/usr/bin/$name"
