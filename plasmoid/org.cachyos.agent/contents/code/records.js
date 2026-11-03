@@ -217,9 +217,11 @@ function agentView(record, now) {
 }
 
 // The collectors print a record for every agent they know, empty and not
-// ready for one this machine does not use. Only an agent in use gets a section.
+// ready for one this machine does not use. Only an agent in use gets a section,
+// and ready is what says so: it is the rule `cachyos-agent usage` lists by, so
+// the report and the widget never disagree about a record.
 function isShown(view) {
-    return view.ready || view.plan !== "" || view.limits.length > 0 || view.accounts.length > 0 || view.balance !== null || view.tokensText !== "";
+    return view.ready;
 }
 
 // "<command> failed: <first line of stderr>", or the exit code when it said nothing.

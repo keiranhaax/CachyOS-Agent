@@ -305,6 +305,18 @@ if command -v qml6 >/dev/null; then
   ok
   cleanup_sandbox
 
+  begin "records.js shows the agents the report lists and no others"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  # Claude Code signed in with a plan, no transcripts yet and an unreachable service: its record is
+  # not ready, so `cachyos-agent usage` lists nothing for it, and the widget must not draw it either.
+  record='[{"id": "claude", "name": "Claude Code", "ready": false, "tierLabel": "Pro 5x", "limits": [], "usageStatusText": "Claude limits unavailable"},
+           {"id": "codex", "name": "Codex", "ready": true, "tierLabel": "", "limits": []}]'
+  out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
+  check "$out" '[.agents[].name] == ["Codex"]' "a record that is not ready is not drawn for its plan"
+  ok
+  cleanup_sandbox
+
   begin "records.js says how old a record is once nothing has refreshed it for an hour"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
