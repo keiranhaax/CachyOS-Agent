@@ -1,0 +1,3 @@
+module org.kde.plasma.plasmoid
+PlasmoidItem 2.0 PlasmoidItem.qml
+singleton Plasmoid 2.0 Plasmoid.qml

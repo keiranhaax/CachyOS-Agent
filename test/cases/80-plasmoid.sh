@@ -1,11 +1,15 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
 # The Plasma widget in plasmoid/org.cachyos.agent: its package files, the QML
-# it is written in, and the JavaScript that shapes usage records for it. There is
-# no desktop here, so the JavaScript runs under qml6 with the offscreen platform,
-# through test/plasmoid/records.qml. A check whose tool or Qt module is missing is
-# reported UNVERIFIED and does not fail the case.
-# The jq programs are single-quoted so that their $ reaches jq as written.
+# it is written in, the JavaScript that shapes usage records for it, and the
+# whole path from `cachyos-agent usage --json` to what it shows. There is no
+# desktop here, so what runs does so under qml6 with the offscreen platform:
+# records.js alone, and main.qml against test/plasmoid/stubs, which replace only
+# the PlasmoidItem and Plasmoid that plasmashell provides. The data engine, the
+# Plasma components and Kirigami are the installed ones. A check whose tool or
+# Qt module is missing is reported UNVERIFIED and does not fail the case.
+# The jq programs and the stub's body are single-quoted so that their $ reaches
+# jq and the stub as written.
 # shellcheck disable=SC2016
 # shellcheck source=../lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
@@ -13,6 +17,7 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 PKG=$REPO_ROOT/plasmoid/org.cachyos.agent
 HARNESS=$REPO_ROOT/test/plasmoid
 QML_DIR=/usr/lib/qt6/qml
+ENGINE=/usr/lib/qt6/plugins/plasma5support/dataengine/plasma_engine_executable.so
 QML_FILES=("$PKG"/contents/ui/*.qml "$PKG"/contents/config/config.qml)
 
 unverified() {
@@ -40,6 +45,23 @@ qml_json() {
 # records <function name as JSON> [argument as JSON...]: call a function of records.js.
 records() {
   qml_json "$HARNESS/records.qml" -- "$(jq -nc '$ARGS.positional | map(fromjson)' --args "$@")"
+}
+
+# app <action> <expected>: run the widget and print what it shows. The action is
+# "dump" or the text of a button to click, and <expected> what the agents must
+# mention before the page is read after a click.
+app() {
+  qml_json -I "$HARNESS/stubs" "$HARNESS/app.qml" -- "$PKG/contents/ui/main.qml" "$1" "$2"
+}
+
+# calls_of <stub>: the calls the stub recorded, one per line.
+calls_of() {
+  awk 'BEGIN { RS = ""; FS = "\n"; OFS = " " } { $1 = $1; print }' "$SANDBOX/calls/$1"
+}
+
+# No error QML reports about our files may pass unnoticed in a log.
+qml_log_is_clean() {
+  ! grep -E 'TypeError|ReferenceError|SyntaxError|Unable to assign|Cannot assign|Cannot read|Binding loop|is not a type|is not installed|Required property|org.cachyos.agent' "$QML_LOG"
 }
 
 # records_json <now in epoch seconds>: the usage records every check below reads,
@@ -285,4 +307,122 @@ if command -v qml6 >/dev/null; then
   cleanup_sandbox
 else
   unverified "records.js" "qml6 is not installed, so no JavaScript engine is available"
+fi
+
+# ---- the widget end to end -----------------------------------------------------
+
+if command -v qml6 >/dev/null && [[ -f $ENGINE && -d $QML_DIR/org/kde/plasma/plasma5support && -d $QML_DIR/org/kde/plasma/extras ]]; then
+  # What the widget runs is stubbed at the command line: the stub cachyos-agent
+  # prints $FIXTURE for `usage --json` and notes `usage update` in $MARKER.
+  stub_agent() {
+    stub cachyos-agent '
+case "$1 ${2-}" in
+  "usage --json")
+    if [[ -e $MARKER && -n ${FIXTURE_AFTER-} ]]; then cat "$FIXTURE_AFTER"; else cat "$FIXTURE"; fi ;;
+  "usage update")
+    : >"$MARKER"
+    [[ -z ${UPDATE_STDERR-} ]] || echo "$UPDATE_STDERR" >&2
+    exit "${UPDATE_STATUS-0}" ;;
+esac'
+    stub systemd-run
+    unset FIXTURE_AFTER UPDATE_STATUS UPDATE_STDERR
+    export FIXTURE=$SANDBOX/records.json MARKER=$SANDBOX/updated
+    records_json "$(date +%s)" >"$FIXTURE"
+  }
+
+  begin "the widget reads the records, shows them as plain text, and launches an agent"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  out=$(app "Launch agent" "")
+  check "$out" '.loaded and .problem == "" and .refreshing == false' "the first read did not complete"
+  check "$out" '[.agents[].name] == ["Claude Code", "OpenRouter", "DeepSeek", "Fireworks", "Codex", "Hermes", "<b>Evil</b><img src=x>"]' "agents"
+  check "$out" '.tooltip == "Claude Code 95%, Codex 50%, <b>Evil</b><img src=x> 100%"' "tooltip"
+  check "$out" '.page.buttons == [{text: "Launch agent", enabled: true}, {text: "Refresh", enabled: true}]' "buttons"
+  check "$out" '.page.texts | index("Claude Code") and index("Pro") and index("Weekly (7-day)") and index("Balance") and index("$3.50 left") and index("€2.00 left")
+                and index("Tokens: 1.2M today, 3.3M this week") and index("Work · Max") and index("<b>Evil</b><img src=x>")' \
+    "the page lacks a name, plan, limit, balance, tokens line, account or the raw agent name"
+  check "$out" '.page.texts | any(contains("42%") and contains("resets in 2h 10m"))' "a limit shows its percent and reset time"
+  check "$out" '.page.bars == [0.42, 0.95, 0, 0.42, 0.8, 0.175, 0.05, 0.5, 1]' "meters of limits, accounts and balances, in page order"
+  check "$out" '.page.notPlain == []' "text that is not plain text"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
+  [[ $(calls_of cachyos-agent) == 'usage --json' ]] || fail "the widget should run cachyos-agent usage --json once and nothing else: $(calls_of cachyos-agent)"
+  [[ $(calls_of systemd-run) == '--user --scope --quiet -- cachyos-agent launch' ]] \
+    || fail "Launch agent did not start cachyos-agent launch in its own scope: $(calls_of systemd-run)"
+  ok
+  cleanup_sandbox
+
+  begin "clicking the panel icon opens the widget and reads the records again"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  out=$(app compact "")
+  check "$out" '.compactIcon == "utilities-terminal" and .during.expanded and .expanded' "the compact representation is the terminal icon, and a click expands the widget"
+  [[ $(calls_of cachyos-agent) == $'usage --json\nusage --json' ]] || fail "opening the widget should read the records again: $(calls_of cachyos-agent)"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
+  ok
+  cleanup_sandbox
+
+  begin "Refresh collects new usage with cachyos-agent usage update and then reads it"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  jq '. + [{id: "after", name: "After Update", ready: true, tierLabel: "pro"}]' "$FIXTURE" >"$SANDBOX/after.json"
+  export FIXTURE_AFTER=$SANDBOX/after.json
+  out=$(app Refresh "After Update")
+  check "$out" '.problem == "" and .refreshing == false and (.agents | map(.name) | index("After Update"))' "the records read after the update were not shown"
+  check "$out" '.during.refreshing and (.during.buttons | map(select(.text == "Refresh") | .enabled) == [false])' "Refresh should be busy, and off, while the update runs"
+  [[ $(calls_of cachyos-agent) == $'usage --json\nusage update\nusage --json' ]] \
+    || fail "expected a read, the update, then another read; got: $(calls_of cachyos-agent)"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
+  ok
+  cleanup_sandbox
+
+  begin "a failed update is reported and the records are still read"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  export UPDATE_STATUS=1 UPDATE_STDERR="claude: no network"
+  out=$(app Refresh "Claude Code")
+  check "$out" '.problem == "cachyos-agent usage update failed: claude: no network" and (.agents | length) == 7' "the failed update should be reported beside the records"
+  check "$out" '.page.texts | index("cachyos-agent usage update failed: claude: no network")' "the problem is not on the page"
+  ok
+  cleanup_sandbox
+
+  begin "a usage command that fails shows why instead of agents"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  stub cachyos-agent 'echo "usage: records are unreadable" >&2; exit 1'
+  out=$(app dump "")
+  check "$out" '.loaded and .agents == [] and .problem == "cachyos-agent usage --json failed: usage: records are unreadable"' "the failure"
+  check "$out" '.page.texts | index("cachyos-agent usage --json failed: usage: records are unreadable") and (index("Loading usage…") | not)' "the failure is not on the page"
+  ok
+  cleanup_sandbox
+
+  begin "with no records the widget says how to collect them"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  echo '[]' >"$FIXTURE"
+  out=$(app dump "")
+  check "$out" '.agents == [] and .problem == "" and (.page.texts | index("No agent usage yet. Press Refresh to collect it."))' "the empty state"
+  ok
+  cleanup_sandbox
+else
+  unverified "the widget end to end" "qml6, the Plasma executable data engine or the Plasma QML modules are not installed"
+fi
+
+if command -v qml6 >/dev/null && [[ -d $QML_DIR/org/kde/kcmutils && -d $QML_DIR/org/kde/plasma/configuration ]]; then
+  begin "the settings page edits the refresh interval and the settings dialog offers it"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  out=$(qml_json "$HARNESS/config.qml" -- "$PKG/contents/ui/configGeneral.qml" "$PKG/contents/config/config.qml")
+  check "$out" '.loaded and .spin == {value: 120, from: 30, to: 3600}' "setting cfg_refreshIntervalSec should move the spin box, which allows 30 to 3600 seconds"
+  check "$out" '.categories | map([.name, .source]) == [["General", "configGeneral.qml"]]' "the settings dialog should offer the page"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
+  ok
+  cleanup_sandbox
+else
+  unverified "the settings page" "qml6, kcmutils or the Plasma configuration module is not installed"
 fi
