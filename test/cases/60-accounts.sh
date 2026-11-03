@@ -447,3 +447,171 @@ if out=$(PATH=$SANDBOX/tools "$REPO_ROOT/bin/cachyos-agent-account-exec" claude 
 ok
 cleanup_sandbox
 
+# ---- mode ----------------------------------------------------------------------
+
+begin "mode stores the switching mode and threshold and describes them"
+setup
+sign_in claude u-main main@example.com
+[[ $("$AGENT" account mode claude) == "Claude notifies at 95% and switches when you say so." ]] || fail "default mode: $("$AGENT" account mode claude)"
+[[ $("$AGENT" account mode claude auto 90) == "Claude switches new sessions to the account with the most headroom at 90%." ]] || fail "auto 90"
+[[ $(registry claude '[.switch, .threshold] | join(",")') == auto,90 ]] || fail "registry: $(<"$STATE/accounts/claude.json")"
+[[ $("$AGENT" account mode claude notify) == "Claude notifies at 90% and switches when you say so." && $(registry claude .switch) == manual ]] || fail "notify is not stored as manual"
+"$AGENT" account mode claude auto >/dev/null
+[[ $(registry claude '[.switch, .threshold] | join(",")') == auto,90 ]] || fail "a mode without a threshold changed the threshold"
+"$AGENT" account mode claude manual 10 >/dev/null
+[[ $(registry claude '[.switch, .threshold] | join(",")') == manual,50 ]] || fail "the threshold was not clamped up to 50"
+"$AGENT" account mode claude auto 500 >/dev/null
+[[ $(registry claude .threshold) == 100 ]] || fail "the threshold was not clamped down to 100"
+if out=$("$AGENT" account mode claude auto abc 2>&1); then fail "a non-numeric threshold was accepted"; fi
+[[ $out == *"percentage between 50 and 100"* && $(registry claude .threshold) == 100 ]] || fail "bad threshold: $out"
+if out=$("$AGENT" account mode claude sometimes 2>&1); then fail "an unknown mode was accepted"; fi
+[[ $out == *"manual or auto"* ]] || fail "bad mode: $out"
+ok
+cleanup_sandbox
+
+# ---- autoswitch ----------------------------------------------------------------
+
+# usage_record <main fraction> <work fraction>: the usage record the collectors
+# would have written for two Claude accounts, with windows that reset far ahead.
+usage_record() {
+  mkdir -p "$STATE/usage"
+  jq -n --argjson m "$1" --argjson w "$2" '{accounts: [
+    {id: "main", limits: [{label: "5h", percent: $m, resetsAt: "2999-01-01T00:00:00Z"}]},
+    {id: "work", limits: [{label: "5h", percent: $w, resetsAt: "2999-01-01T00:00:00Z"}]}]}' >"$STATE/usage/claude.json"
+}
+
+# active_is <id>: whether the Claude registry's active account is that one.
+active_is() {
+  [[ $(registry claude .active) == "$1" ]]
+}
+
+# two_accounts: Main and Work signed in, with desktop notifications stubbed.
+two_accounts() {
+  setup
+  sign_in claude u-main main@example.com
+  sign_in claude u-work work@example.com Work
+  stub notify-send
+  export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+}
+
+begin "autoswitch in auto mode moves new sessions to the account with room and says so"
+two_accounts
+"$AGENT" account mode claude auto 90 >/dev/null
+usage_record 0.5 0.1
+[[ -z $("$AGENT" account state autoswitch claude) && $(registry claude .active) == main ]] || fail "switched below the threshold"
+usage_record 0.97 0.1
+[[ $("$AGENT" account state autoswitch claude) == claude ]] || fail "autoswitch did not report the provider it switched"
+[[ $(registry claude .active) == work && $("$AGENT" account home claude) == "$STATE/accounts/claude/work" ]] || fail "the active account did not change"
+called notify-send "Main is at 97% of a Claude limit" || fail "no headline: $(<"$SANDBOX/calls/notify-send")"
+called notify-send "New Claude sessions now use Work (10%)." || fail "no word on the new account: $(<"$SANDBOX/calls/notify-send")"
+[[ -z $("$AGENT" account state autoswitch claude) && $(registry claude .active) == work ]] || fail "autoswitch flapped back"
+ok
+cleanup_sandbox
+
+begin "autoswitch in notify mode offers a switch that a click carries out"
+two_accounts
+usage_record 0.97 0.1
+stub notify-send 'case "$*" in *--action*) echo switch ;; esac'
+[[ -z $("$AGENT" account state autoswitch claude) ]] || fail "notify mode switched by itself"
+eventually active_is work || fail "clicking the notification did not switch"
+called notify-send "--action=switch=Switch" || fail "no switch action: $(<"$SANDBOX/calls/notify-send")"
+called notify-send "Work is at 10%. Click to switch" || fail "no offer: $(<"$SANDBOX/calls/notify-send")"
+ok
+cleanup_sandbox
+
+begin "a notification that is closed without a click changes nothing"
+two_accounts
+usage_record 0.97 0.1
+"$AGENT" account state autoswitch claude >/dev/null
+eventually called notify-send "--action=switch=Switch" || fail "the offer was not sent"
+sleep 0.5
+[[ $(registry claude .active) == main ]] || fail "the account changed without a click"
+ok
+cleanup_sandbox
+
+begin "when every account is over the threshold it is said once and nothing switches"
+two_accounts
+"$AGENT" account mode claude auto 90 >/dev/null
+usage_record 0.97 0.99
+[[ -z $("$AGENT" account state autoswitch claude) && -z $("$AGENT" account state autoswitch claude) ]] || fail "autoswitch reported a switch"
+[[ $(grep -c "All Claude accounts are over 90%" "$SANDBOX/calls/notify-send") == 1 ]] || fail "not said exactly once: $(<"$SANDBOX/calls/notify-send")"
+called notify-send "Staying on Main. " || fail "no word on staying: $(<"$SANDBOX/calls/notify-send")"
+called notify-send " resets in " || fail "no word on when an account frees up: $(<"$SANDBOX/calls/notify-send")"
+[[ $(registry claude .active) == main ]] || fail "the account changed"
+ok
+cleanup_sandbox
+
+begin "without a desktop the notification goes to stderr"
+two_accounts
+unset DBUS_SESSION_BUS_ADDRESS
+"$AGENT" account mode claude auto 90 >/dev/null
+usage_record 0.97 0.1
+err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
+[[ $err == "Main is at 97% of a Claude limit: New Claude sessions now use Work (10%)."* && ! -e $SANDBOX/calls/notify-send ]] || fail "stderr said: $err"
+ok
+cleanup_sandbox
+
+begin "without a desktop a notify-mode offer says how to switch"
+two_accounts
+unset DBUS_SESSION_BUS_ADDRESS
+usage_record 0.97 0.1
+err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
+[[ $err == "Main is at 97% of a Claude limit: Work is at 10%. Switch new sessions to it with: cachyos-agent account use claude work" ]] || fail "stderr said: $err"
+sleep 0.3
+[[ ! -e $SANDBOX/calls/notify-send ]] || fail "a notification was sent without a desktop"
+active_is main || fail "the account changed without a click"
+ok
+cleanup_sandbox
+
+begin "refresh brings the registry up to date with who each home is signed in as"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+FIX_ID=u-work FIX_EMAIL=new@example.com CLAUDE_CONFIG_DIR=$STATE/accounts/claude/work claude auth login >/dev/null
+[[ $(registry claude '.accounts[1].email') == work@example.com ]] || fail "the test did not start from the old email"
+"$AGENT" account state refresh
+[[ $(registry claude '.accounts[1].email') == new@example.com ]] || fail "refresh did not pick up the new email"
+ok
+cleanup_sandbox
+
+begin "a provider left out is the default agent's"
+setup
+stub cachyos-agent-default 'echo codex'
+FIX_ID=u-cx FIX_EMAIL=cx@example.com "$AGENT" account add >/dev/null
+FIX_ID=u-side FIX_EMAIL=side@example.com "$AGENT" account add Side >/dev/null
+[[ $(registry codex '[.accounts[].id] | join(",")') == main,side ]] || fail "the codex accounts are wrong: $(registry codex .accounts)"
+[[ $(<"$SANDBOX/logins") == "codex CODEX_HOME=unset
+codex CODEX_HOME=$STATE/accounts/codex/.pending/login-"* ]] || fail "codex was not the CLI that signed in: $(<"$SANDBOX/logins")"
+[[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "add wrote a default although one was chosen"
+"$AGENT" account use side >/dev/null 2>&1
+[[ $(registry codex .active) == side && $("$AGENT" account home codex) == "$STATE/accounts/codex/side" ]] || fail "use did not act on codex"
+[[ $("$AGENT" account mode auto 80) == "Codex switches new sessions"*"at 80%." ]] || fail "mode did not act on codex"
+[[ $("$AGENT" account rename side Second) == "Renamed to Second."* ]] || fail "rename did not act on codex"
+"$AGENT" account remove second >/dev/null 2>&1 </dev/null
+[[ $(registry codex '.accounts | length') == 1 ]] || fail "remove did not act on codex"
+stub cachyos-agent-default 'echo hermes'
+if out=$("$AGENT" account use side 2>&1); then fail "a default agent without accounts supplied a provider"; fi
+[[ $out == *"Usage: cachyos-agent account use"* ]] || fail "no usage: $out"
+ok
+cleanup_sandbox
+
+# ---- commands ------------------------------------------------------------------
+
+begin "every account command is routed, documented and answers --help"
+setup
+json=$("$AGENT" commands --json --all)
+for name in add use list remove rename mode; do
+  jq -e --arg r "cachyos-agent account $name" '.commands[] | select(.route == $r and .hidden == false and (.summary | length) > 0)' <<<"$json" >/dev/null \
+    || fail "account $name is missing or has no summary"
+  [[ $("$AGENT" account "$name" --help) == "Usage: cachyos-agent account $name"* ]] || fail "account $name --help printed no usage"
+  if "$AGENT" account "$name" --bogus >/dev/null 2>&1; then fail "account $name accepted --bogus"; fi
+done
+for name in home exec state; do
+  jq -e --arg r "cachyos-agent account $name" '.commands[] | select(.route == $r and .hidden == true)' <<<"$json" >/dev/null || fail "account $name is not a hidden command"
+done
+group=$("$AGENT" account)
+[[ $group == *"cachyos-agent account add"* && $group == *"cachyos-agent account list"* && $group != *"account state"* ]] || fail "group help: $group"
+"$AGENT" commands --check >/dev/null || fail "commands --check rejects the account commands"
+if "$AGENT" account state >/dev/null 2>&1; then fail "state without a command succeeded"; fi
+ok
+cleanup_sandbox
