@@ -152,18 +152,20 @@ with_prompt() {
 # Agents launched from the shortcut or menu run unattended, so each one starts
 # with its own spelling of "don't stop to ask". Pi, Ori, MiniMax Code and
 # Freebuff have none to skip. auto holds those flags, and is what the
-# launcher announces.
+# launcher announces. A prompt that is a flag's value is bound to it
+# (--prompt=text), since a parser reads a following word that starts with a
+# dash as an option of its own; elsewhere it follows -- or is bound the same way.
 build_command() {
   case $agent in
     opencode)
       auto=(--auto)
       command=(opencode "${auto[@]}")
-      with_prompt --prompt "$prompt"
+      with_prompt "--prompt=$prompt"
       ;;
     agy)
       auto=(--dangerously-skip-permissions)
       command=(agy "${auto[@]}")
-      with_prompt --prompt-interactive "$prompt"
+      with_prompt "--prompt-interactive=$prompt"
       ;;
     copilot)
       auto=(--allow-all)
@@ -230,7 +232,7 @@ build_command() {
       # A prompt alone means one headless turn there, printed after the turn ends,
       # so --interactive is what seeds the session with it and keeps the window.
       command=(ori code)
-      with_prompt --interactive --prompt "$prompt"
+      with_prompt --interactive "--prompt=$prompt"
       ;;
     pi)
       # -- keeps a prompt starting with a dash from being read as one of pi's
@@ -247,7 +249,7 @@ build_command() {
       # --prompt is non-interactive print mode only; it cannot combine with --yolo.
       if [[ -n $prompt ]]; then
         auto=(--prompt)
-        command=(kimi --prompt "$prompt")
+        command=(kimi "--prompt=$prompt")
       else
         auto=(--yolo)
         command=(kimi "${auto[@]}")

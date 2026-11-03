@@ -334,7 +334,7 @@ expect "$(last_call claude)" "--permission-mode|auto|--|hello there" "claude"
 CACHYOS_AGENT_DEFAULT=codex run "$CA" launch --inline --prompt "hello there"
 expect "$(last_call codex)" "--approve-for-me|--|hello there" "codex"
 CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --prompt "hello there"
-expect "$(last_call opencode)" "--auto|--prompt|hello there" "opencode"
+expect "$(last_call opencode)" "--auto|--prompt=hello there" "opencode"
 CACHYOS_AGENT_DEFAULT=hermes run "$CA" launch --inline --prompt "hello there"
 expect "$(last_call hermes)" "chat|--yolo|--tui|--query=hello there" "hermes with a prompt"
 CACHYOS_AGENT_DEFAULT=hermes run "$CA" launch --inline
@@ -354,7 +354,7 @@ cleanup_sandbox
 
 begin "a prompt that starts with a dash and holds spaces and quotes reaches the agent intact"
 setup
-stub_agents claude opencode pi qwen crush
+stub_agents claude opencode pi qwen crush agy ori kimi
 tricky='-n it'\''s "quoted" $HOME `ls` * and --yolo'
 CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call claude)" "--permission-mode|auto|--|$tricky" "claude"
@@ -362,6 +362,16 @@ CACHYOS_AGENT_DEFAULT=qwen run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call qwen)" "--yolo|--prompt-interactive=$tricky" "qwen binds the value"
 CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call pi)" "--|$tricky" "pi stops option parsing first"
+# Where the prompt is the value of a flag it is bound to it, since a following word that starts
+# with a dash is read as an option of its own by the parsers these agents use (yargs among them).
+CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call opencode)" "--auto|--prompt=$tricky" "opencode binds the value"
+CACHYOS_AGENT_DEFAULT=agy run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call agy)" "--dangerously-skip-permissions|--prompt-interactive=$tricky" "agy binds the value"
+CACHYOS_AGENT_DEFAULT=ori run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call ori)" "code|--interactive|--prompt=$tricky" "ori binds the value"
+CACHYOS_AGENT_DEFAULT=kimi run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call kimi)" "--prompt=$tricky" "kimi binds the value"
 CACHYOS_AGENT_DEFAULT=crush run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call crush)" "run|--|$tricky" "crush run is a cobra command: -- keeps the prompt out of its flags"
 CACHYOS_AGENT_DEFAULT=claude run "$CA" prompt --inline -- -dash "two words" 'q"uote'
@@ -388,7 +398,7 @@ window_stub konsole
 CACHYOS_AGENT_DEFAULT=opencode run "$CA" prompt "Review this project"
 expect "$RC" 0 "exit status"
 starts "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|" "terminal arguments"
-expect "$(last_call opencode)" "--auto|--prompt|Review this project" "agent arguments in the window"
+expect "$(last_call opencode)" "--auto|--prompt=Review this project" "agent arguments in the window"
 run "$CA" prompt
 expect "$RC" 1 "no prompt is an error"
 contains "$ERR" "Usage: cachyos-agent prompt" "usage"
@@ -536,16 +546,16 @@ setup
 for agent in "${ALL_AGENTS[@]}"; do stub "$agent"; done
 stub wl-copy 'cat >/dev/null'
 declare -A WITH_PROMPT=(
-  [agy]="--dangerously-skip-permissions|--prompt-interactive|P Q"
+  [agy]="--dangerously-skip-permissions|--prompt-interactive=P Q"
   [copilot]="--allow-all|--interactive|P Q"
   [crush]="run|--|P Q"
   [grok]="--permission-mode|bypassPermissions|--|P Q"
   [cursor-agent]="--yolo|--trust|agent|--|P Q"
   [muse]="--approval-mode|never|--|P Q"
   [omp]="--auto-approve|--|P Q"
-  [ori]="code|--interactive|--prompt|P Q"
+  [ori]="code|--interactive|--prompt=P Q"
   [pi]="--|P Q"
-  [kimi]="--prompt|P Q"
+  [kimi]="--prompt=P Q"
   [qwen]="--yolo|--prompt-interactive=P Q"
   [mcode]="--|P Q"
   [kiro-cli]="chat|--trust-all-tools|--|P Q"
@@ -740,7 +750,7 @@ stub_opencode 2.2.5
 choose_local_model 'qwen3:8b'
 CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --local --prompt "go"
 expect "$RC" 0 "exit status"
-expect "$(last_call opencode)" "--auto|--prompt|go|--standalone" "OpenCode 2 gets a private server"
+expect "$(last_call opencode)" "--auto|--prompt=go|--standalone" "OpenCode 2 gets a private server"
 config=$(<"$SANDBOX/opencode-config")
 jq -e '.model == "ollama/qwen3:8b"' <<<"$config" >/dev/null || fail "model is not ollama/qwen3:8b: $config"
 jq -e '.provider.ollama | .npm == "@ai-sdk/openai-compatible" and .options.baseURL == "http://127.0.0.1:11434/v1"' <<<"$config" >/dev/null \
