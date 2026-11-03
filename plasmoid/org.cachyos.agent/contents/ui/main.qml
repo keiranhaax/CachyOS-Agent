@@ -18,7 +18,12 @@ PlasmoidItem {
     // `agents` before `loaded`.
     property var agents: []
     property string loadError: ""
+    // Why the last Refresh failed. It is shown beside the records read right
+    // after it and goes with the next read, so it never stays above numbers
+    // the timer has since brought up to date.
     property string updateError: ""
+    // The failure of an update that has finished, until the read after it reports it.
+    property string failedUpdate: ""
     property bool loaded: false
     property bool refreshing: false
     // The clock the reset countdowns read: it moves every minute and with every read.
@@ -64,12 +69,13 @@ PlasmoidItem {
             const result = Records.load(exitCode, stdout, stderr, Date.now());
             agents = result.agents;
             loadError = result.error;
+            updateError = failedUpdate;
+            failedUpdate = "";
             now = Date.now();
             loaded = true;
         } else if (source === updateCommand) {
             refreshing = false;
-            if (exitCode !== 0)
-                updateError = Records.failure(updateCommand, exitCode, stderr);
+            failedUpdate = exitCode === 0 ? "" : Records.failure(updateCommand, exitCode, stderr);
             load();
         }
     }

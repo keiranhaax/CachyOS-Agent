@@ -455,6 +455,22 @@ esac'
   ok
   cleanup_sandbox
 
+  begin "a failed update's message goes away with the next successful read"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  export UPDATE_STATUS=1 UPDATE_STDERR="claude: no network"
+  # The read the timer or the popup makes later finds good records: the red
+  # message must not stay above them until the next Refresh.
+  out=$(app Refresh+reload "Claude Code")
+  check "$out" '.settled[0].problem == "cachyos-agent usage update failed: claude: no network"
+                and (.settled[0].page.texts | index("cachyos-agent usage update failed: claude: no network"))' "the read right after the failed update should still say why"
+  check "$out" '.problem == "" and (.page.texts | index("cachyos-agent usage update failed: claude: no network") | not) and (.agents | length) == 7' \
+    "a later successful read should drop the failed update's message"
+  [[ $(calls_of cachyos-agent) == $'usage --json\nusage update\nusage --json\nusage --json' ]] || fail "expected a read, the update, a read, then the later read; got: $(calls_of cachyos-agent)"
+  ok
+  cleanup_sandbox
+
   begin "a usage command that fails shows why instead of agents"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
