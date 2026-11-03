@@ -1,0 +1,82 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-default-agent (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Show, or choose and launch, the default coding agent
+# cachyos-agent:args=[pi|omp|opencode|ori|claude|codex|grok|agy|hermes|copilot|crush|cursor-agent|muse|kimi|qwen|dsh|mcode|kiro-cli|freebuff|kilo|devin|amp|commandcode]
+# cachyos-agent:examples=cachyos-agent default | cachyos-agent default claude | cachyos-agent default codex
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/launcher.sh
+source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
+
+AGENT_FILE=$CACHYOS_AGENT_CONFIG_DIR/default-agent
+
+usage() {
+  cat <<EOF2
+Usage: cachyos-agent default [--install] [<agent>]
+
+With no agent, print the default agent (nothing when none is chosen).
+With an agent, install it when missing, make it the default, and launch it.
+CACHYOS_AGENT_DEFAULT overrides the saved choice.
+
+Agents: ${CA_AGENT_IDS[*]}
+EOF2
+}
+
+# Silent when unset rather than defaulting: no agent is picked for you.
+print_default() {
+  local agent=${CACHYOS_AGENT_DEFAULT:-}
+  if [[ -z $agent && -f $AGENT_FILE ]]; then
+    read -r agent <"$AGENT_FILE" || true
+  fi
+  if [[ -n $agent ]]; then
+    printf '%s\n' "$agent"
+  fi
+}
+
+main() {
+  local installing=false
+  case ${1-} in
+    -h | --help)
+      usage
+      return 0
+      ;;
+    --install)
+      installing=true
+      shift
+      ;;
+  esac
+  if (($# == 0)); then
+    $installing && ca_die "--install needs an agent"
+    print_default
+    return 0
+  fi
+  (($# == 1)) || ca_die "expected one agent, got $#"
+  ca_agent_resolve "$1" || {
+    usage >&2
+    return 1
+  }
+  local agent=$CA_AGENT name=$CA_AGENT_NAME
+
+  if ! ca_agent_present "$agent"; then
+    # A menu, shortcut or panel button has no terminal for pacman's prompts, so
+    # the install gets one of its own and carries on there with --install.
+    if ! $installing && [[ ! -t 0 ]]; then
+      ca_terminal_exec --title "CachyOS Agent" cachyos-agent-default --install "$agent"
+    fi
+    cachyos-agent-install "$agent" || ca_die "could not install $name"
+  fi
+
+  printf '%s\n' "$agent" | ca_atomic_write "$AGENT_FILE"
+
+  if $installing; then
+    # The terminal opened for the install becomes the agent's window.
+    printf '\033[2J\033[3J\033[H'
+    exec cachyos-agent-launch --inline
+  fi
+  exec cachyos-agent-launch
+}
+
+main "$@"

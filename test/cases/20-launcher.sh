@@ -86,6 +86,128 @@ stub_agents() {
   for name; do stub "$name"; done
 }
 
+# ---- default ---------------------------------------------------------------
+
+begin "default prints nothing when no agent is chosen, then the saved one"
+setup
+run "$CA" default
+expect "$RC:$OUT" "0:" "unset default"
+mkdir -p "$XDG_CONFIG_HOME/cachyos-agent"
+echo codex >"$XDG_CONFIG_HOME/cachyos-agent/default-agent"
+run "$CA" default
+expect "$OUT" "codex" "saved default"
+CACHYOS_AGENT_DEFAULT=pi run "$CA" default
+expect "$OUT" "pi" "CACHYOS_AGENT_DEFAULT overrides the file"
+ok
+cleanup_sandbox
+
+begin "default <agent> saves it and launches"
+setup
+stub_agents claude cachyos-agent-launch
+run "$CA" default claude
+expect "$RC" 0 "exit status"
+expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "claude" "saved agent"
+expect "$(last_call cachyos-agent-launch)" "" "launch arguments"
+expect "$(call_count cachyos-agent-launch)" 1 "launch calls"
+run "$CA" default
+expect "$OUT" "claude" "read back"
+ok
+cleanup_sandbox
+
+begin "default accepts aliases and saves the agent id"
+setup
+stub_agents agy opencode cachyos-agent-launch
+run "$CA" default gemini
+expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "agy" "gemini is agy"
+run "$CA" default open-code
+expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "opencode" "open-code is opencode"
+ok
+cleanup_sandbox
+
+begin "default rejects an unknown agent without saving anything"
+setup
+stub_agents cachyos-agent-launch
+run "$CA" default notanagent
+expect "$RC" 1 "exit status"
+contains "$ERR" "Usage: cachyos-agent default" "usage on stderr"
+contains "$ERR" "commandcode" "the choices are listed"
+[[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "wrote a default for an unknown agent"
+expect "$(call_count cachyos-agent-launch)" 0 "launch must not run"
+ok
+cleanup_sandbox
+
+begin "default: openclaw is not an agent here"
+setup
+run "$CA" default openclaw
+expect "$RC" 1 "exit status"
+ok
+cleanup_sandbox
+
+begin "default with a missing agent and no terminal opens one for the install"
+setup
+stub_agents konsole cachyos-agent-install cachyos-agent-launch
+run "$CA" default codex
+expect "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|cachyos-agent-default|--install|codex" "terminal arguments"
+expect "$(call_count cachyos-agent-install)" 0 "the install runs inside the terminal, not here"
+[[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "saved a default before the install"
+ok
+cleanup_sandbox
+
+begin "default --install installs, saves, clears the screen and launches inline"
+setup
+stub cachyos-agent-install 'touch "${self%/*}/codex"; chmod +x "${self%/*}/codex"'
+stub cachyos-agent-launch
+run "$CA" default --install codex
+expect "$RC" 0 "exit status"
+expect "$(last_call cachyos-agent-install)" "codex" "install arguments"
+expect "$(last_call cachyos-agent-launch)" "--inline" "launch arguments"
+expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "codex" "saved agent"
+contains "$OUT" $'\033[2J' "screen cleared before the agent starts"
+ok
+cleanup_sandbox
+
+begin "default fails and saves nothing when the install fails"
+setup
+stub cachyos-agent-install 'exit 1'
+stub cachyos-agent-launch
+run "$CA" default --install codex
+expect "$RC" 1 "exit status"
+contains "$ERR" "could not install Codex" "message"
+[[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "saved a default after a failed install"
+expect "$(call_count cachyos-agent-launch)" 0 "launch must not run"
+ok
+cleanup_sandbox
+
+begin "default with a missing agent at a terminal installs it right there"
+setup
+if ! SHELL=/bin/bash script -qec 'test -t 0' /dev/null </dev/null >/dev/null 2>&1; then
+  skip "script cannot give this process a terminal"
+else
+  stub cachyos-agent-install 'touch "${self%/*}/codex"; chmod +x "${self%/*}/codex"'
+  stub cachyos-agent-launch
+  stub konsole
+  SHELL=/bin/bash script -qec "$CA default codex" /dev/null </dev/null >/dev/null
+  expect "$(last_call cachyos-agent-install)" "codex" "install arguments"
+  expect "$(call_count konsole)" 0 "no extra terminal at a terminal"
+  expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "codex" "saved agent"
+  expect "$(last_call cachyos-agent-launch)" "" "launch arguments"
+  ok
+fi
+cleanup_sandbox
+
+begin "default counts a command in ~/.local/bin as installed"
+setup
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/bash\n' >"$HOME/.local/bin/hermes"
+chmod +x "$HOME/.local/bin/hermes"
+stub_agents konsole cachyos-agent-install cachyos-agent-launch
+run "$CA" default hermes
+expect "$(call_count konsole)" 0 "no install terminal"
+expect "$(call_count cachyos-agent-install)" 0 "no install"
+expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "hermes" "saved agent"
+ok
+cleanup_sandbox
+
 # ---- install ---------------------------------------------------------------
 
 begin "install uses pacman for a repository package, in the visible terminal"
