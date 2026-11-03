@@ -27,6 +27,8 @@ Read the matching topic before starting that class of work:
 - [`agents/skills/cachyos/install.md`](agents/skills/cachyos/install.md) — ISO, installer, overlay vs conversion
 - [`agents/skills/cachyos/packaging.md`](agents/skills/cachyos/packaging.md) — CachyOS-PKGBUILDS, march/LTO/PGO (deep authoring lives only here)
 - [`agents/skills/cachyos/handheld.md`](agents/skills/cachyos/handheld.md) — Handheld Edition, `linux-cachyos-deckify`, `scx_lavd`
+- [`agents/skills/diagnose-crash/SKILL.md`](agents/skills/diagnose-crash/SKILL.md) — diagnose a crash from its systemd-coredump core dump
+- [`agents/skills/diagnose-crash/reporting.md`](agents/skills/diagnose-crash/reporting.md) — decide whether a crash is CachyOS's bug and where to report it
 
 Install the skill into local harness directories with [`bin/cachyos-agent-skills-provision`](bin/cachyos-agent-skills-provision).
 

@@ -1,0 +1,94 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-crash-mute (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Silence crash notifications for one program, or list what is silenced
+# cachyos-agent:args=[--] [<program>] [on|off|toggle]
+# cachyos-agent:examples=cachyos-agent crash mute | cachyos-agent crash mute plasmashell | cachyos-agent crash mute /usr/bin/plasmashell | cachyos-agent crash mute plasmashell off
+# The flag cachyos-agent-crash-watch reads before announcing a crash. Muting is
+# per program; `cachyos-agent crash capture off` is the switch for all of them.
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/crash.sh
+source "$CACHYOS_AGENT_ROOT/lib/crash.sh"
+
+readonly MUTES=$CACHYOS_AGENT_STATE_DIR/toggles/crash-ignore
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent crash mute [--] [<program>] [on|off|toggle]
+
+With no program, list what is muted. Otherwise mute <program> (the default
+action is on), lift the mute (off), or flip it (toggle). <program> may be a
+name or the path of its binary: only the last component counts. Quote a name
+with a space in it. Put -- first when a name starts with a dash.
+
+Muting hides the notification for that program only. The program still
+crashes, and every other program still notifies.
+USAGE
+}
+
+# Only regular files, because that is all the watcher honours: anything else in
+# there would be reported as muted while the crashes kept arriving. The dotted
+# glob is for a program legitimately called .hidden, and `.` and `..` fail the
+# same -f test that keeps them out.
+list() {
+  local entry found=0
+  for entry in "$MUTES"/* "$MUTES"/.*; do
+    [[ -f $entry ]] || continue
+    printf '%s\n' "${entry##*/}"
+    found=1
+  done
+  ((found)) || echo "No programs muted. Crashes all notify."
+}
+
+case ${1-} in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --) shift ;;
+  -?*)
+    echo "Unknown option: $1 (put -- before a program name that starts with a dash)" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+if (($# == 0)); then
+  list
+  exit 0
+fi
+if (($# > 2)); then
+  usage >&2
+  exit 1
+fi
+
+action=${2:-on}
+case $action in
+  on | off | toggle) ;;
+  *)
+    echo "Not an action: $action" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+# The watcher keys the mute on the executable's basename, so accept the path it
+# reports as readily as the name, and reduce either the same way it does.
+program=$(crash_program_name "$1") || {
+  echo "Not a program name: $1" >&2
+  usage >&2
+  exit 1
+}
+
+ca_flag "crash-ignore/$program" "$action"
+
+# Report what is now true rather than what was asked for: the flag is what the
+# watcher reads, and a toggle does not say which way it went.
+if ca_flag_enabled "crash-ignore/$program"; then
+  echo "Muted crash notifications for $program."
+else
+  echo "Crash notifications for $program are back on."
+fi

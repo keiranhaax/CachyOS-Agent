@@ -1,0 +1,204 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-crash-watch (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Watch for process crashes and offer an AI diagnosis
+# cachyos-agent:hidden=true
+# Run by the cachyos-agent-crash-watch user service (cachyos-agent crash capture).
+# systemd-coredump journals every core dump under a known MESSAGE_ID with
+# structured COREDUMP_* fields, which carry more than the core filenames do.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent crash watch
+
+Follow the journal and announce each crash of one of your programs, as the
+cachyos-agent-crash-watch user service does. It takes no arguments and runs until
+interrupted; started by hand while the service is on, every crash is announced
+twice. Turn the service on or off with: cachyos-agent crash capture
+USAGE
+}
+
+# Before anything is read or followed: a mistyped option must not start a
+# second long-running watcher.
+if (($# > 0)); then
+  case $1 in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+  esac
+  usage >&2
+  exit 1
+fi
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/crash.sh
+source "$CACHYOS_AGENT_ROOT/lib/crash.sh"
+
+# See systemd.journal-fields(7).
+readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1
+
+# Crash loops dump core repeatedly, so announce each program at most once a
+# window.
+readonly dedupe_seconds=${CACHYOS_AGENT_CRASH_DEDUPE_SECONDS:-60}
+
+# Extended regex of process names never worth announcing.
+readonly ignore_pattern=${CACHYOS_AGENT_CRASH_IGNORE:-}
+
+# Checked once, here, because both values are used per crash for the rest of the
+# service's life: the window is evaluated as arithmetic, where a number too long
+# for 64 bits wraps around, and a pattern bash rejects makes every match fail,
+# which would read as "nothing to ignore". Nine digits is some thirty years.
+[[ $dedupe_seconds =~ ^[0-9]{1,9}$ ]] || ca_die "CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number of seconds, at most nine digits"
+if [[ -n $ignore_pattern ]]; then
+  status=0
+  # shellcheck disable=SC2319 # bash documents status 2 for [[ =~ ]] with an invalid regex
+  [[ '' =~ $ignore_pattern ]] || status=$?
+  ((status != 2)) || ca_die "CACHYOS_AGENT_CRASH_IGNORE is not a valid extended regular expression"
+fi
+for cmd in journalctl jq notify-send busctl systemd-run; do
+  ca_cmd_present "$cmd" || ca_die "$cmd not found"
+done
+
+# Plasma's shell owns org.freedesktop.Notifications, so a plasmashell crash
+# takes the notification server down with it and a toast sent into that gap is
+# lost. Wait for the restarted shell to claim the name again: the crash least
+# likely to be delivered is the one most worth reporting.
+#
+# Ten tries, each given a second to answer and followed by a second's rest, so
+# twenty seconds at most. --timeout because without it a call to a name nobody
+# owns waits out D-Bus's 25 s method timeout: Plasma's activation file for the
+# name runs plasma_waitforname, which holds the call instead of failing it.
+wait_for_notification_server() {
+  local attempt
+  for ((attempt = 0; attempt < 10; attempt++)); do
+    if busctl --user --timeout=1 call org.freedesktop.Notifications /org/freedesktop/Notifications \
+      org.freedesktop.Notifications GetServerInformation >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# One per toast on screen, in the background: the toast stays until it is
+# answered or dismissed, and the loop must keep reading the journal meanwhile.
+# notify-send prints the name of the action that was chosen, and nothing when the
+# toast is dismissed.
+diagnose_when_chosen() {
+  local toast=$1 name=$2 pid=$3 comm=$4 exe=$5 signal=$6 action
+  read -r -u "$toast" action || return 0
+  [[ $action == diagnose ]] || return 0
+  # A scope of its own, because the agent's terminal must outlive this service:
+  # stopping it (cachyos-agent crash capture off, which the diagnosis itself may
+  # suggest) would otherwise close the terminal it is running in. A scope, not a
+  # transient service: it runs the command as a child of this background job, in
+  # this environment, and ends when the last process in it does, so a terminal
+  # that forks and lets its first process exit is not cut down with it.
+  systemd-run --user --scope --quiet --description="Diagnose crash of $name" -- \
+    cachyos-agent-crash "$pid" "$comm" "$exe" "$signal"
+}
+
+# Returns 0 once the notification server has the toast, without waiting for the
+# user to answer it: whoever answers is left to diagnose_when_chosen. Only a
+# delivered toast starts the dedupe window. A failed send that counted would
+# suppress the rest of a crash loop for a minute, and `journalctl -n 0` never
+# replays what was missed.
+announce() {
+  local name=$1 pid=$2 comm=$3 exe=$4 signal=$5 agent=$6 toast notify_pid id=
+  if ! wait_for_notification_server; then
+    echo "no notification server: crash of $name (PID $pid) not announced" >&2
+    return 1
+  fi
+  # critical: a crash toast that timed out while the user was away is a crash
+  # they never hear about. Positional words follow `--`, and the details ride as
+  # discrete argv words, so a hostile process name can be neither parsed as an
+  # option nor reparsed as a command.
+  #
+  # notify-send writes the toast's ID to --id-fd as soon as the server has
+  # accepted it, and later, once the toast is answered, the chosen action to
+  # stdout. 3>&1 sends both down one pipe, the ID first. When the server rejects
+  # the toast it writes ID 0 instead, and then waits for an answer that cannot
+  # come.
+  exec {toast}< <(exec notify-send --app-name=cachyos-agent --urgency=critical --icon=dialog-error \
+    --id-fd=3 --action=diagnose=Diagnose -- "Process crashed: $name" "Diagnose it with $agent." 3>&1)
+  notify_pid=$!
+  read -r -u "$toast" id || id=
+  if [[ ! $id =~ ^[1-9][0-9]*$ ]]; then
+    # An empty ID is a notify-send that ended without delivering, so there is
+    # nothing left to stop; any other is one waiting for an answer that cannot
+    # come (or one that has just exited, which kill may report).
+    [[ -z $id ]] || kill "$notify_pid" 2>/dev/null
+    exec {toast}<&-
+    echo "could not announce crash of $name (PID $pid)" >&2
+    return 1
+  fi
+  diagnose_when_chosen "$toast" "$name" "$pid" "$comm" "$exe" "$signal" &
+  exec {toast}<&-
+}
+
+declare -A last_notified=()
+
+# From here on a failing command must not end the service: a journal entry jq
+# cannot read, or a toast that cannot be sent, only costs that one crash. The
+# pipeline's own status still reaches the caller through pipefail.
+set +e
+
+# -n 0 so a restart does not re-announce crashes already dealt with. Whoever
+# restarts this (systemd) learns why journalctl failed from its stderr.
+journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" |
+  while IFS= read -r entry; do
+    # A word for a field that is empty or missing: tab is IFS whitespace, so an
+    # empty field collapses into the next delimiter and every field after it
+    # shifts along one. A process can set its own comm to nothing, and that crash
+    # used to be read as somebody else's and dropped. A field that is not a
+    # string (journald encodes non-UTF-8 text as an array of bytes) counts as
+    # missing too.
+    IFS=$'\t' read -r uid comm pid exe signal < <(
+      jq -r 'def field: if type == "string" and . != "" then . else "unknown" end;
+             [(._UID | field),
+              (.COREDUMP_COMM | field),
+              (.COREDUMP_PID | field),
+              (.COREDUMP_EXE | field),
+              (.COREDUMP_SIGNAL_NAME | field)] | @tsv' <<<"$entry" 2>/dev/null
+    )
+
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+
+    # Only this user's crashes; a daemon dumping core is a sysadmin's problem.
+    [[ $uid =~ ^[0-9]+$ ]] || continue
+    ((10#$uid == UID)) || continue
+
+    # The toast only offers a diagnosis, so it has nothing to offer until an
+    # agent is chosen. Checked per crash, not at startup, so picking one takes
+    # effect without restarting this service.
+    agent=$(cachyos-agent-default)
+    [[ -n $agent ]] || continue
+
+    # comm is truncated to 15 characters, so prefer the executable's basename.
+    name=$comm
+    [[ $exe == /* ]] && name=$exe
+    name=$(crash_program_name "$name") || name=unknown
+
+    [[ -n $ignore_pattern && $name =~ $ignore_pattern ]] && continue
+
+    # Never announce our own machinery, or it notifies about itself. A script
+    # crashes as its interpreter, so the name alone would miss it; comm still
+    # says which script it was.
+    [[ $name == cachyos-agent* || $comm == cachyos-agent* ]] && continue
+
+    # Muted at the end of a diagnosis, when the user was offered it and said
+    # yes. A flag per program rather than one list, so cachyos-agent-crash-mute
+    # can lift one without reading, rewriting and re-parsing the rest.
+    ca_flag_enabled "crash-ignore/$name" && continue
+
+    # 10# because arithmetic reads a leading zero as octal: 08 is an error and 010 is eight.
+    ((EPOCHSECONDS - ${last_notified[$name]:-0} < 10#$dedupe_seconds)) && continue
+
+    # An if, not &&: a toast that failed must not become the loop's exit status.
+    if announce "$name" "$pid" "$comm" "$exe" "$signal" "$agent"; then
+      last_notified[$name]=$EPOCHSECONDS
+    fi
+  done
