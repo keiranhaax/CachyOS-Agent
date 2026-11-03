@@ -34,7 +34,10 @@ PlasmoidItem {
     // The executable engine runs its source name through sh -c and runs a given
     // name once at a time, so these are fixed strings and never built from data.
     readonly property string loadCommand: "cachyos-agent usage --json"
-    readonly property string updateCommand: "cachyos-agent usage update"
+    // Refresh is a person asking for the numbers as they are now, which is what
+    // --force is for: a plain run may reuse a local scan from the last 20 seconds
+    // and a limits answer from the last 15.
+    readonly property string updateCommand: "cachyos-agent usage update --force"
     // systemd-run puts the agent's terminal in a scope of its own, so restarting
     // plasmashell does not end a session started here. The trailing & returns at
     // once, which lets a second click start a second agent, and the redirects

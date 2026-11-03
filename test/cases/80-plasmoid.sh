@@ -440,7 +440,7 @@ esac'
   ok
   cleanup_sandbox
 
-  begin "Refresh collects new usage with cachyos-agent usage update and then reads it"
+  begin "Refresh collects new usage with cachyos-agent usage update --force and then reads it"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
   stub_agent
@@ -449,7 +449,7 @@ esac'
   out=$(app Refresh "After Update")
   check "$out" '.problem == "" and .refreshing == false and (.agents | map(.name) | index("After Update"))' "the records read after the update were not shown"
   check "$out" '.during.refreshing and (.during.buttons | map(select(.text == "Refresh") | .enabled) == [false])' "Refresh should be busy, and off, while the update runs"
-  [[ $(calls_of cachyos-agent) == $'usage --json\nusage update\nusage --json' ]] \
+  [[ $(calls_of cachyos-agent) == $'usage --json\nusage update --force\nusage --json' ]] \
     || fail "expected a read, the update, then another read; got: $(calls_of cachyos-agent)"
   qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
   ok
@@ -461,8 +461,8 @@ esac'
   stub_agent
   export UPDATE_STATUS=1 UPDATE_STDERR="claude: no network"
   out=$(app Refresh "Claude Code")
-  check "$out" '.problem == "cachyos-agent usage update failed: claude: no network" and (.agents | length) == 7' "the failed update should be reported beside the records"
-  check "$out" '.page.texts | index("cachyos-agent usage update failed: claude: no network")' "the problem is not on the page"
+  check "$out" '.problem == "cachyos-agent usage update --force failed: claude: no network" and (.agents | length) == 7' "the failed update should be reported beside the records"
+  check "$out" '.page.texts | index("cachyos-agent usage update --force failed: claude: no network")' "the problem is not on the page"
   ok
   cleanup_sandbox
 
@@ -474,11 +474,11 @@ esac'
   # The read the timer or the popup makes later finds good records: the red
   # message must not stay above them until the next Refresh.
   out=$(app Refresh+reload "Claude Code")
-  check "$out" '.settled[0].problem == "cachyos-agent usage update failed: claude: no network"
-                and (.settled[0].page.texts | index("cachyos-agent usage update failed: claude: no network"))' "the read right after the failed update should still say why"
-  check "$out" '.problem == "" and (.page.texts | index("cachyos-agent usage update failed: claude: no network") | not) and (.agents | length) == 7' \
+  check "$out" '.settled[0].problem == "cachyos-agent usage update --force failed: claude: no network"
+                and (.settled[0].page.texts | index("cachyos-agent usage update --force failed: claude: no network"))' "the read right after the failed update should still say why"
+  check "$out" '.problem == "" and (.page.texts | index("cachyos-agent usage update --force failed: claude: no network") | not) and (.agents | length) == 7' \
     "a later successful read should drop the failed update's message"
-  [[ $(calls_of cachyos-agent) == $'usage --json\nusage update\nusage --json\nusage --json' ]] || fail "expected a read, the update, a read, then the later read; got: $(calls_of cachyos-agent)"
+  [[ $(calls_of cachyos-agent) == $'usage --json\nusage update --force\nusage --json\nusage --json' ]] || fail "expected a read, the update, a read, then the later read; got: $(calls_of cachyos-agent)"
   ok
   cleanup_sandbox
 
