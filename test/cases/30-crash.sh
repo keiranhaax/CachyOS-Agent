@@ -209,19 +209,48 @@ journal_entry() {
 # and ends, as it would when the journal goes away. Toasts and diagnoses are
 # announced concurrently, so notify-send and cachyos-agent-crash write each
 # call to a file of its own (toast.<pid>, diagnosis.<pid>) rather than to the
-# shared record, where two calls could interleave. notify-send answers
-# "diagnose" for a toast whose summary contains the text in click-on, and
-# nothing, as a dismissed toast does, for any other.
+# shared record, where two calls could interleave.
+#
+# notify-send behaves as libnotify's does with --id-fd and --action: it writes a
+# notification ID to that descriptor once the server has the toast, then stays
+# until the toast is answered, and prints the action chosen. Marker files in the
+# sandbox steer it:
+#   click-on / block-on  a toast whose summary contains the file's text is
+#                        answered "diagnose" / stays unanswered until release
+#   fail-first           the next call exits 1 before delivering, once
+#   refuse-first         the next call writes ID 0, as when the server refuses
+#                        the toast, then waits for ever (up to 30 s here) and
+#                        records its PID in refused.pid
 # shellcheck disable=SC2016 # stub bodies are scripts for the stub's own shell
 watch_stubs() {
   stub journalctl 'cat "${self%/stubs/*}/journal.jsonl"'
   stub notify-send 'sb=${self%/stubs/*}
 printf "%s\n" "$@" >"$sb/toast.$$"
-summary=
+hold() {
+  local i
+  for ((i = 0; i < 300; i++)); do
+    [[ -e $sb/release ]] && return 0
+    sleep 0.1
+  done
+}
+summary= idfd=
 while (($#)); do
-  if [[ $1 == -- ]]; then summary=$2; break; fi
+  case $1 in
+    --id-fd=*) idfd=${1#--id-fd=} ;;
+    --) summary=$2; break ;;
+  esac
   shift
 done
+if [[ -e $sb/fail-first ]]; then rm "$sb/fail-first"; exit 1; fi
+if [[ -e $sb/refuse-first ]]; then
+  rm "$sb/refuse-first"
+  echo $$ >"$sb/refused.pid"
+  [[ -z $idfd ]] || echo 0 >&"$idfd"
+  hold
+  exit 1
+fi
+[[ -z $idfd ]] || echo 7 >&"$idfd"
+if [[ -r $sb/block-on && $summary == *"$(<"$sb/block-on")"* ]]; then hold; fi
 if [[ -r $sb/click-on && $summary == *"$(<"$sb/click-on")"* ]]; then echo diagnose; fi'
   stub busctl
   stub systemd-run 'while [[ $1 != -- ]]; do shift; done; shift; exec "$@"'
@@ -293,7 +322,7 @@ toasts=$(toast_summaries)
 [[ $toasts == $'Process crashed: bytes\nProcess crashed: firefox\nProcess crashed: odd\nProcess crashed: zed' ]] \
   || fail "announced the wrong crashes: $toasts"
 firefox_toast=$(grep -lx 'Process crashed: firefox' "$SANDBOX"/toast.*)
-[[ $(<"$firefox_toast") == $'--app-name=cachyos-agent\n--urgency=critical\n--icon=dialog-error\n--action=diagnose=Diagnose\n--\nProcess crashed: firefox\nDiagnose it with claude.' ]] \
+[[ $(<"$firefox_toast") == $'--app-name=cachyos-agent\n--urgency=critical\n--icon=dialog-error\n--id-fd=3\n--action=diagnose=Diagnose\n--\nProcess crashed: firefox\nDiagnose it with claude.' ]] \
   || fail "the toast was sent with the wrong arguments: $(<"$firefox_toast")"
 [[ $(files_joined "$SANDBOX/diagnosis.*") == '1001|firefox|/usr/lib/firefox/firefox|SIGSEGV' ]] \
   || fail "the click did not become exactly one diagnosis: $(files_joined "$SANDBOX/diagnosis.*")"
@@ -406,19 +435,107 @@ run env CACHYOS_AGENT_CRASH_DEDUPE_SECONDS=99999999999999999999 "$AGENT" crash w
 ok
 cleanup_sandbox
 
-begin "the watcher reports a notification server that never comes up, and does not announce"
+begin "an unanswered toast does not stop the watcher reading the journal"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" kate 1002 /usr/bin/kate SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+# Critical toasts have no timeout, so firefox's stays open until the user gets to it.
+printf firefox >"$SANDBOX/block-on"
+printf firefox >"$SANDBOX/click-on"
+timeout 20 "$AGENT" crash watch >"$SANDBOX/watch.log" 2>&1 &
+watcher=$!
+wait_for 2 "$SANDBOX/toast.*"
+[[ $(toast_summaries) == $'Process crashed: firefox\nProcess crashed: kate' ]] \
+  || fail "the crash after an unanswered toast was not announced: $(toast_summaries)"
+# The journal has ended, so the watcher ends with it though the toast is still open.
+for ((i = 0; i < 30; i++)); do
+  kill -0 "$watcher" 2>/dev/null || break
+  "$REAL_SLEEP" 0.1
+done
+if kill -0 "$watcher" 2>/dev/null; then fail "the watcher is still waiting for the answer to a toast"; fi
+touch "$SANDBOX/release"
+status=0
+wait "$watcher" || status=$?
+((status == 0)) || fail "the watcher ended badly ($status): $(<"$SANDBOX/watch.log")"
+wait_for 1 "$SANDBOX/diagnosis.*"
+[[ $(files_joined "$SANDBOX/diagnosis.*") == '1001|firefox|/usr/lib/firefox/firefox|SIGSEGV' ]] \
+  || fail "an answer given after the watcher moved on did not become a diagnosis: $(files_joined "$SANDBOX/diagnosis.*")"
+ok
+cleanup_sandbox
+
+begin "only a delivered toast starts the dedupe window"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" firefox 1002 /usr/lib/firefox/firefox SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+touch "$SANDBOX/fail-first"
+printf firefox >"$SANDBOX/click-on"
+run_watcher
+wait_for 1 "$SANDBOX/diagnosis.*"
+((status == 0)) || fail "the watcher ended badly after a failed send ($status): $(<"$SANDBOX/watch.log")"
+[[ $(count_files "$SANDBOX/toast.*") == 2 ]] || fail "the crash after a failed send was suppressed: $(count_files "$SANDBOX/toast.*") toast attempts"
+grep -q 'could not announce crash of firefox (PID 1001)' "$SANDBOX/watch.log" || fail "the failed send was not reported: $(<"$SANDBOX/watch.log")"
+[[ $(files_joined "$SANDBOX/diagnosis.*") == '1002|firefox|/usr/lib/firefox/firefox|SIGSEGV' ]] \
+  || fail "the second crash was not announced and diagnosed: $(files_joined "$SANDBOX/diagnosis.*")"
+ok
+cleanup_sandbox
+
+begin "a toast the server refuses is not counted and its notify-send is not left waiting"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" firefox 1002 /usr/lib/firefox/firefox SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+touch "$SANDBOX/refuse-first"
+printf firefox >"$SANDBOX/click-on"
+run_watcher
+wait_for 1 "$SANDBOX/diagnosis.*"
+((status == 0)) || fail "the watcher ended badly after a refused toast ($status): $(<"$SANDBOX/watch.log")"
+[[ $(files_joined "$SANDBOX/diagnosis.*") == '1002|firefox|/usr/lib/firefox/firefox|SIGSEGV' ]] \
+  || fail "the crash after a refused toast was not announced and diagnosed: $(files_joined "$SANDBOX/diagnosis.*")"
+refused=$(<"$SANDBOX/refused.pid")
+for ((i = 0; i < 30; i++)); do
+  kill -0 "$refused" 2>/dev/null || break
+  "$REAL_SLEEP" 0.1
+done
+if kill -0 "$refused" 2>/dev/null; then
+  kill "$refused"
+  fail "the notify-send of a refused toast was left waiting for an answer"
+fi
+ok
+cleanup_sandbox
+
+begin "the watcher reports a notification server that never comes up, and does not count it as announced"
 make_sandbox
 watch_stubs
 stub busctl 'exit 1'
 stub sleep
-journal_entry "$(id -u)" firefox 1001 /usr/lib/firefox/firefox SIGSEGV >"$SANDBOX/journal.jsonl"
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" firefox 1002 /usr/lib/firefox/firefox SIGSEGV
+} >"$SANDBOX/journal.jsonl"
 run_watcher
-for ((i = 0; i < 50; i++)); do
-  grep -q 'not announced' "$SANDBOX/watch.log" && break
-  "$REAL_SLEEP" 0.1
+((status == 0)) || fail "the watcher ended badly without a server ($status): $(<"$SANDBOX/watch.log")"
+for pid in 1001 1002; do
+  grep -q "no notification server: crash of firefox (PID $pid) not announced" "$SANDBOX/watch.log" \
+    || fail "no explanation for PID $pid in the log: $(<"$SANDBOX/watch.log")"
 done
-grep -q 'no notification server: crash of firefox (PID 1001) not announced' "$SANDBOX/watch.log" || fail "no explanation in the log: $(<"$SANDBOX/watch.log")"
 [[ $(count_files "$SANDBOX/toast.*") == 0 ]] || fail "a toast was sent without a server"
+# One call to a name nobody owns waits out D-Bus's 25 s method timeout on Plasma
+# unless it is told how long to wait; ten tries of a second are the bound.
+[[ $(call_args busctl 1) == $'--user\n--timeout=1\ncall\norg.freedesktop.Notifications\n/org/freedesktop/Notifications\norg.freedesktop.Notifications\nGetServerInformation' ]] \
+  || fail "busctl is not bounded to a second a try: $(call_args busctl 1)"
+[[ $(grep -c '^GetServerInformation$' "$SANDBOX/calls/busctl") == 20 ]] || fail "expected ten tries for each of two crashes: $(grep -c '^GetServerInformation$' "$SANDBOX/calls/busctl")"
 ok
 cleanup_sandbox
 
