@@ -11,8 +11,14 @@
 ACCT_PROVIDERS=(claude codex grok)
 
 # acct_is_provider <word>: whether the word names a provider with accounts.
+# Compared whole: a word that holds several names, such as "codex grok", is
+# not one of them.
 acct_is_provider() {
-  [[ " ${ACCT_PROVIDERS[*]} " == *" ${1-} "* ]]
+  local provider
+  for provider in "${ACCT_PROVIDERS[@]}"; do
+    [[ ${1-} == "$provider" ]] && return 0
+  done
+  return 1
 }
 
 # acct_provider <provider>: set what the commands need to know about it, or

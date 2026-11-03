@@ -328,6 +328,15 @@ PATH=$BASE_PATH
 ok
 cleanup_sandbox
 
+begin "a label that is two provider names is a label"
+setup
+stub cachyos-agent-default 'echo claude'
+sign_in claude u-main main@example.com
+FIX_ID=u-two FIX_EMAIL=two@example.com "$AGENT" account add "codex grok" >/dev/null || fail "a label made of provider names was refused"
+[[ $(registry claude '.accounts[1] | .id + "/" + .label') == "codex-grok/codex grok" ]] || fail "the label was not kept: $(registry claude '.accounts')"
+ok
+cleanup_sandbox
+
 begin "add explains how to install a missing CLI, and checks the provider first"
 setup
 mkdir "$SANDBOX/tools"
