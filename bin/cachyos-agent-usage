@@ -1,8 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
-# cachyos-agent:summary=Show agent limits, balances and token usage from the usage records
-# cachyos-agent:args=[--json] [agent...]
-# cachyos-agent:examples=cachyos-agent usage | cachyos-agent usage --json | cachyos-agent usage --json claude codex
+# cachyos-agent:summary=Show agent limits, balances and token usage; to filter, put -- or --json before the agent names, because a bare name runs that agent's collector
+# cachyos-agent:args=[--json] [--] [agent...]
+# cachyos-agent:examples=cachyos-agent usage | cachyos-agent usage --json | cachyos-agent usage -- claude codex | cachyos-agent usage --json claude codex
 set -euo pipefail
 
 # shellcheck source=../lib/common.sh
@@ -15,7 +15,7 @@ RECORD_OLD_SECONDS=3600
 
 usage() {
   cat <<'EOF'
-Usage: cachyos-agent usage [--json] [agent...]
+Usage: cachyos-agent usage [--json] [--] [agent...]
 
 Show each agent's limit windows, balance, tokens and prompts from the records
 that `cachyos-agent usage update` writes. With agent names, show only those.

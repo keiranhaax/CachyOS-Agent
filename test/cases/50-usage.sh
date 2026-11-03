@@ -461,7 +461,20 @@ make_sandbox
 out=$("$REPORT")
 [[ $out == *"cachyos-agent usage update"* ]] || fail "no hint: $out"
 [[ $("$REPORT" --json) == '[]' ]] || fail "--json without records is not an empty array"
-[[ $("$REPORT" --help) == "Usage: cachyos-agent usage [--json] [agent...]"* ]] || fail "no help text"
+[[ $("$REPORT" --help) == "Usage: cachyos-agent usage [--json] [--] [agent...]"* ]] || fail "no help text"
+ok
+cleanup_sandbox
+
+begin "the group help shows how to filter the report without running a collector"
+make_sandbox
+# The dispatcher takes the longest matching command, so a first word that names
+# an agent runs that agent's collector instead of filtering the report. The
+# help the dispatcher prints is all most people see: it must not suggest it.
+help=$("$AGENT" usage --help)
+[[ $help == *"cachyos-agent usage -- claude codex"* ]] || fail "no filtering example in the group help"
+[[ $help == *"a bare name runs that agent's collector"* ]] || fail "the group help does not warn about bare agent names"
+bad=$("$AGENT" commands --json | jq -r '.commands[] | select(.route == "cachyos-agent usage") | .examples[] | select(test("^cachyos-agent usage [a-z]"))')
+[[ -z $bad ]] || fail "an example puts an agent name first: $bad"
 ok
 cleanup_sandbox
 
