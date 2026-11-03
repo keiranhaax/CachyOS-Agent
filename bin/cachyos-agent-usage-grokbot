@@ -19,7 +19,6 @@ panel skips. The agents panel only ever reads the JSON this prints.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import urllib.request
 from datetime import datetime, timezone

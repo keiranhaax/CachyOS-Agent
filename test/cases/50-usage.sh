@@ -59,19 +59,25 @@ cleanup_sandbox
 
 begin "no collector imports a name it never uses or cites the panel's refreshLimits() call"
 make_sandbox
-unused=$(python3 -I - "$REPO_ROOT"/bin/cachyos-agent-usage-* <<'PY'
+unused=$(python3 -I - "$REPO_ROOT"/lib/collectors.py "$REPO_ROOT"/bin/cachyos-agent-usage-* <<'PY'
 import ast, sys
 for path in sys.argv[1:]:
   source = open(path).read()
-  if not source.startswith("#!/usr/bin/python"):
+  if not (path.endswith(".py") or source.startswith("#!/usr/bin/python")):
     continue
   tree = ast.parse(source)
   used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
   for node in ast.walk(tree):
     if isinstance(node, ast.ImportFrom) and node.module != "__future__":
-      for alias in node.names:
-        if (alias.asname or alias.name) not in used:
-          print(f"{path.rsplit('/', 1)[-1]}: {alias.name}")
+      names = [(alias.asname or alias.name, alias.name) for alias in node.names]
+    elif isinstance(node, ast.Import):
+      # `import urllib.request` binds urllib
+      names = [((alias.asname or alias.name).split(".")[0], alias.name) for alias in node.names]
+    else:
+      continue
+    for bound, name in names:
+      if bound not in used:
+        print(f"{path.rsplit('/', 1)[-1]}: {name}")
 PY
 )
 [[ -z $unused ]] || fail "imported and never used: $unused"

@@ -279,13 +279,6 @@ def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
   return {"ok": True, "limits": limits, "tierLabel": tier[:1].upper() + tier[1:].lower() if tier else ""}
 
 
-def limits_cache_paths(api_key: str, platform: str) -> tuple[Path, Path]:
-  # Keyed by who the numbers belong to: another key, or the same key on the
-  # other host, never shows this one's allowance.
-  cache = LimitsCache(AGENT_ID, platform, api_key)
-  return cache.path, cache.lock_path
-
-
 def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
   """Fresh limits when a probe is due, else the last known ones.
 

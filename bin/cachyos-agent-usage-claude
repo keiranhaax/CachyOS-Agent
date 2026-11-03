@@ -92,10 +92,6 @@ def expand_path(value: str) -> Path:
 # rest to the collector that bills it.
 
 
-def scan_projects(projects_path: Path, index_file: Path | None = None, base_url: str = "", reread: bool = False) -> Stats:
-  return scan_projects_read(projects_path, index_file, base_url, reread)[0]
-
-
 def scan_projects_read(projects_path: Path, index_file: Path | None = None, base_url: str = "", reread: bool = False) -> tuple[Stats, bool]:
   """The transcripts' stats, and whether every transcript was read: a scan
   that missed one isn't cached."""

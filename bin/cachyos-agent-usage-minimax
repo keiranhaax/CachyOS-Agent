@@ -82,13 +82,6 @@ def base_record(**overrides: Any) -> dict[str, Any]:
   return shared_base_record(AGENT_ID, AGENT_NAME, **overrides)
 
 
-def limits_cache_paths(api_key: str, base_url: str) -> tuple[Path, Path]:
-  # Keyed by the credential and the host it signs in to: another key, or the
-  # same key in the other region, never shows this one's allowance.
-  cache = LimitsCache(AGENT_ID, base_url.rstrip("/"), api_key)
-  return cache.path, cache.lock_path
-
-
 # --------------------------------------------------------------------------
 # Credentials
 # --------------------------------------------------------------------------

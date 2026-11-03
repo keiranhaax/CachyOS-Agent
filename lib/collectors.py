@@ -102,7 +102,6 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, NamedTuple
