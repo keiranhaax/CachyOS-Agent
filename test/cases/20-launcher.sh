@@ -91,9 +91,17 @@ call_count() {
 
 expect() { [[ $1 == "$2" ]] || fail "$3: expected [$2], got [$1]"; }
 contains() { [[ $1 == *"$2"* ]] || fail "$3: [$1] lacks [$2]"; }
+starts() { [[ $1 == "$2"* ]] || fail "$3: [$1] does not start with [$2]"; }
+ends() { [[ $1 == *"$2" ]] || fail "$3: [$1] does not end with [$2]"; }
 lacks() { [[ $1 != *"$2"* ]] || fail "$3: [$1] contains [$2]"; }
 
 skip() { printf 'skip %s (%s)\n' "$CURRENT_TEST" "$1"; }
+
+# window_stub <terminal>: a terminal that runs the command it is given after -e,
+# as a real one does, and keeps what the command prints in $SANDBOX/window.
+window_stub() {
+  stub "$1" 'while [[ $1 != -e ]]; do shift; done; shift; "$@" >"${self%/stubs/*}/window" 2>&1'
+}
 
 # stub_agents <name...>: stubs that only record their argv.
 stub_agents() {
@@ -348,10 +356,12 @@ cleanup_sandbox
 
 begin "prompt without --inline opens the terminal, with no arguments it shows usage"
 setup
-stub_agents opencode konsole
+stub opencode
+window_stub konsole
 CACHYOS_AGENT_DEFAULT=opencode run "$CA" prompt "Review this project"
 expect "$RC" 0 "exit status"
-expect "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|opencode|--auto|--prompt|Review this project" "terminal arguments"
+starts "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|" "terminal arguments"
+expect "$(last_call opencode)" "--auto|--prompt|Review this project" "agent arguments in the window"
 run "$CA" prompt
 expect "$RC" 1 "no prompt is an error"
 contains "$ERR" "Usage: cachyos-agent prompt" "usage"
@@ -363,9 +373,39 @@ cleanup_sandbox
 
 begin "launch opens the configured terminal with the title and command words"
 setup
-stub_agents opencode alacritty
+stub opencode
+window_stub alacritty
 TERMINAL=alacritty CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch
-expect "$(last_call alacritty)" "-T|CachyOS Agent|-e|opencode|--auto" "alacritty arguments"
+starts "$(last_call alacritty)" "-T|CachyOS Agent|-e|" "alacritty arguments"
+expect "$(last_call opencode)" "--auto" "agent arguments in the window"
+ok
+cleanup_sandbox
+
+begin "a terminal launch announces the unattended mode in the new window"
+setup
+# The shortcut, the panel button and the crash watcher discard the launcher's
+# stderr, so the line has to be printed where the agent starts.
+stub claude
+stub pi
+window_stub konsole
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch
+expect "$RC" 0 "exit status"
+contains "$(<"$SANDBOX/window")" "starting Claude Code with --permission-mode auto, which does not stop to ask before acting" "announcement in the window"
+expect "$(last_call claude)" "--permission-mode|auto" "claude arguments"
+lacks "$ERR" "starting" "the launcher's own stderr is not where it is read"
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch
+contains "$(<"$SANDBOX/window")" "starting Pi (it has no auto-approve flag)" "an agent without a flag says so"
+ok
+cleanup_sandbox
+
+begin "the announcement comes before the clipboard fallback's own text"
+setup
+stub dsh
+window_stub konsole
+CACHYOS_AGENT_DEFAULT=dsh run "$CA" launch --prompt "do the thing"
+window=$(<"$SANDBOX/window")
+starts "$window" "cachyos-agent: starting DeepSeek Harness with DSH_PERMISSION_MODE=danger-full-access" "announcement first"
+contains "$window" "do the thing" "then the prompt"
 ok
 cleanup_sandbox
 
@@ -621,7 +661,7 @@ setup
 stub_agents claude konsole
 stub cachyos-agent-account-home 'printf "/acct/work"'
 CACHYOS_AGENT_DEFAULT=claude run "$CA" launch
-expect "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|env|-u|CLAUDE_CONFIG_DIR|CACHYOS_AGENT_CLAUDE_HOME=/acct/work|CLAUDE_CONFIG_DIR=/acct/work|claude|--permission-mode|auto" "terminal arguments"
+ends "$(last_call konsole)" "|env|-u|CLAUDE_CONFIG_DIR|CACHYOS_AGENT_CLAUDE_HOME=/acct/work|CLAUDE_CONFIG_DIR=/acct/work|claude|--permission-mode|auto" "terminal command"
 ok
 cleanup_sandbox
 
@@ -740,7 +780,19 @@ setup
 stub_agents pi konsole
 choose_local_model 'qwen3:8b'
 run "$CA" launch --local
-contains "$(last_call konsole)" "-e|env|CACHYOS_AGENT_LOCAL_MODEL=qwen3:8b|CACHYOS_AGENT_LOCAL_URL=http://127.0.0.1:11434/v1|pi|--extension|" "terminal command"
+contains "$(last_call konsole)" "|env|CACHYOS_AGENT_LOCAL_MODEL=qwen3:8b|CACHYOS_AGENT_LOCAL_URL=http://127.0.0.1:11434/v1|pi|--extension|" "terminal command"
+ok
+cleanup_sandbox
+
+begin "a terminal launch announces a local model and keeps a tricky prompt intact"
+setup
+stub pi
+window_stub konsole
+choose_local_model 'qwen3:8b'
+tricky='-n it'\''s "quoted" $HOME `ls` *'
+run "$CA" launch --local --prompt "$tricky"
+contains "$(<"$SANDBOX/window")" "starting Pi on local model qwen3:8b (http://127.0.0.1:11434/v1)" "announcement names the model"
+ends "$(last_call pi)" "--|$tricky" "the prompt reaches the agent through the wrapper"
 ok
 cleanup_sandbox
 

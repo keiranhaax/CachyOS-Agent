@@ -33,7 +33,7 @@ Usage: cachyos-agent launch [--inline] [--pick] [--local] [--local-model <name>]
 
 Start the default agent (see: cachyos-agent default) in a terminal window.
 The agent runs unattended, in its own don't-stop-to-ask mode; the flags are
-printed to stderr as it starts.
+printed as it starts, in the new window (to stderr with --inline).
 
   --inline              run in this terminal instead of opening a window
   --pick                with no default agent, list the choices
@@ -425,16 +425,17 @@ pin_account() {
   fi
 }
 
-# The unattended modes are the point, so they are never silent.
-announce() {
+# The unattended modes are the point, so they are never silent: one line naming
+# the agent and the flags that stop it asking.
+announcement() {
   local what=$agent_name
   if $use_local; then
     what+=" on local model $local_model ($OLLAMA_URL)"
   fi
   if ((${#auto[@]})); then
-    printf 'cachyos-agent: starting %s with %s, which does not stop to ask before acting\n' "$what" "${auto[*]}" >&2
+    printf 'cachyos-agent: starting %s with %s, which does not stop to ask before acting\n' "$what" "${auto[*]}"
   else
-    printf 'cachyos-agent: starting %s (it has no auto-approve flag)\n' "$what" >&2
+    printf 'cachyos-agent: starting %s (it has no auto-approve flag)\n' "$what"
   fi
 }
 
@@ -460,12 +461,16 @@ main() {
   fi
   use_user_install
   pin_account
-  announce
 
   if $inline; then
+    announcement >&2
     exec "${command[@]}"
   fi
-  ca_terminal_exec --title "CachyOS Agent" "${command[@]}"
+  # The shortcut, the panel button and the crash watcher run this with stderr
+  # in the journal or /dev/null, so the line is printed in the new window, just
+  # ahead of the agent, where the person it concerns is looking.
+  # shellcheck disable=SC2016 # $1 and $@ are for the inner bash
+  ca_terminal_exec --title "CachyOS Agent" bash -c 'printf "%s\n" "$1" >&2; shift; exec "$@"' _ "$(announcement)" "${command[@]}"
 }
 
 main "$@"
