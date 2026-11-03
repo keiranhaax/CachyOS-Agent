@@ -789,10 +789,10 @@ def usage_by_account(provider: str) -> tuple[dict[str, Any], frozenset[str]]:
 # Notifications go through notify-send when it and a session bus exist, the
 # same gate as ca_notify in lib/common.sh, and otherwise to stderr, which the
 # journal keeps for a timer run. So does one notify-send fails to deliver, as
-# when the timer fires at login before the notification service is up: the
-# alert is already stored, so nothing would send the message again. Title and
-# body follow `--` so text made of account labels can never be read as an
-# option.
+# when the timer fires at login before the notification service is up; the
+# caller learns of that from the return value and takes back the alert it
+# stored, so the next refresh says it again. Title and body follow `--` so text
+# made of account labels can never be read as an option.
 NOTIFY = ["notify-send", "--app-name=cachyos-agent"]
 
 
@@ -801,10 +801,15 @@ def can_notify() -> bool:
   return bool(shutil.which("notify-send") and bus)
 
 
-def notify(title: str, body: str) -> None:
-  if can_notify() and subprocess.run([*NOTIFY, "--", title, body], check=False).returncode == 0:
-    return
+# True when the message reached a desktop, or there is none to reach: stderr is
+# then the channel, and saying it again at every refresh would only fill the
+# journal. False when a notification service is there and did not take it.
+def notify(title: str, body: str) -> bool:
+  desktop = can_notify()
+  if desktop and subprocess.run([*NOTIFY, "--", title, body], check=False).returncode == 0:
+    return True
   print(f"{title}: {body}", file=sys.stderr)
+  return not desktop
 
 
 # What a waiter started in a unit of its own needs from this run: the gate
@@ -842,22 +847,30 @@ def start_waiter(waiter: list[str]) -> bool:
 # copy of this script (the `offer` command) waits for it while autoswitch
 # returns and lets go of the registry lock. Without a desktop, or when the
 # waiter can't be started, the notification would be one nothing can answer,
-# so the way to switch is printed instead.
-def offer_switch(provider: str, target: dict[str, Any], title: str, body: str) -> None:
+# so the way to switch is printed instead. Like notify(), this is False when a
+# desktop was there and the offer was not made to it.
+def offer_switch(provider: str, target: dict[str, Any], title: str, body: str) -> bool:
   command = f"cachyos-agent account use {provider} {target['id']}"
   script = str(Path(__file__).resolve())
   waiter = [sys.executable, script, "offer", provider, target["id"], title, f"{body} Click to switch new sessions to it, or run: {command}"]
-  if not can_notify() or not start_waiter(waiter):
-    print(f"{title}: {body} Switch new sessions to it with: {command}", file=sys.stderr)
+  desktop = can_notify()
+  if desktop and start_waiter(waiter):
+    return True
+  print(f"{title}: {body} Switch new sessions to it with: {command}", file=sys.stderr)
+  return not desktop
 
 
 # Plasma shows "switch" as a button and runs "default" when the notification
 # itself is clicked; either answer means yes. A notification that is closed or
-# expires prints nothing.
+# expires prints nothing. One that could not be shown takes back the alert the
+# autoswitch stored for it, so the next refresh offers again.
 def offer(provider: str, target: str, title: str, body: str) -> None:
   shown = subprocess.run([*NOTIFY, "--action=default=Switch", "--action=switch=Switch", "--", title, body], capture_output=True, text=True)
   if shown.returncode != 0:
     print(f"{title}: {body}", file=sys.stderr)
+    with Locked(provider) as registry:
+      if registry.get("alert") == f"notify:{active(registry)['id']}:{target}":
+        registry["alert"] = ""
   elif shown.stdout.strip():
     bin_dir = str(Path(__file__).resolve().parent)
     env = {**os.environ, "PATH": os.environ.get("PATH", "") + os.pathsep + bin_dir}
@@ -888,7 +901,8 @@ def autoswitch(provider: str, now: dt.datetime | None = None) -> bool:
         body = f"Staying on {source['label']}. {soonest[1]['label']} resets in {duration(soonest[0] - now)}."
       else:
         body = f"Staying on {source['label']}."
-      notify(f"All {name} accounts are over {threshold}%", body)
+      if not notify(f"All {name} accounts are over {threshold}%", body):
+        registry["alert"] = ""
       return False
 
     target = decision["to"]
@@ -897,9 +911,12 @@ def autoswitch(provider: str, now: dt.datetime | None = None) -> bool:
       registry["active"] = target["id"]
       if not target.get("primary"):
         link_shared(provider, account_home(provider, target))
+      # The switch is made whether or not anyone is told; a notice that did not
+      # arrive is in the journal, and the next refresh has no switch to announce.
       notify(headline, f"New {name} sessions now use {target['label']} ({round(decision['toPeak'])}%).\nRunning sessions stay on {source['label']}.")
       return True
-    offer_switch(provider, target, headline, f"{target['label']} is at {round(decision['toPeak'])}%.")
+    if not offer_switch(provider, target, headline, f"{target['label']} is at {round(decision['toPeak'])}%."):
+      registry["alert"] = ""
     return False
 
 

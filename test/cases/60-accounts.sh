@@ -764,6 +764,63 @@ called notify-send "Main is at 97% of a Claude limit" || fail "notify-send was n
 ok
 cleanup_sandbox
 
+# alert_of: what the Claude registry remembers having said, "" for nothing.
+alert_of() {
+  registry claude '.alert // ""'
+}
+
+# no_alert: whether the Claude registry remembers nothing, for eventually to retry.
+no_alert() {
+  [[ -z $(alert_of) ]]
+}
+
+begin "a message the notification service did not take is said again at the next refresh"
+two_accounts
+"$AGENT" account mode claude auto 90 >/dev/null
+usage_record 0.97 0.99
+# The timer fires at login, before plasmashell owns the notification service.
+stub notify-send 'exit 1'
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+[[ -z $(alert_of) ]] || fail "an alert was kept for a message nobody saw: $(alert_of)"
+rm -f "$SANDBOX/calls/notify-send"
+stub notify-send
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+called notify-send "All Claude accounts are over 90%" || fail "the message was not said again once the service was up"
+[[ $(alert_of) == exhausted:main ]] || fail "the alert was not kept once the message was delivered: $(alert_of)"
+rm -f "$SANDBOX/calls/notify-send"
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+[[ ! -e $SANDBOX/calls/notify-send ]] || fail "a delivered message was said a third time"
+ok
+cleanup_sandbox
+
+begin "an offer the notification service did not show is made again at the next refresh"
+two_accounts
+usage_record 0.97 0.1
+stub notify-send 'exit 1'
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+eventually called notify-send "--action=switch=Switch" || fail "the offer was not tried"
+eventually no_alert || fail "an alert was kept for an offer nobody saw: $(alert_of)"
+stub notify-send 'case "$*" in *--action*) echo switch ;; esac'
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+eventually active_is work || fail "the second offer was not made or not carried out"
+ok
+cleanup_sandbox
+
+begin "an offer that could not be started is made again at the next refresh"
+two_accounts
+in_a_unit
+usage_record 0.97 0.1
+stub systemd-run 'exit 1'
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+[[ -z $(alert_of) ]] || fail "an alert was kept for an offer that was never made: $(alert_of)"
+# shellcheck disable=SC2016 # a program for the stub's own bash
+stub systemd-run 'while [[ $1 != -- ]]; do shift; done; shift; "$@" >/dev/null 2>&1 </dev/null &'
+stub notify-send 'case "$*" in *--action*) echo switch ;; esac'
+"$AGENT" account state autoswitch claude >/dev/null 2>&1
+eventually active_is work || fail "the second offer was not made or not carried out"
+ok
+cleanup_sandbox
+
 begin "an offer that notify-send cannot show still reaches stderr and switches nothing"
 two_accounts
 stub notify-send 'echo switch; exit 1'
