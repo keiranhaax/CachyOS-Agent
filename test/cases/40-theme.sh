@@ -237,7 +237,7 @@ cleanup_sandbox
 begin "palette usage: --help succeeds, bad arguments exit 2, kreadconfig6 is required"
 make_sandbox
 stub kreadconfig6 "$KREAD_STUB"
-"$PALETTE" --help | grep -q '^Usage: cachyos-agent theme palette' || fail "no usage"
+[[ $("$PALETTE" --help) == "Usage: cachyos-agent theme palette"* ]] || fail "no usage"
 for bad in '--bogus' '--file'; do
   status=0
   "$PALETTE" $bad >/dev/null 2>&1 || status=$?
@@ -270,8 +270,10 @@ make_sandbox
 stub kreadconfig6 "$KREAD_STUB"
 dark_colors "$XDG_CONFIG_HOME/kdeglobals"
 [[ $("$AGENT" theme palette) == "$DARK_PALETTE" ]] || fail "cachyos-agent theme palette differs from the command"
-"$AGENT" commands --all | grep -q 'cachyos-agent theme palette' || fail "palette is not listed by commands --all"
-if "$AGENT" commands | grep -q 'theme palette'; then fail "palette is not hidden"; fi
+# Captured, not piped into grep -q: grep closes the pipe on its first match while
+# the dispatcher is still writing, and pipefail would turn that SIGPIPE into a failure.
+[[ $("$AGENT" commands --all) == *"cachyos-agent theme palette"* ]] || fail "palette is not listed by commands --all"
+[[ $("$AGENT" commands) != *"theme palette"* ]] || fail "palette is not hidden"
 ok
 cleanup_sandbox
 
@@ -504,7 +506,7 @@ done
 status=0
 "$SYNC" --bogus >/dev/null 2>&1 || status=$?
 ((status == 2)) || fail "an unknown option exited $status, not 2"
-"$SYNC" --help | grep -q '^Usage: cachyos-agent theme sync' || fail "no usage"
+[[ $("$SYNC" --help) == "Usage: cachyos-agent theme sync"* ]] || fail "no usage"
 ok
 cleanup_sandbox
 
@@ -742,7 +744,7 @@ end_follow_env
 
 begin "follow usage: --help succeeds, anything else exits 2"
 make_sandbox
-"$FOLLOW" --help | grep -q '^Usage: cachyos-agent theme follow' || fail "no usage"
+[[ $("$FOLLOW" --help) == "Usage: cachyos-agent theme follow"* ]] || fail "no usage"
 for bad in 'bogus' 'on off' '--bogus'; do
   read -ra args <<<"$bad"
   status=0

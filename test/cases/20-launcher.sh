@@ -17,7 +17,7 @@ ALL_AGENTS=(pi omp opencode ori claude codex grok agy hermes copilot crush curso
 TOOLS=$(mktemp -d)
 SANDBOXES+=("$TOOLS")
 for tool in bash env cat jq dirname readlink mkdir mktemp mv rm cp ln grep head tr sed cut sort basename touch chmod \
-  script sleep mkfifo kwriteconfig6 kreadconfig6 desktop-file-validate fish node; do
+  script sleep mkfifo kwriteconfig6 kreadconfig6 desktop-file-validate fish node python3; do
   if path=$(command -v "$tool" 2>/dev/null); then
     ln -s "$path" "$TOOLS/$tool"
   fi

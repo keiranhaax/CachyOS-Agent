@@ -485,7 +485,7 @@ sign_in claude u-main main@example.com
 [[ $("$AGENT" account mode claude) == "Claude notifies at 95% and switches when you say so." ]] || fail "default mode: $("$AGENT" account mode claude)"
 [[ $("$AGENT" account mode claude auto 90) == "Claude switches new sessions to the account with the most headroom at 90%." ]] || fail "auto 90"
 [[ $(registry claude '[.switch, .threshold] | join(",")') == auto,90 ]] || fail "registry: $(<"$STATE/accounts/claude.json")"
-[[ $("$AGENT" account list claude | head -n1) == "Claude: auto mode at 90%" ]] || fail "list header for auto: $("$AGENT" account list claude)"
+[[ $("$AGENT" account list claude) == "Claude: auto mode at 90%"* ]] || fail "list header for auto: $("$AGENT" account list claude)"
 [[ $("$AGENT" account mode claude notify) == "Claude notifies at 90% and switches when you say so." && $(registry claude .switch) == manual ]] || fail "notify is not stored as manual"
 "$AGENT" account mode claude auto >/dev/null
 [[ $(registry claude '[.switch, .threshold] | join(",")') == auto,90 ]] || fail "a mode without a threshold changed the threshold"
