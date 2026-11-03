@@ -429,6 +429,20 @@ jq -e 'length == 1 and .[0].name == "Claude" and (.[0].accounts | length) == 2' 
 ok
 cleanup_sandbox
 
+begin "list prints no control character from a record or an account"
+setup
+sign_in claude u-main main@example.com
+mkdir -p "$STATE/usage"
+# A vendor's response names a model, and the name is shown as the limit's label.
+jq -n '{limits: [{label: "Opus\u001b]0;pwned-title\u0007\u001b[2J Weekly", percent: 0.5}, {label: "Tab\there\u009b", percent: 0.1}]}' >"$STATE/usage/claude.json"
+out=$("$AGENT" account list claude)
+leftover=$(printf '%s' "$out" | tr -d '\n' | LC_ALL=C tr -d '[:print:]')
+[[ -z $leftover ]] || fail "the listing holds control characters: $(printf '%s' "$out" | cat -v)"
+[[ $out == *"Opus]0;pwned-title[2J Weekly: 50%"* && $out == *"Tabhere: 10%"* ]] || fail "the printable text was changed: $out"
+[[ $("$AGENT" account list claude --json) == *'pwned-title'* ]] || fail "--json should keep the record as it is"
+ok
+cleanup_sandbox
+
 begin "the registry keeps Omarchy's schema, which the usage collectors read"
 setup
 sign_in claude u-main main@example.com

@@ -71,11 +71,17 @@ while IFS= read -r entry; do
   jq -e '.accounts | any(.signedIn)' <<<"$entry" >/dev/null || continue
   # The registry stores notify mode as "manual"; this command says "notify".
   jq -r '"\(.name): \(if .switch == "manual" then "notify" else .switch end) mode at \(.threshold)%"' <<<"$entry"
-  jq -r '.accounts[] | [
-      (if .active then "*" else " " end), .id, .label,
-      (.plan | if . == "" then "-" else . end),
-      (.email | if . == "" then "-" else . end),
-      ([.limits[]? | select(.percent != null) | "\(.label): \((.percent * 100) | round)%"] | join(", ") | if . == "" then "-" else . end)
+  jq -r '
+    # A limit label comes from a vendor response and the other fields from the
+    # account the CLI is signed in to, and any of them can hold an escape
+    # sequence. Drop every control character, C1 included, as the usage report
+    # does; a tab would also shift the columns.
+    def clean: if type == "string" then gsub("[\u0000-\u001f\u007f-\u009f]"; "") else . end;
+    .accounts[] | [
+      (if .active then "*" else " " end), (.id | clean), (.label | clean),
+      (.plan | clean | if . == "" then "-" else . end),
+      (.email | clean | if . == "" then "-" else . end),
+      ([.limits[]? | select(.percent != null) | "\(.label | clean): \((.percent * 100) | round)%"] | join(", ") | if . == "" then "-" else . end)
     ] | join("\t")' <<<"$entry" | column -t -s $'\t' | sed 's/^/  /'
   echo
 done < <(jq -c '.[]' <<<"$accounts")
