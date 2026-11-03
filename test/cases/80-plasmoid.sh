@@ -202,19 +202,24 @@ cleanup_sandbox
 
 begin "every QML import names an installed module or an existing file"
 make_sandbox
+# Qt's own modules come with qt6-declarative, which kconfig pulls in; the org.kde.* ones
+# come with Plasma, so a machine with Qt and no Plasma can judge only the first.
+plasma_modules=false
+[[ -d $QML_DIR/org/kde/plasma/plasmoid ]] && plasma_modules=true
 for file in "${QML_FILES[@]}"; do
   while IFS= read -r line; do
     if [[ $line =~ ^import[[:space:]]+\"([^\"]+)\" ]]; then
       [[ -f $(dirname "$file")/${BASH_REMATCH[1]} ]] || fail "${file##*/} imports ${BASH_REMATCH[1]}, which does not exist"
     elif [[ $line =~ ^import[[:space:]]+([A-Za-z0-9_.]+) ]]; then
       module=${BASH_REMATCH[1]}
-      if [[ -d $QML_DIR ]]; then
+      if [[ -d $QML_DIR ]] && { [[ $module != org.kde.* ]] || $plasma_modules; }; then
         [[ -f $QML_DIR/${module//.//}/qmldir ]] || fail "${file##*/} imports $module, which is not under $QML_DIR"
       fi
     fi
   done < <(grep -E '^import ' "$file")
 done
 [[ -d $QML_DIR ]] || unverified "QML module imports" "$QML_DIR is not installed"
+$plasma_modules || unverified "Plasma QML module imports" "the Plasma QML modules are not installed under $QML_DIR"
 ok
 cleanup_sandbox
 
