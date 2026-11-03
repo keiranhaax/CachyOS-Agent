@@ -316,9 +316,11 @@ for file in claude pi opencode; do jq -e . "$THEME/$file.json" >/dev/null || fai
   || fail "pi.json has the wrong values"
 [[ $(jq -r '.theme | length, .borderActive, .diffAddedBg' "$THEME/opencode.json") == $'50\n#926ed6\n#172d23' ]] \
   || fail "opencode.json has the wrong values"
-[[ $(sed -n 1,3p "$THEME/hermes.yaml") == $'name: cachyos\ndescription: CachyOS Plasma color scheme\ncolors:' ]] || fail "hermes.yaml has the wrong header"
+notice='# Adapted from Omarchy default/themed/hermes.yaml.tpl (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md'
+[[ $(head -n 1 "$REPO_ROOT/data/themed/hermes.yaml.tpl") == "$notice" ]] || fail "the Hermes template is a port of Omarchy's without the notice in the file"
+[[ $(sed -n 1,4p "$THEME/hermes.yaml") == "$notice"$'\nname: cachyos\ndescription: CachyOS Plasma color scheme\ncolors:' ]] || fail "hermes.yaml has the wrong header"
 grep -qx '  ui_primary: "#926ed6"' "$THEME/hermes.yaml" || fail "hermes.yaml has the wrong accent"
-if sed 1,3d "$THEME/hermes.yaml" | grep -vqE '^  [a-z_]+: "#[0-9a-f]{6}"$'; then fail "hermes.yaml has a line that is not a color"; fi
+if sed 1,4d "$THEME/hermes.yaml" | grep -vqE '^  [a-z_]+: "#[0-9a-f]{6}"$'; then fail "hermes.yaml has a line that is not a color"; fi
 [[ ! -e $HOME/.claude && ! -e $HOME/.hermes && ! -e $HOME/.pi && ! -e $XDG_CONFIG_HOME/opencode ]] || fail "an agent directory was created without --activate"
 [[ $(grep -c skipped "$SANDBOX/out") == 4 ]] || fail "each missing agent should be reported as skipped: $(<"$SANDBOX/out")"
 ok

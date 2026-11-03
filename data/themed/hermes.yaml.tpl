@@ -1,3 +1,4 @@
+# Adapted from Omarchy default/themed/hermes.yaml.tpl (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
 name: cachyos
 description: CachyOS Plasma color scheme
 colors:
