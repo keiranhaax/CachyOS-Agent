@@ -111,7 +111,7 @@ PlasmoidItem {
 
     // Show what is true now, not what the last timer tick found.
     onExpandedChanged: {
-        if (expanded)
+        if (root.expanded)
             load();
     }
 

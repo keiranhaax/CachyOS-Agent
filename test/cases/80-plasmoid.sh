@@ -502,6 +502,45 @@ esac'
   check "$out" '.agents == [] and .problem == "" and (.page.texts | index("No agent usage yet. Press Refresh to collect it, and run `cachyos-agent usage schedule on` to keep it current."))' "the empty state"
   ok
   cleanup_sandbox
+
+  # The stand-ins above cannot see how the real PlasmoidItem and Plasmoid take
+  # main.qml, so this runs the package in plasmawindowed, the way plasmashell
+  # would load it. env -i and a session bus and runtime directory of their own
+  # keep it off the desktop that runs this test; setsid lets the services the
+  # bus starts (kactivitymanagerd outlives it) be stopped with it.
+  if command -v plasmawindowed >/dev/null && command -v dbus-run-session >/dev/null && command -v setsid >/dev/null && command -v pkill >/dev/null; then
+    begin "plasmawindowed loads the widget without a QML warning"
+    make_sandbox
+    stub_agent
+    mkdir -p "$SANDBOX/data/plasma/plasmoids" "$SANDBOX/run" "$SANDBOX/home"
+    chmod 700 "$SANDBOX/run"
+    ln -s "$PKG" "$SANDBOX/data/plasma/plasmoids/org.cachyos.agent"
+    env -i HOME="$SANDBOX/home" XDG_DATA_HOME="$SANDBOX/data" XDG_CONFIG_HOME="$SANDBOX/home/.config" XDG_CACHE_HOME="$SANDBOX/home/.cache" \
+      XDG_STATE_HOME="$SANDBOX/home/.local/state" XDG_RUNTIME_DIR="$SANDBOX/run" PATH="$SANDBOX/stubs:/usr/bin" FIXTURE="$FIXTURE" MARKER="$MARKER" \
+      QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 setsid dbus-run-session -- plasmawindowed org.cachyos.agent >"$SANDBOX/plasma.log" 2>&1 &
+    session=$!
+    # The first read means main.qml has been created; its warnings come before it.
+    for _ in {1..300}; do
+      [[ -s $SANDBOX/calls/cachyos-agent ]] && break
+      sleep 0.1
+    done
+    sleep 1
+    pkill -s "$session" || true
+    wait "$session" || true
+    [[ $(calls_of cachyos-agent 2>/dev/null | head -n 1) == 'usage --json' ]] || fail "plasmawindowed did not run the widget's first read: $(head -c 1500 "$SANDBOX/plasma.log")"
+    if grep -E 'org\.cachyos\.agent/contents/|TypeError|ReferenceError|SyntaxError|Unable to assign|Cannot assign|Binding loop|is not a type|is not installed|Required property' "$SANDBOX/plasma.log" >"$SANDBOX/problems.log"; then
+      fail "plasmawindowed reported: $(head -c 800 "$SANDBOX/problems.log")"
+    fi
+    for _ in {1..50}; do
+      pgrep -s "$session" >/dev/null || break
+      sleep 0.1
+    done
+    ! pgrep -s "$session" >/dev/null || fail "plasmawindowed left processes of its session behind: $(pgrep -s "$session" -a | head -c 400)"
+    ok
+    cleanup_sandbox
+  else
+    unverified "the widget under plasmawindowed" "plasmawindowed, dbus-run-session, setsid or pkill is not installed"
+  fi
 else
   unverified "the widget end to end" "qml6, the Plasma executable data engine or the Plasma QML modules are not installed"
 fi
