@@ -99,6 +99,25 @@ for i in "${!rows[@]}"; do
 done
 ok
 
+begin "the line that reads a command's source works when only the dispatcher is linked"
+# README, "Install from a Git checkout", links bin/cachyos-agent alone into a PATH
+# directory; the package also links every command into /usr/bin. A document
+# that finds a command with `command -v cachyos-agent-<name>` fails in the first
+# case, so the line SKILL.md shows is run as written with only the dispatcher
+# and four tools on PATH (a package installed on this machine cannot help it).
+make_sandbox
+mkdir "$SANDBOX/path"
+for tool in bash cat dirname readlink; do ln -s "$(command -v "$tool")" "$SANDBOX/path/$tool"; done
+ln -s "$AGENT" "$SANDBOX/path/cachyos-agent"
+mapfile -t found < <(grep -n 'command -v cachyos-agent-' "${DOCS[@]}" || true)
+((${#found[@]} == 0)) || fail "the documents find a command with command -v, which a checkout does not link: $(printf '%s; ' "${found[@]}")"
+line=$(grep -m1 -E '^cat ".*cachyos-agent-crash"$' agents/skills/cachyos/SKILL.md || true)
+[[ -n $line ]] || fail "SKILL.md shows no line that reads cachyos-agent-crash"
+shown=$(PATH=$SANDBOX/path "$SANDBOX/path/bash" -c "$line" 2>&1 || true)
+[[ $shown == *'cachyos-agent:summary='* ]] || fail "the line '$line' did not print the command: ${shown:-nothing}"
+ok
+cleanup_sandbox
+
 begin "every #anchor link in the documents points at a heading"
 # GitHub's slug for a heading: lowercase, anything but letters, digits, spaces,
 # '-' and '_' dropped, spaces turned into '-'. Headings and links inside a code

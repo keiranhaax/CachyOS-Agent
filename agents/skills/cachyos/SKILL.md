@@ -112,7 +112,7 @@ Use `sudo` in a visible terminal for privileged work. NEVER start interactive `s
 
 ## Command Discovery
 
-The agent runtime ships one CLI, `cachyos-agent`, which runs the `cachyos-agent-*` commands as `cachyos-agent <group> [command]`. Prefer that form: it documents itself. The underlying `cachyos-agent-*` files are on `PATH` too, and reading them is safe.
+The agent runtime ships one CLI, `cachyos-agent`, which runs the `cachyos-agent-*` commands as `cachyos-agent <group> [command]`. Prefer that form: it documents itself. The underlying `cachyos-agent-*` files sit beside the dispatcher, and reading them is safe. The package also links each one into `/usr/bin`; a Git checkout links only `cachyos-agent` into `PATH`, so look for the others beside it, as below.
 
 ```bash
 # List every documented command and its summary (--all adds hidden plumbing)
@@ -128,8 +128,10 @@ cachyos-agent crash mute --help
 # Machine-readable listing (binary, route, group, name, summary, args, examples, hidden)
 cachyos-agent commands --json
 
-# Read a command's source to understand it
-cat "$(command -v cachyos-agent-crash)"
+# Read a command's source to understand it. The file is the "binary" field
+# of commands --json (crash mute is cachyos-agent-crash-mute), and it sits
+# beside the dispatcher in a package and in a Git checkout alike.
+cat "$(dirname "$(readlink -f "$(command -v cachyos-agent)")")/cachyos-agent-crash"
 ```
 
 Some commands start an agent that does not stop to ask, or change units and shortcuts. Read [`agent.md`](agent.md) before running one that is not plain reading.

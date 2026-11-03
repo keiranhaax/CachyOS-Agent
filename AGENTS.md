@@ -12,7 +12,7 @@ This file is for any agent working on or with CachyOS (running install, packagin
 - Treat `upstreams.tsv` as a review marker, not proof that prose is current. Run `bin/cachyos-agent-skills-check-upstreams` after CachyOS updates; changed commits require human review against the live system and official sources.
 - Plan the change. Take a snapper snapshot when the work is destructive. Apply. Verify. Roll back if it is wrong.
 - ALWAYS prefer Cachy tools: Kernel Manager (`cachyos-kernel-manager`), `chwd`, `scx_loader`, `cachyos-repo.sh`, `cachy-chroot`, `game-performance`.
-- NEVER guess a `cachyos-agent` command or flag. List the commands with `cachyos-agent commands --json`, read a group with `cachyos-agent <group> --help`, and read a command's source with `cat "$(command -v cachyos-agent-<name>)"`. Some commands start an agent that does not stop to ask; read [`agents/skills/cachyos/agent.md`](agents/skills/cachyos/agent.md) before running one.
+- NEVER guess a `cachyos-agent` command or flag. List the commands with `cachyos-agent commands --json`, read a group with `cachyos-agent <group> --help`, and read a command's source with `cat "$(dirname "$(readlink -f "$(command -v cachyos-agent)")")/<binary>"`, where `<binary>` is the `binary` field of `commands --json` (`cachyos-agent-crash-mute` for `crash mute`). Those files are in `bin/` of a Git checkout. Some commands start an agent that does not stop to ask; read [`agents/skills/cachyos/agent.md`](agents/skills/cachyos/agent.md) before running one.
 
 ## Skill index
 
