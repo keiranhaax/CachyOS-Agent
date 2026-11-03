@@ -322,12 +322,15 @@ if command -v qml6 >/dev/null; then
      {id: "f", name: "Garbled", ready: true, balance: balance, updatedAt: "yesterday"},
      {id: "g", name: "Unwritten", ready: true, balance: balance},
      {id: "h", name: "Stale too", ready: true, balance: balance, updatedAt: $old, limitsStale: true, limitsFetchedAt: 0,
-      usageStatusText: "Sign-in expired", authHelpText: "Run `h login`."}]')
+      limits: [{label: "Session", percent: 0.5}], usageStatusText: "Sign-in expired", authHelpText: "Run `h login`."},
+     {id: "i", name: "Stale and empty", ready: true, balance: balance, limitsStale: true, limitsFetchedAt: 0,
+      usageStatusText: "Limits unavailable", authHelpText: "Could not reach the service."}]')
   out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
   check "$out" '[.agents[] | [.name, .age, .notes]] == [["Old", "Updated 2d 3h ago", []], ["An hour", "Updated 1h 0m ago", []], ["Recent", "", []], ["Future", "", []],
                   ["Naive", "Updated 2h 0m ago", []], ["Garbled", "", []], ["Unwritten", "", []],
-                  ["Stale too", "Updated 2d 3h ago", ["Sign-in expired", "Run `h login`.", "Limits may be out of date"]]]' \
-    "only a record at least an hour old says how old it is, apart from what is wrong with its numbers"
+                  ["Stale too", "Updated 2d 3h ago", ["Sign-in expired", "Run `h login`.", "Limits may be out of date"]],
+                  ["Stale and empty", "", ["Limits unavailable", "Could not reach the service."]]]' \
+    "only a record at least an hour old says how old it is, apart from what is wrong with its numbers, and a record with no limits does not call them old"
   ok
   cleanup_sandbox
 

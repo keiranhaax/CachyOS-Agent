@@ -645,6 +645,23 @@ actual=$("$REPORT")
 ok
 cleanup_sandbox
 
+begin "the report says limits are stale only beside limits that are shown"
+make_sandbox
+mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"
+# Offline with nothing kept: the collector marks the record stale and has no limits to call so.
+write_record cursor '
+  {schemaVersion: 1, id: "cursor", name: "Cursor CLI", ready: true, limits: [], limitsStale: true, limitsFetchedAt: 0,
+   usageStatusText: "Cursor limits unavailable", authHelpText: "Could not reach cursor.com.",
+   accounts: [{id: "a", label: "a", plan: "Pro", active: true, stale: true, fetchedAt: 0, limits: [], usageStatusText: "", authHelpText: ""}]}'
+expected='Cursor CLI
+  ! Cursor limits unavailable: Could not reach cursor.com.
+  Accounts
+    a  Pro  (active)'
+actual=$("$REPORT")
+[[ $actual == "$expected" ]] || { diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true; fail "the report claims old limits where there are none"; }
+ok
+cleanup_sandbox
+
 begin "the report filters by agent name and says when one is not in use"
 make_sandbox
 make_report_fixtures

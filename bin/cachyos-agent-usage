@@ -133,11 +133,12 @@ def aligned($indent):
   | map($indent + (.[0] | ljust($w)) + (.[1:] | map("  " + .) | join("")));
 
 # What keeps the numbers from being current: said beside the last numbers
-# known, which stay on show. Lines come without indent.
-def stale_lines($stale; $fetched_ms; $now):
+# known, which stay on show. Lines come without indent. With no limit on show
+# there are no old numbers to warn about, only the status that says why.
+def stale_lines($stale; $limits; $fetched_ms; $now):
   (.usageStatusText | text) as $status
   | (.authHelpText | text) as $help
-  | ( if $stale then
+  | ( if $stale and ($limits | length) > 0 then
         ["limits are stale" + (if ($fetched_ms | num) > 0
                                then " (last checked \($now - ($fetched_ms | num) / 1000 | duration) ago)"
                                else "" end)]
@@ -153,7 +154,7 @@ def account_lines($now):
      + (if (.plan | text) != "" then "  " + (.plan | text) else "" end)
      + (if .active == true then "  (active)" else "" end)]
     + (limit_rows($now) | aligned("      "))
-    + (stale_lines($stale; .fetchedAt; $now) | map("      " + .));
+    + (stale_lines($stale; limit_rows($now); .fetchedAt; $now) | map("      " + .));
 
 def record_lines($now; $old_seconds):
   (.limitsStale == true) as $stale
@@ -164,7 +165,7 @@ def record_lines($now; $old_seconds):
      + (if (.tierLabel | text) != "" then "  " + (.tierLabel | text | capitalized) else "" end)
      + $age]
     + ((limit_rows($now) + balance_rows + token_rows + prompt_rows) | aligned("  "))
-    + (stale_lines($stale; .limitsFetchedAt; $now) | map("  " + .))
+    + (stale_lines($stale; limit_rows($now); .limitsFetchedAt; $now) | map("  " + .))
     + (if (.accounts | arr | length) > 0
        then ["  Accounts"] + [(.accounts | arr)[] | select(type == "object") | account_lines($now)[]]
        else [] end);

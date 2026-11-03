@@ -154,8 +154,10 @@ function ageText(updatedAt, now) {
 
 // What is wrong with an agent's numbers, one line each. A status is always
 // said; its help only with it, or when the limits shown are old, because a
-// healthy agent may still carry its sign-in hint.
-function notes(status, help, stale, fetchedAt, now) {
+// healthy agent may still carry its sign-in hint. The limits are called old
+// only when there are limits: a record with none has no numbers to doubt, and
+// its status already says why.
+function notes(status, help, stale, hasLimits, fetchedAt, now) {
     const lines = [];
     const statusText = String(status || "");
     const helpText = String(help || "");
@@ -165,7 +167,7 @@ function notes(status, help, stale, fetchedAt, now) {
         if (helpText !== "")
             lines.push(helpText);
     }
-    if (stale) {
+    if (stale && hasLimits) {
         const measured = Number(fetchedAt);
         lines.push(measured > 0 && measured <= now ? "Limits last checked " + duration(now - measured) + " ago" : "Limits may be out of date");
     }
@@ -181,12 +183,13 @@ function weekTokens(days) {
 // An agent with two or more registered accounts lists each one's own limits;
 // the record's top-level limits describe the active account.
 function accountView(account, now) {
+    const limits = limitViews(account.limits);
     return {
         name: String(account.label || account.id || "Account"),
         plan: capitalize(account.plan),
         active: account.active === true,
-        limits: limitViews(account.limits),
-        notes: notes(account.usageStatusText, account.authHelpText, account.stale === true, account.fetchedAt, now)
+        limits: limits,
+        notes: notes(account.usageStatusText, account.authHelpText, account.stale === true, limits.length > 0, account.fetchedAt, now)
     };
 }
 
@@ -194,11 +197,12 @@ function agentView(record, now) {
     const today = count(record.todayTotalTokens);
     const week = weekTokens(record.recentDays);
     const accounts = Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(account => accountView(account, now)) : [];
+    const limits = limitViews(record.limits);
     return {
         name: String(record.name || record.id || "Unknown agent"),
         ready: record.ready === true,
         plan: capitalize(record.tierLabel),
-        limits: limitViews(record.limits),
+        limits: limits,
         balance: balanceView(record.balance),
         tokensText: today > 0 || week > 0 ? "Tokens: " + tokens(today) + " today, " + tokens(week) + " this week" : "",
         // How old the record is says nothing about one account, so it stays
@@ -206,7 +210,7 @@ function agentView(record, now) {
         // limits and notes, and the agent's notes, which describe the active
         // one, are not drawn again, but the age of the record is.
         age: ageText(record.updatedAt, now),
-        notes: notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now),
+        notes: notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, limits.length > 0, record.limitsFetchedAt, now),
         multi: accounts.length > 1,
         accounts: accounts
     };
