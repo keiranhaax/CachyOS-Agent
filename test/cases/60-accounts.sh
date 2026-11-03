@@ -265,6 +265,50 @@ if "$AGENT" account add bogus >/dev/null 2>&1; then fail "an unknown provider wa
 ok
 cleanup_sandbox
 
+# ---- use, home -----------------------------------------------------------------
+
+begin "use switches the account new sessions start as and home prints its path, nothing for Main"
+setup
+[[ -z $("$AGENT" account home claude) && $? == 0 ]] || fail "home printed something before any account exists"
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+stub notify-send
+stub cachyos-agent-usage-update
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+[[ -z $("$AGENT" account home claude) ]] || fail "home printed a path while Main is active"
+out=$("$AGENT" account use claude work)
+[[ $out == "New Claude sessions now use Work (Max 5x). Running sessions stay on Main." ]] || fail "use said: $out"
+[[ $("$AGENT" account home claude) == "$STATE/accounts/claude/work" ]] || fail "home is not the work home: $("$AGENT" account home claude)"
+[[ $(registry claude .active) == work ]] || fail "the registry does not record the switch"
+called notify-send "New Claude sessions use Work" || fail "no notification for a use that was not run in a terminal"
+eventually called cachyos-agent-usage-update "--limits-only" || fail "the usage record was not refreshed"
+[[ $("$AGENT" account use claude work) == "New Claude sessions already use Work (Max 5x)." ]] || fail "using the active account again said the wrong thing"
+"$AGENT" account use claude main >/dev/null
+[[ -z $("$AGENT" account home claude) ]] || fail "home printed a path after switching back to Main"
+"$AGENT" account use claude next >/dev/null
+[[ $(registry claude .active) == work ]] || fail "next did not move on to work"
+"$AGENT" account use claude next >/dev/null
+[[ $(registry claude .active) == main ]] || fail "next did not wrap around to main"
+"$AGENT" account use claude work >/dev/null
+"$AGENT" account use claude primary >/dev/null
+[[ $(registry claude .active) == main ]] || fail "'primary' did not select the first login"
+if out=$("$AGENT" account use claude nobody 2>&1); then fail "an unknown account was accepted"; fi
+[[ $out == *"No Claude account named nobody"* ]] || fail "no explanation: $out"
+if "$AGENT" account use claude work extra >/dev/null 2>&1; then fail "an extra argument was accepted"; fi
+ok
+cleanup_sandbox
+
+begin "a running session's pin beats the registry in home"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+"$AGENT" account use claude work >/dev/null 2>&1
+[[ -z $(CACHYOS_AGENT_CLAUDE_HOME='' "$AGENT" account home claude) ]] || fail "an empty pin (Main) did not win"
+[[ $(CACHYOS_AGENT_CLAUDE_HOME=/pinned "$AGENT" account home claude) == /pinned ]] || fail "a pin did not win"
+if "$AGENT" account home bogus >/dev/null 2>&1; then fail "home accepted an unknown provider"; fi
+ok
+cleanup_sandbox
+
 # ---- list --------------------------------------------------------------------
 
 begin "list shows signed-in accounts with their latest limits and --json parses"
@@ -302,6 +346,42 @@ jq -e 'keys == ["accounts","active","alert","switch","threshold"]
 sign_in codex u-cx cx@example.com
 sign_in codex u-cx2 cx2@example.com Second
 [[ $(registry codex '.accounts[1] | [.plan, .email] | join(",")') == "Plus,cx2@example.com" ]] || fail "codex identity: $(registry codex '.accounts[1]')"
+ok
+cleanup_sandbox
+
+# ---- exec ----------------------------------------------------------------------
+
+begin "exec runs the provider CLI as the selected account and pins it for children"
+setup
+declare -A home_env=([claude]=CLAUDE_CONFIG_DIR [codex]=CODEX_HOME [grok]=GROK_HOME)
+for provider in claude codex grok; do
+  pin=CACHYOS_AGENT_${provider^^}_HOME env_var=${home_env[$provider]}
+  sign_in "$provider" "u-$provider" "$provider@example.com"
+  sign_in "$provider" "u-$provider-2" "$provider-2@example.com" Work
+  home=$STATE/accounts/$provider/work
+  out=$("$AGENT" account exec "$provider" --continue 'a b')
+  [[ $out == "$env_var=unset
+$pin=
+args=--continue a b" ]] || fail "$provider on Main: $out"
+  "$AGENT" account use "$provider" work >/dev/null 2>&1
+  out=$("$AGENT" account exec "$provider" --continue 'a b')
+  [[ $out == "$env_var=$home
+$pin=$home
+args=--continue a b" ]] || fail "$provider on Work: $out"
+  out=$(env "$env_var=/explicit" "$AGENT" account exec "$provider")
+  [[ $out == "$env_var=/explicit
+$pin=unset
+args=" ]] || fail "$provider with an explicit home: $out"
+  out=$(env "$pin=" "$AGENT" account exec "$provider")
+  [[ $out == "$env_var=unset
+$pin=
+args=" ]] || fail "$provider in a session pinned to Main: $out"
+done
+if "$AGENT" account exec bogus >/dev/null 2>&1; then fail "exec accepted an unknown provider"; fi
+mkdir "$SANDBOX/tools"
+for tool in dirname readlink; do ln -s "$(type -P "$tool")" "$SANDBOX/tools/$tool"; done
+if out=$(PATH=$SANDBOX/tools "$REPO_ROOT/bin/cachyos-agent-account-exec" claude 2>&1); then fail "exec ran without the CLI"; fi
+[[ $out == *"Claude's CLI (claude) is not installed. Install it with: cachyos-agent install claude"* ]] || fail "no install hint: $out"
 ok
 cleanup_sandbox
 

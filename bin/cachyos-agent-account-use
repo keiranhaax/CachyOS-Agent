@@ -1,0 +1,55 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-account-use (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Choose which Claude, Codex, or Grok account new sessions use
+# cachyos-agent:args=[claude|codex|grok] [account|next]
+# cachyos-agent:examples=cachyos-agent account use work | cachyos-agent account use main | cachyos-agent account use codex next
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/accounts.sh
+source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: cachyos-agent account use [claude|codex|grok] [account|next]
+
+Choose the account new sessions start as. Running sessions stay on the account
+they started with. "next" cycles through the accounts, and so does naming none.
+The provider can be left out when it is your default agent.
+EOF
+}
+
+case ${1-} in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+esac
+acct_args "$@"
+set -- "${ACCT_ARGS[@]}"
+if ! acct_provider "${1-}" || (($# > 2)); then
+  usage >&2
+  exit 1
+fi
+provider=$1
+
+result=$(cachyos-agent-account-state use "$provider" "${2:-next}")
+
+previous=$(jq -r .previous.label <<<"$result")
+label=$(jq -r .active.label <<<"$result")
+active=$(jq -r '.active.label + (if (.active.plan // "") != "" then " (" + .active.plan + ")" else "" end)' <<<"$result")
+
+if [[ $(jq -r .previous.id <<<"$result") == "$(jq -r .active.id <<<"$result")" ]]; then
+  echo "New $ACCT_NAME sessions already use $active."
+else
+  echo "New $ACCT_NAME sessions now use $active. Running sessions stay on $previous."
+  # A terminal already shows the line above; a notification click or a script
+  # has nowhere to show it. The headline leaves out the plan so it stays on one line.
+  if [[ ! -t 1 ]]; then
+    ca_notify -- "New $ACCT_NAME sessions use $label" "Running sessions stay on $previous."
+  fi
+  # The usage record's own limits describe the active account.
+  acct_usage_refresh --limits-only "$provider"
+fi
