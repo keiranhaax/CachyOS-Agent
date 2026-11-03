@@ -26,17 +26,17 @@ agent, and the label asks for itself when you leave it out in a terminal.
 home, for when its sign-in has lapsed. Name "primary" for the login in
 ~/.claude, ~/.codex or ~/.grok. A login that turns out to be another account's
 is refused, and an added account's earlier sign-in is put back.
-EOF
-}
 
 Options may stand anywhere before --. A label that starts with a dash goes
 after it: cachyos-agent account add claude -- -side.
+EOF
+}
 
+# Options are read wherever they stand: a word after the provider that starts
+# with a dash is an option, never a label that would start a real sign-in.
 reauth=''
 words=()
 while (($#)); do
-# Options are read wherever they stand: a word after the provider that starts
-# with a dash is an option, never a label that would start a real sign-in.
   case $1 in
     -h | --help)
       usage
@@ -59,9 +59,9 @@ while (($#)); do
       usage >&2
       exit 1
       ;;
+    *) words+=("$1") ;;
   esac
   shift
-    *) words+=("$1") ;;
 done
 
 acct_args "${words[@]}"
