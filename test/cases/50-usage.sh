@@ -152,6 +152,49 @@ grep -q 'old.example.com' "$remembered" || fail "a provider the config dropped l
 ok
 cleanup_sandbox
 
+begin "a key sent to a loopback endpoint never goes through the environment's proxy"
+make_sandbox
+mkdir "$SANDBOX/empty"
+# Two listeners on loopback: the gateway the key is meant for and a stand-in for
+# the proxy http_proxy names. urllib sends everything to a proxy that it finds
+# there, loopback included, so the key would leave in clear text.
+seen=$(python3 -I - "$REPO_ROOT/bin/cachyos-agent-usage-deepseek" "$HOME" "$SANDBOX/empty" <<'PY'
+import http.server, json, subprocess, sys, threading
+
+def listener(log):
+  class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+      log.append({"path": self.path, "authorization": self.headers.get("Authorization")})
+      body = json.dumps({"balance_infos": [{"currency": "USD", "total_balance": "1.00"}]}).encode()
+      self.send_response(200)
+      self.send_header("Content-Length", str(len(body)))
+      self.end_headers()
+      self.wfile.write(body)
+    def log_message(self, *args):
+      pass
+  server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+  threading.Thread(target=server.serve_forever, daemon=True).start()
+  return server
+
+collector, home, empty = sys.argv[1:]
+via_proxy, via_gateway = [], []
+proxy, gateway = listener(via_proxy), listener(via_gateway)
+env = {
+  "PATH": empty, "HOME": home,
+  "XDG_CONFIG_HOME": home + "/.config", "XDG_STATE_HOME": home + "/.local/state", "XDG_CACHE_HOME": home + "/.cache",
+  "http_proxy": "http://127.0.0.1:%d" % proxy.server_port,
+  "DEEPSEEK_API_KEY": "sk-FAKE-TOKEN-123",
+  "DEEPSEEK_API_BASE_URL": "http://127.0.0.1:%d" % gateway.server_port,
+}
+subprocess.run([collector, "--force"], env=env, capture_output=True, timeout=60)
+print(json.dumps({"proxy": via_proxy, "gateway": via_gateway}))
+PY
+)
+is_json "$seen" '.proxy == []' || fail "the key went to the proxy: $seen"
+is_json "$seen" '.gateway | length == 1 and .[0].authorization == "Bearer sk-FAKE-TOKEN-123"' || fail "the gateway did not get the request: $seen"
+ok
+cleanup_sandbox
+
 begin "a collector run through a symlink finds the shared module and its sibling collectors"
 make_sandbox
 mkdir "$SANDBOX/empty" "$SANDBOX/link"

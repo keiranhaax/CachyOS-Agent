@@ -3611,6 +3611,9 @@ class LimitsCache:
 # -------------------------------------------------------------------- http
 
 
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
   # A redirect would carry the credential to whatever host it names, so it
   # answers as the 3xx status it is.
@@ -3618,9 +3621,20 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
     return None
 
 
-# Every collector request goes through urllib.request.urlopen, which the
-# collectors' tests replace, so the refusal is installed where urlopen looks.
-urllib.request.install_opener(urllib.request.build_opener(_RefuseRedirects()))
+class _DirectToLoopback(urllib.request.ProxyHandler):
+  # trusted_endpoint() lets a key go over plain HTTP to loopback because
+  # nothing on the way can read it. An http_proxy in the environment would
+  # carry that request, key and all, to the proxy in clear text, and urllib
+  # never skips loopback on its own.
+  def proxy_open(self, req, proxy, type):  # noqa: ANN001
+    if (urllib.parse.urlsplit(req.full_url).hostname or "").lower() in LOOPBACK_HOSTS:
+      return None
+    return super().proxy_open(req, proxy, type)
+
+
+# Every collector request goes through urllib.request.urlopen, so the
+# handlers are installed where urlopen looks.
+urllib.request.install_opener(urllib.request.build_opener(_DirectToLoopback(), _RefuseRedirects()))
 
 
 class HttpError(Exception):
@@ -3723,7 +3737,7 @@ def trusted_endpoint(url: str) -> bool:
     return False
   if parts.username is not None or parts.password is not None:
     return False
-  loopback = (parts.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+  loopback = (parts.hostname or "").lower() in LOOPBACK_HOSTS
   return parts.scheme == "https" or (parts.scheme == "http" and loopback)
 
 

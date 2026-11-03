@@ -32,6 +32,7 @@ from typing import Any
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from collectors import (  # noqa: E402
+  LOOPBACK_HOSTS,
   HttpError,
   LimitsCache,
   Stats,
@@ -118,7 +119,7 @@ def trusted_url(url: str) -> tuple[str, bool]:
   except ValueError as error:
     raise KimiError("Kimi endpoint URL is invalid") from error
   host = (parts.hostname or "").lower()
-  loopback = host in ("localhost", "127.0.0.1", "::1")
+  loopback = host in LOOPBACK_HOSTS
   if parts.scheme != "https" and not (loopback and parts.scheme == "http"):
     raise KimiError("Kimi endpoint must use HTTPS")
   if parts.username is not None or parts.password is not None:
