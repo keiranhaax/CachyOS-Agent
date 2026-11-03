@@ -208,6 +208,330 @@ expect "$(<"$XDG_CONFIG_HOME/cachyos-agent/default-agent")" "hermes" "saved agen
 ok
 cleanup_sandbox
 
+# ---- launch ----------------------------------------------------------------
+
+begin "launch with no default exits 1 and says how to choose one"
+setup
+run "$CA" launch --inline
+expect "$RC" 1 "exit status"
+contains "$ERR" "cachyos-agent default <name>" "hint"
+lacks "$ERR" "Agents:" "no list without --pick"
+ok
+cleanup_sandbox
+
+begin "launch --pick with no default lists the agents and how to choose"
+setup
+run "$CA" launch --pick
+expect "$RC" 1 "exit status"
+contains "$ERR" "cachyos-agent default <name>" "hint"
+for agent in "${ALL_AGENTS[@]}"; do contains "$ERR" "$agent" "the list names $agent"; done
+ok
+cleanup_sandbox
+
+begin "launch --inline runs claude with its auto mode and says so"
+setup
+stub claude
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$RC" 0 "exit status"
+expect "$(last_call claude)" "--permission-mode|auto" "claude arguments"
+contains "$ERR" "Claude Code with --permission-mode auto" "announcement"
+ok
+cleanup_sandbox
+
+begin "launch --inline passes each agent's own auto flags and prompt form"
+setup
+stub_agents claude codex opencode hermes
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "hello there"
+expect "$(last_call claude)" "--permission-mode|auto|--|hello there" "claude"
+CACHYOS_AGENT_DEFAULT=codex run "$CA" launch --inline --prompt "hello there"
+expect "$(last_call codex)" "--approve-for-me|--|hello there" "codex"
+CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --prompt "hello there"
+expect "$(last_call opencode)" "--auto|--prompt|hello there" "opencode"
+CACHYOS_AGENT_DEFAULT=hermes run "$CA" launch --inline --prompt "hello there"
+expect "$(last_call hermes)" "chat|--yolo|--tui|--query=hello there" "hermes with a prompt"
+CACHYOS_AGENT_DEFAULT=hermes run "$CA" launch --inline
+expect "$(last_call hermes)" "--yolo" "hermes without a prompt"
+ok
+cleanup_sandbox
+
+begin "hermes does not inherit the session source of the run that launched it"
+setup
+stub hermes 'printf "%s" "${HERMES_SESSION_SOURCE-unset}" >"${self%/stubs/*}/source"'
+HERMES_SESSION_SOURCE=gateway CACHYOS_AGENT_DEFAULT=hermes run "$CA" launch --inline --prompt "hi"
+expect "$(<"$SANDBOX/source")" "unset" "HERMES_SESSION_SOURCE inside hermes"
+HERMES_SESSION_SOURCE=gateway CACHYOS_AGENT_DEFAULT=hermes run "$CA" launch --inline
+expect "$(<"$SANDBOX/source")" "gateway" "without a prompt hermes is started as before"
+ok
+cleanup_sandbox
+
+begin "a prompt that starts with a dash and holds spaces and quotes reaches the agent intact"
+setup
+stub_agents claude opencode pi qwen
+tricky='-n it'\''s "quoted" $HOME `ls` * and --yolo'
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call claude)" "--permission-mode|auto|--|$tricky" "claude"
+CACHYOS_AGENT_DEFAULT=qwen run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call qwen)" "--yolo|--prompt-interactive=$tricky" "qwen binds the value"
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call pi)" "--|$tricky" "pi stops option parsing first"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" prompt --inline -- -dash "two words" 'q"uote'
+expect "$(last_call claude)" '--permission-mode|auto|--|-dash two words q"uote' "through cachyos-agent prompt"
+ok
+cleanup_sandbox
+
+begin "prompt without --inline opens the terminal, with no arguments it shows usage"
+setup
+stub_agents opencode konsole
+CACHYOS_AGENT_DEFAULT=opencode run "$CA" prompt "Review this project"
+expect "$RC" 0 "exit status"
+expect "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|opencode|--auto|--prompt|Review this project" "terminal arguments"
+run "$CA" prompt
+expect "$RC" 1 "no prompt is an error"
+contains "$ERR" "Usage: cachyos-agent prompt" "usage"
+run "$CA" prompt --help
+expect "$RC" 0 "--help"
+contains "$OUT" "Usage: cachyos-agent prompt" "help text"
+ok
+cleanup_sandbox
+
+begin "launch opens the configured terminal with the title and command words"
+setup
+stub_agents opencode alacritty
+TERMINAL=alacritty CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch
+expect "$(last_call alacritty)" "-T|CachyOS Agent|-e|opencode|--auto" "alacritty arguments"
+ok
+cleanup_sandbox
+
+begin "launch --agent beats the default, and a missing agent is refused"
+setup
+stub_agents claude hermes
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --agent hermes
+expect "$(call_count claude)" 0 "the default must not run"
+expect "$(last_call hermes)" "--yolo" "hermes arguments"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --agent codex
+expect "$RC" 1 "exit status"
+contains "$ERR" "Codex is not installed" "message"
+contains "$ERR" "cachyos-agent install codex" "install hint"
+expect "$(call_count claude)" 0 "no fallback to the default"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --agent nonsense
+expect "$RC" 1 "unknown agent"
+contains "$ERR" "Unsupported agent: nonsense" "message"
+ok
+cleanup_sandbox
+
+begin "launch refuses an unknown default and stray arguments"
+setup
+CACHYOS_AGENT_DEFAULT=bogus run "$CA" launch --inline
+expect "$RC" 1 "unknown default"
+run "$CA" launch --inline "do things"
+expect "$RC" 1 "stray argument"
+contains "$ERR" 'cachyos-agent prompt "do things"' "points to prompt"
+ok
+cleanup_sandbox
+
+begin "launch notifies instead of printing when it has no terminal and a bus"
+setup
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+stub notify-send
+run "$CA" launch --pick
+expect "$RC" 1 "exit status"
+contains "$(last_call notify-send)" "No default agent" "notification summary"
+contains "$(last_call notify-send)" "cachyos-agent default <name>" "notification body"
+ok
+cleanup_sandbox
+
+begin "every agent id starts, with and without a prompt"
+setup
+stub wl-copy 'cat >/dev/null'
+for agent in "${ALL_AGENTS[@]}"; do stub "$agent"; done
+for agent in "${ALL_AGENTS[@]}"; do
+  run "$CA" launch --inline --agent "$agent"
+  [[ $RC == 0 && $(call_count "$agent") == 1 ]] || fail "$agent did not start without a prompt (rc $RC): $ERR"
+  run "$CA" launch --inline --agent "$agent" --prompt "fix it"
+  [[ $RC == 0 && $(call_count "$agent") == 2 ]] || fail "$agent did not start with a prompt (rc $RC): $ERR"
+done
+ok
+cleanup_sandbox
+
+begin "launch --inline per-agent argv for the rest of the table"
+setup
+for agent in "${ALL_AGENTS[@]}"; do stub "$agent"; done
+stub wl-copy 'cat >/dev/null'
+declare -A WITH_PROMPT=(
+  [agy]="--dangerously-skip-permissions|--prompt-interactive|P Q"
+  [copilot]="--allow-all|--interactive|P Q"
+  [crush]="run|P Q"
+  [grok]="--permission-mode|bypassPermissions|--|P Q"
+  [cursor-agent]="--yolo|--trust|agent|--|P Q"
+  [muse]="--approval-mode|never|--|P Q"
+  [omp]="--auto-approve|--|P Q"
+  [ori]="code|--interactive|--prompt|P Q"
+  [pi]="--|P Q"
+  [kimi]="--prompt|P Q"
+  [qwen]="--yolo|--prompt-interactive=P Q"
+  [mcode]="--|P Q"
+  [kiro-cli]="chat|--trust-all-tools|--|P Q"
+  [kilo]="--auto|--prompt=P Q"
+  [devin]="--permission-mode|dangerous|--respect-workspace-trust|false|--|P Q"
+  [commandcode]="--yolo|--|P Q"
+  [dsh]="web"
+  [freebuff]=""
+)
+for agent in "${!WITH_PROMPT[@]}"; do
+  run "$CA" launch --inline --agent "$agent" --prompt "P Q"
+  expect "$(last_call "$agent")" "${WITH_PROMPT[$agent]}" "$agent with a prompt"
+done
+declare -A NO_PROMPT=(
+  [crush]="--yolo" [kimi]="--yolo" [ori]="code" [pi]="" [mcode]="" [freebuff]="" [dsh]="web"
+  [kiro-cli]="chat|--trust-all-tools" [cursor-agent]="--yolo|--trust" [amp]="--dangerously-allow-all"
+  [devin]="--permission-mode|dangerous|--respect-workspace-trust|false"
+  [claude]="--permission-mode|auto" [codex]="--approve-for-me" [opencode]="--auto" [grok]="--permission-mode|bypassPermissions"
+  [agy]="--dangerously-skip-permissions" [copilot]="--allow-all" [muse]="--approval-mode|never" [omp]="--auto-approve"
+  [qwen]="--yolo" [kilo]="--auto" [commandcode]="--yolo"
+)
+for agent in "${!NO_PROMPT[@]}"; do
+  run "$CA" launch --inline --agent "$agent"
+  expect "$(last_call "$agent")" "${NO_PROMPT[$agent]}" "$agent without a prompt"
+done
+ok
+cleanup_sandbox
+
+begin "an agent without an auto-approve flag is announced as such"
+setup
+stub pi
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline
+contains "$ERR" "starting Pi (it has no auto-approve flag)" "announcement"
+ok
+cleanup_sandbox
+
+begin "amp takes its first message on stdin, with its flag"
+setup
+stub amp 'cat >"${self%/stubs/*}/amp-stdin"'
+run "$CA" launch --inline --agent amp --prompt $'first "message"'
+expect "$(last_call amp)" "--dangerously-allow-all" "amp arguments"
+expect "$(<"$SANDBOX/amp-stdin")" 'first "message"' "amp stdin"
+ok
+cleanup_sandbox
+
+begin "dsh runs with full access and the prompt goes to the clipboard"
+setup
+stub dsh 'printf "%s" "${DSH_PERMISSION_MODE-}" >"${self%/stubs/*}/mode"'
+stub wl-copy 'cat >"${self%/stubs/*}/clip"'
+run "$CA" launch --inline --agent dsh --prompt "do -the thing"
+expect "$(last_call dsh)" "web" "dsh arguments"
+expect "$(<"$SANDBOX/mode")" "danger-full-access" "permission mode"
+expect "$(<"$SANDBOX/clip")" "do -the thing" "clipboard"
+run "$CA" launch --inline --agent dsh
+expect "$(call_count wl-copy)" 1 "no clipboard write without a prompt"
+ok
+cleanup_sandbox
+
+begin "a prompt for an agent that cannot take one goes to Klipper without wl-copy"
+setup
+stub_agents freebuff qdbus6
+run "$CA" launch --inline --agent freebuff --prompt "-hello there"
+expect "$(last_call qdbus6)" "org.kde.klipper|/klipper|setClipboardContents|-hello there" "qdbus6 arguments"
+expect "$(call_count freebuff)" 1 "freebuff started"
+ok
+cleanup_sandbox
+
+begin "with no clipboard tool the prompt is shown in the agent's own window"
+setup
+stub_agents freebuff
+run "$CA" launch --inline --agent freebuff --prompt "paste me"
+expect "$RC" 0 "exit status"
+contains "$OUT" "paste me" "the prompt is printed"
+contains "$OUT" "Freebuff has no way to take a starting prompt" "explanation"
+expect "$(last_call freebuff)" "" "freebuff still starts"
+ok
+cleanup_sandbox
+
+begin "launch --inline from a home with ~/Work starts there"
+setup
+stub claude 'pwd >"${self%/stubs/*}/cwd"'
+cd "$HOME"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/cwd")" "$HOME" "no ~/Work yet"
+mkdir "$HOME/Work"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/cwd")" "$HOME/Work" "started in ~/Work"
+mkdir "$HOME/Work/project"
+cd "$HOME/Work/project"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/cwd")" "$HOME/Work/project" "another directory is kept"
+cd "$REPO_ROOT"
+ok
+cleanup_sandbox
+
+begin "launch runs the user's own ~/.local/bin install when PATH lacks it"
+setup
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/bash\nprintf "%%s\\n" "$@" >"%s/user-install"\n' "$SANDBOX" >"$HOME/.local/bin/claude"
+chmod +x "$HOME/.local/bin/claude"
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "hi"
+expect "$RC" 0 "exit status"
+expect "$(tr '\n' '|' <"$SANDBOX/user-install")" "--permission-mode|auto|--|hi|" "arguments seen by the user's install"
+ok
+cleanup_sandbox
+
+begin "launch pins the active account's home when an accounts command exists"
+setup
+for agent in claude codex grok; do
+  stub "$agent" 'printf "%s|%s|%s|%s" "${CLAUDE_CONFIG_DIR-unset}" "${CODEX_HOME-unset}" "${GROK_HOME-unset}" "${CACHYOS_AGENT_CLAUDE_HOME-unset}" >"${self%/stubs/*}/env"'
+done
+stub cachyos-agent-account-home 'case $1 in claude) printf "/acct/claude-work" ;; codex) printf "/acct/codex-work" ;; grok) ;; esac'
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/env")" "/acct/claude-work|unset|unset|/acct/claude-work" "claude"
+expect "$(last_call cachyos-agent-account-home)" "claude" "account-home arguments"
+CACHYOS_AGENT_DEFAULT=codex run "$CA" launch --inline
+expect "$(<"$SANDBOX/env")" "unset|/acct/codex-work|unset|unset" "codex"
+CACHYOS_AGENT_DEFAULT=grok run "$CA" launch --inline
+expect "$(<"$SANDBOX/env")" "unset|unset|unset|unset" "grok on its primary account sets nothing"
+# A parent session's pin gives way to the current selection ...
+CLAUDE_CONFIG_DIR=/acct/old CACHYOS_AGENT_CLAUDE_HOME=/acct/old CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/env")" "/acct/claude-work|unset|unset|/acct/claude-work" "inherited pin"
+# ... but a home the user set by hand does not, and no stale pin follows it.
+CLAUDE_CONFIG_DIR=/mine CACHYOS_AGENT_CLAUDE_HOME=/acct/stale CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/env")" "/mine|unset|unset|unset" "explicit home"
+ok
+cleanup_sandbox
+
+begin "launch pins the primary account explicitly when the selected account is the primary one"
+setup
+stub claude 'printf "%s|%s" "${CLAUDE_CONFIG_DIR-unset}" "${CACHYOS_AGENT_CLAUDE_HOME-unset}" >"${self%/stubs/*}/env"'
+stub cachyos-agent-account-home
+CLAUDE_CONFIG_DIR=/acct/old CACHYOS_AGENT_CLAUDE_HOME=/acct/old CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline
+expect "$(<"$SANDBOX/env")" "unset|" "the primary account is pinned as empty, so the parent's account is dropped"
+ok
+cleanup_sandbox
+
+begin "launch carries the account pin into the terminal command"
+setup
+stub_agents claude konsole
+stub cachyos-agent-account-home 'printf "/acct/work"'
+CACHYOS_AGENT_DEFAULT=claude run "$CA" launch
+expect "$(last_call konsole)" "-p|tabtitle=CachyOS Agent|-e|env|-u|CLAUDE_CONFIG_DIR|CACHYOS_AGENT_CLAUDE_HOME=/acct/work|CLAUDE_CONFIG_DIR=/acct/work|claude|--permission-mode|auto" "terminal arguments"
+ok
+cleanup_sandbox
+
+begin "launch skips account pinning when there is no accounts command"
+setup
+# A private tree without cachyos-agent-account-home, whatever the checkout holds.
+TREE=$SANDBOX/tree
+mkdir -p "$TREE/bin" "$TREE/lib" "$TREE/data"
+cp "$REPO_ROOT"/bin/cachyos-agent-{launch,default} "$TREE/bin/"
+cp "$REPO_ROOT"/lib/{common,launcher}.sh "$TREE/lib/"
+cp "$REPO_ROOT/VERSION" "$TREE/"
+PATH=$SANDBOX/stubs:$TREE/bin:$TOOLS
+stub claude 'printf "%s" "${CLAUDE_CONFIG_DIR-unset}" >"${self%/stubs/*}/env"'
+CACHYOS_AGENT_DEFAULT=claude CLAUDE_CONFIG_DIR=/mine run "$TREE/bin/cachyos-agent-launch" --inline
+expect "$RC" 0 "exit status"
+expect "$(<"$SANDBOX/env")" "/mine" "the environment passes through"
+CACHYOS_AGENT_DEFAULT=claude run "$TREE/bin/cachyos-agent-launch" --inline
+expect "$(<"$SANDBOX/env")" "unset" "nothing is set"
+ok
+cleanup_sandbox
+
 # ---- install ---------------------------------------------------------------
 
 begin "install uses pacman for a repository package, in the visible terminal"
