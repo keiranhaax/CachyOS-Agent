@@ -32,7 +32,7 @@ for doc in "${DOCS[@]}"; do
     # A group of subcommands alone is its help; given more words, one must be a subcommand.
     [[ -n ${is_route[$group]-} || ${#words[@]} -eq 1 ]] && continue
     [[ -n ${words[1]-} && -n ${is_route["$group ${words[1]}"]-} ]] || unresolved+=("$doc: $mention")
-  done < <(grep -ohE "(^|[\`\"])[[:space:]]*cachyos-agent( [a-z][a-z0-9-]*)+" "$doc" || true)
+  done < <(grep -ohE "(^|[\`\"'])[[:space:]]*cachyos-agent( [a-z][a-z0-9-]*)+" "$doc" || true)
 done
 if ((${#unresolved[@]} > 0)); then
   fail "no such command: $(printf '%s; ' "${unresolved[@]}")"
