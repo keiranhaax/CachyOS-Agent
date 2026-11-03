@@ -552,6 +552,26 @@ err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
 ok
 cleanup_sandbox
 
+begin "a notification service that is not up yet still gets the message to stderr"
+two_accounts
+stub notify-send 'exit 1'
+"$AGENT" account mode claude auto 90 >/dev/null
+usage_record 0.97 0.1
+err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
+called notify-send "Main is at 97% of a Claude limit" || fail "notify-send was not tried"
+[[ $err == "Main is at 97% of a Claude limit: New Claude sessions now use Work (10%)."* ]] || fail "stderr said: $err"
+ok
+cleanup_sandbox
+
+begin "an offer that notify-send cannot show still reaches stderr and switches nothing"
+two_accounts
+stub notify-send 'echo switch; exit 1'
+err=$("$AGENT" account state offer claude work "Main is at 97%" "Work is at 10%." 2>&1 >/dev/null)
+[[ $err == "Main is at 97%: Work is at 10%." ]] || fail "stderr said: $err"
+active_is main || fail "the account changed although the notification never showed"
+ok
+cleanup_sandbox
+
 begin "without a desktop a notify-mode offer says how to switch"
 two_accounts
 unset DBUS_SESSION_BUS_ADDRESS

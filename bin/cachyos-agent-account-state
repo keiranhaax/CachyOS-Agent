@@ -753,8 +753,11 @@ def usage_by_account(provider: str) -> tuple[dict[str, Any], frozenset[str]]:
 
 # Notifications go through notify-send when it and a session bus exist, the
 # same gate as ca_notify in lib/common.sh, and otherwise to stderr, which the
-# journal keeps for a timer run. Title and body follow `--` so text made of
-# account labels can never be read as an option.
+# journal keeps for a timer run. So does one notify-send fails to deliver, as
+# when the timer fires at login before the notification service is up: the
+# alert is already stored, so nothing would send the message again. Title and
+# body follow `--` so text made of account labels can never be read as an
+# option.
 NOTIFY = ["notify-send", "--app-name=cachyos-agent"]
 
 
@@ -764,10 +767,9 @@ def can_notify() -> bool:
 
 
 def notify(title: str, body: str) -> None:
-  if can_notify():
-    subprocess.run([*NOTIFY, "--", title, body], check=False)
-  else:
-    print(f"{title}: {body}", file=sys.stderr)
+  if can_notify() and subprocess.run([*NOTIFY, "--", title, body], check=False).returncode == 0:
+    return
+  print(f"{title}: {body}", file=sys.stderr)
 
 
 # A notification that switches accounts when it is clicked. notify-send only
@@ -789,8 +791,10 @@ def offer_switch(provider: str, target: dict[str, Any], title: str, body: str) -
 # itself is clicked; either answer means yes. A notification that is closed or
 # expires prints nothing.
 def offer(provider: str, target: str, title: str, body: str) -> None:
-  answer = subprocess.run([*NOTIFY, "--action=default=Switch", "--action=switch=Switch", "--", title, body], capture_output=True, text=True).stdout.strip()
-  if answer:
+  shown = subprocess.run([*NOTIFY, "--action=default=Switch", "--action=switch=Switch", "--", title, body], capture_output=True, text=True)
+  if shown.returncode != 0:
+    print(f"{title}: {body}", file=sys.stderr)
+  elif shown.stdout.strip():
     bin_dir = str(Path(__file__).resolve().parent)
     env = {**os.environ, "PATH": os.environ.get("PATH", "") + os.pathsep + bin_dir}
     subprocess.run(["cachyos-agent-account-use", provider, target], env=env, check=False)
