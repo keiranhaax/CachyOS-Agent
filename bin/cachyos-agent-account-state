@@ -809,8 +809,11 @@ def notify(title: str, body: str) -> None:
 
 # What a waiter started in a unit of its own needs from this run: the gate
 # can_notify() read, the PATH that finds notify-send and the sibling commands,
-# and the state directory `account use` writes the new choice to.
-WAITER_ENV = ("PATH", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "CACHYOS_AGENT_STATE_DIR")
+# and where the registry is. This script reads CACHYOS_AGENT_STATE_DIR, but
+# `account use` is a shell command that works the directory out again from
+# XDG_STATE_HOME (and the config one from XDG_CONFIG_HOME), which the user
+# manager does not have when the user set them in a shell.
+WAITER_ENV = ("PATH", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "CACHYOS_AGENT_STATE_DIR", "XDG_STATE_HOME", "XDG_CONFIG_HOME")
 
 
 # Start the waiter so it outlives this process; True when it is running.

@@ -648,6 +648,29 @@ eventually active_is work || fail "clicking the notification did not switch"
 ok
 cleanup_sandbox
 
+begin "the offer started in its own unit finds the registry in a state directory only this shell names"
+two_accounts
+in_a_unit
+# The state lives under an XDG_STATE_HOME the user manager has never heard of.
+mv "$XDG_STATE_HOME" "$SANDBOX/custom-state"
+export XDG_STATE_HOME=$SANDBOX/custom-state
+STATE=$XDG_STATE_HOME/cachyos-agent
+usage_record 0.97 0.1
+# systemd-run starts the command in the user manager's environment plus what --setenv copies.
+# shellcheck disable=SC2016 # a program for the stub's own bash
+stub systemd-run 'unit_env=()
+while [[ $1 != -- ]]; do
+  case $1 in --setenv=*) name=${1#--setenv=}; unit_env+=("$name=${!name}") ;; esac
+  shift
+done
+shift
+env -i HOME="$HOME" "${unit_env[@]}" "$@" >/dev/null 2>&1 </dev/null &'
+stub notify-send 'case "$*" in *--action*) echo switch ;; esac'
+[[ -z $("$AGENT" account state autoswitch claude) ]] || fail "notify mode switched by itself"
+eventually active_is work || fail "the click switched another registry: the real one still says $(registry claude .active), $(ls -A "$HOME/.local/state/cachyos-agent" 2>/dev/null)"
+ok
+cleanup_sandbox
+
 begin "when no unit can be started the offer says how to switch"
 two_accounts
 in_a_unit
