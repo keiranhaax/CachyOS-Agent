@@ -245,6 +245,27 @@ out=$(FIX_ID=u-side FIX_EMAIL=side@example.com setsid -w "$AGENT" account add cl
 ok
 cleanup_sandbox
 
+begin "every browser family the table knows gets its own private-window flag"
+setup
+sign_in claude u-main main@example.com
+# Command name, then the flag that family takes. A flag the browser does not know, or a browser
+# missing from the table, would send the login through the window that is already signed in.
+for entry in firefox:--private-window librewolf:--private-window waterfox:--private-window floorp:--private-window \
+  zen-browser:--private-window microsoft-edge-stable:--inprivate chromium:--incognito google-chrome-stable:--incognito \
+  brave:--incognito vivaldi-stable:--incognito opera:--incognito; do
+  name=${entry%%:*}
+  flag=${entry#*:}
+  stub "$name"
+  stub xdg-settings "echo $name.desktop"
+  printf '[Desktop Entry]\nExec=%s %%u\n' "$name" >"$XDG_DATA_HOME/applications/$name.desktop"
+  sign_in claude "u-$name" "$name@example.com" "$name"
+  eventually called "$name" "$flag" || fail "$name was not given $flag: $(cat "$SANDBOX/calls/$name" 2>/dev/null)"
+  [[ $(<"$SANDBOX/calls/$name") == "$flag
+https://claude.ai/oauth" ]] || fail "$name got the wrong arguments: $(<"$SANDBOX/calls/$name")"
+done
+ok
+cleanup_sandbox
+
 begin "interrupting a sign-in stops the CLI and leaves no half-made account"
 setup
 sign_in claude u-main main@example.com
