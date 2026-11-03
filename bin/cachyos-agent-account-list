@@ -73,12 +73,15 @@ while IFS= read -r entry; do
   jq -r '"\(.name): \(if .switch == "manual" then "notify" else .switch end) mode at \(.threshold)%"' <<<"$entry"
   # A limit label comes from a vendor response and the other fields from the
   # account the CLI is signed in to, and any of them can hold an escape sequence.
+  # A window is named by its title where it has one: that is where a per-model window
+  # (Codex's Spark bucket) says whose it is, its label being the generic "5h window".
   jq -r "$ACCT_JQ_CLEAN"'
+    def limit_name: (.title | clean) as $title | if ($title | type) == "string" and $title != "" then $title else (.label | clean) end;
     .accounts[] | [
       (if .active then "*" else " " end), (.id | clean), (.label | clean),
       (.plan | clean | if . == "" then "-" else . end),
       (.email | clean | if . == "" then "-" else . end),
-      ([.limits[]? | select(.percent != null) | "\(.label | clean): \((.percent * 100) | round)%"] | join(", ") | if . == "" then "-" else . end)
+      ([.limits[]? | select(.percent != null) | "\(limit_name): \((.percent * 100) | round)%"] | join(", ") | if . == "" then "-" else . end)
     ] | join("\t")' <<<"$entry" | column -t -s $'\t' | sed 's/^/  /'
   echo
 done < <(jq -c '.[]' <<<"$accounts")

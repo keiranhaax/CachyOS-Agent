@@ -556,6 +556,23 @@ cleanup_sandbox
 
 # ---- rename, remove ------------------------------------------------------------
 
+begin "list names a limit by its title, as the usage report does, so a model's window is not the account's"
+setup
+sign_in claude u-main main@example.com
+mkdir -p "$STATE/usage"
+# Codex's per-model buckets carry the generic label and put the model only in the title.
+jq -n '{limits: [{label: "5h window", percent: 0.4}, {label: "Weekly (7-day)", percent: 0.2},
+  {label: "5h window", title: "GPT-5.3-Codex-Spark Session", percent: 0.05},
+  {label: "Weekly (7-day)", title: "GPT-5.3-Codex-Spark Weekly\u001b[2J", percent: 0.01},
+  {label: "Opus", title: "", percent: 0.1}]}' >"$STATE/usage/claude.json"
+out=$("$AGENT" account list claude)
+[[ $out == *"5h window: 40%, Weekly (7-day): 20%, GPT-5.3-Codex-Spark Session: 5%, GPT-5.3-Codex-Spark Weekly[2J: 1%, Opus: 10%"* ]] \
+  || fail "the limits are not named by title where there is one: $out"
+leftover=$(printf '%s' "$out" | tr -d '\n' | LC_ALL=C tr -d '[:print:]')
+[[ -z $leftover ]] || fail "a title brought a control character into the listing: $(printf '%s' "$out" | cat -v)"
+ok
+cleanup_sandbox
+
 begin "rename changes the label and the id but leaves the home where sessions are using it"
 setup
 sign_in claude u-main main@example.com
