@@ -1016,7 +1016,7 @@ setup
 if ! command -v kwriteconfig6 >/dev/null; then
   skip "kwriteconfig6 is not installed"
 else
-  for combo in A F5 , Meta Meta+Ctrl Shift+Alt Meta+Meta Super+A Meta+Alt+ Meta++A 'Meta+A+' 'Meta+ ' $'Meta+\t' $'Meta+A\nB' 'Meta+A B' 'Meta+A;touch x' '-h' ''; do
+  for combo in A F5 ',' Meta Meta+Ctrl Shift+Alt Meta+Meta Super+A Meta+Alt+ Meta++A 'Meta+A+' 'Meta+ ' $'Meta+\t' $'Meta+A\nB' 'Meta+A B' 'Meta+A;touch x' '-h' ''; do
     run "$CA" shortcut set "$combo"
     [[ $RC == 1 ]] || fail "accepted [$combo]"
   done
