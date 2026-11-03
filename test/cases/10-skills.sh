@@ -156,14 +156,55 @@ make_sandbox
 ok
 cleanup_sandbox
 
-begin "validate rejects broken links and bad frontmatter"
+# bad_tree: a copy of the repository in $SANDBOX (the validator also follows the links
+# in AGENTS.md and the READMEs, so the files they name must be there), which a case
+# then breaks in one place.
+bad_tree() {
+  tar -C "$REPO_ROOT" --exclude=.git --exclude=__pycache__ -cf - . | tar -C "$SANDBOX" -xf -
+}
+
+# rejected <what>: the validator must fail on $SANDBOX, and say <what> as one of its
+# problems. Each case below breaks one thing, so a check that stops working cannot
+# be hidden by another that still does.
+rejected() {
+  local status=0 out
+  out=$("$VALIDATE" "$SANDBOX" 2>&1) || status=$?
+  [[ $status -eq 1 ]] || fail "validator exited $status, not 1, for: $1"
+  [[ $out == *"problem: "*"$1"* ]] || fail "validator did not report [$1]: $out"
+  [[ $(grep -c '^problem: ' <<<"$out") == 1 ]] || fail "validator reported more than the one problem [$1]: $out"
+}
+
+begin "validate rejects a broken link"
 make_sandbox
-cp -a "$REPO_ROOT/agents" "$REPO_ROOT/AGENTS.md" "$SANDBOX/"
+bad_tree
 printf '[gone](missing-topic.md)\n' >>"$SANDBOX/agents/skills/cachyos/kernel.md"
+rejected "kernel.md: broken link target: missing-topic.md"
+ok
+cleanup_sandbox
+
+begin "validate rejects a frontmatter name that is not the directory's"
+make_sandbox
+bad_tree
 sed -i 's/^name: cachyos$/name: wrong/' "$SANDBOX/agents/skills/cachyos/SKILL.md"
-if "$VALIDATE" "$SANDBOX" >/dev/null 2>&1; then
-  fail "validator accepted broken links and mismatched frontmatter"
-fi
+rejected "cachyos: frontmatter name does not match directory name"
+ok
+cleanup_sandbox
+
+begin "validate rejects a topic file that AGENTS.md does not index"
+make_sandbox
+bad_tree
+printf '# New topic\n' >"$SANDBOX/agents/skills/cachyos/newtopic.md"
+printf '\n- [new](newtopic.md)\n' >>"$SANDBOX/agents/skills/cachyos/SKILL.md"
+rejected "AGENTS.md: does not reference agents/skills/cachyos/newtopic.md"
+ok
+cleanup_sandbox
+
+begin "validate rejects a topic file that SKILL.md does not list"
+make_sandbox
+bad_tree
+printf '# New topic\n' >"$SANDBOX/agents/skills/cachyos/newtopic.md"
+printf '\n- [new](agents/skills/cachyos/newtopic.md)\n' >>"$SANDBOX/AGENTS.md"
+rejected "agents/skills/cachyos/SKILL.md: does not reference newtopic.md"
 ok
 cleanup_sandbox
 
