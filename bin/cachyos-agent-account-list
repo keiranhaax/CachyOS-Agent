@@ -1,0 +1,81 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-account-list (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=List Claude, Codex, and Grok subscription accounts and their limits
+# cachyos-agent:args=[claude|codex|grok] [--json]
+# cachyos-agent:examples=cachyos-agent account list | cachyos-agent account list claude --json
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/accounts.sh
+source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: cachyos-agent account list [claude|codex|grok] [--json]
+
+List the accounts of one provider, or of all three, with the limits their
+usage record last saw. The active account is marked with *. --json prints one
+object per provider, each with its accounts and their limits.
+EOF
+}
+
+provider=''
+json=false
+for arg; do
+  case $arg in
+    claude | codex | grok) provider=$arg ;;
+    --json) json=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+accounts=$(cachyos-agent-account-state list ${provider:+"$provider"})
+
+# Join each account with the limits its provider's usage record last saw. With
+# a single account the collectors keep its limits at the record's top level. A
+# record that is missing or does not parse leaves the limits empty.
+records='{}'
+for p in "${ACCT_PROVIDERS[@]}"; do
+  if one=$(jq -c --arg p "$p" '{($p): .}' "$CACHYOS_AGENT_STATE_DIR/usage/$p.json" 2>/dev/null); then
+    records=$(jq -c --argjson one "$one" '. + $one' <<<"$records")
+  fi
+done
+accounts=$(jq -c --argjson records "$records" '
+  map(($records[.provider] // {}) as $record
+    | .accounts |= map(. as $a | . + {limits: (
+        if ($record.accounts // []) | length > 0 then
+          [$record.accounts[] | select(.id == $a.id) | .limits] | first // []
+        elif $a.primary then
+          $record.limits // []
+        else
+          []
+        end)}))' <<<"$accounts")
+
+if [[ $json == true ]]; then
+  echo "$accounts"
+  exit 0
+fi
+
+# A provider nobody has signed in to has nothing to list. Empty columns print
+# as "-" because column(1) would otherwise merge them away.
+while IFS= read -r entry; do
+  jq -e '.accounts | any(.signedIn)' <<<"$entry" >/dev/null || continue
+  # The registry stores notify mode as "manual"; this command says "notify".
+  jq -r '"\(.name): \(if .switch == "manual" then "notify" else .switch end) mode at \(.threshold)%"' <<<"$entry"
+  jq -r '.accounts[] | [
+      (if .active then "*" else " " end), .id, .label,
+      (.plan | if . == "" then "-" else . end),
+      (.email | if . == "" then "-" else . end),
+      ([.limits[]? | select(.percent != null) | "\(.label): \((.percent * 100) | round)%"] | join(", ") | if . == "" then "-" else . end)
+    ] | join("\t")' <<<"$entry" | column -t -s $'\t' | sed 's/^/  /'
+  echo
+done < <(jq -c '.[]' <<<"$accounts")

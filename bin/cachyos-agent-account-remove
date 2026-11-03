@@ -1,0 +1,49 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-account-remove (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Forget an added Claude, Codex, or Grok account
+# cachyos-agent:args=[claude|codex|grok] <account>
+# cachyos-agent:examples=cachyos-agent account remove work | cachyos-agent account remove codex side
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/accounts.sh
+source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: cachyos-agent account remove [claude|codex|grok] <account>
+
+Forget an account added with "account add": its home directory is deleted and
+you would have to sign in again to add it back. The login in ~/.claude, ~/.codex
+or ~/.grok is the Main account and cannot be removed here. The provider can be
+left out when it is your default agent.
+EOF
+}
+
+case ${1-} in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+esac
+acct_args "$@"
+set -- "${ACCT_ARGS[@]}"
+if ! acct_provider "${1-}" || (($# != 2)); then
+  usage >&2
+  exit 1
+fi
+provider=$1
+
+# Removing only deletes the account's home here. It never logs out, which
+# would revoke the sign-in for every other copy of it too.
+if [[ -t 0 ]]; then
+  read -r -p "Forget the $provider account $2? You'd have to sign in again to add it back. [y/N] " answer || exit 130
+  [[ $answer == [yY] || $answer == [yY][eE][sS] ]] || exit 130
+fi
+
+account=$(cachyos-agent-account-state remove "$provider" "$2")
+echo "Forgot $(jq -r .label <<<"$account")."
+# The usage record names the accounts that exist.
+acct_usage_refresh --limits-only "$provider"

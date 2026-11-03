@@ -1,0 +1,38 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-account-exec (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Run Claude, Codex, or Grok as the selected subscription account
+# cachyos-agent:args=<claude|codex|grok> [args...]
+# cachyos-agent:examples=cachyos-agent account exec claude --continue
+# cachyos-agent:hidden=true
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/accounts.sh
+source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+
+# `cachyos-agent launch` pins the selected account itself. Anything else that
+# starts a CLI, such as a shell shortcut, goes through this command to follow
+# the selection too; a CLI started any other way uses the login in ~/.<provider>.
+if ! acct_provider "${1-}"; then
+  echo "Usage: cachyos-agent-account-exec <claude|codex|grok> [args...]" >&2
+  exit 1
+fi
+provider=$1
+shift
+
+# Pin the resolved home for children, including an implicit Main account, so a
+# session keeps its account when the selection changes under it and the agents
+# it starts follow it. An explicit provider home takes precedence.
+if [[ -z ${!ACCT_HOME_ENV:-} ]]; then
+  account_home=$(cachyos-agent-account-home "$provider")
+  export "CACHYOS_AGENT_${provider^^}_HOME=$account_home"
+  if [[ -n $account_home ]]; then
+    export "$ACCT_HOME_ENV=$account_home"
+  fi
+fi
+
+agent_binary=$(type -P "$provider") ||
+  ca_die "$ACCT_NAME's CLI ($provider) is not installed. Install it with: cachyos-agent install $provider"
+exec "$agent_binary" "$@"

@@ -1,0 +1,32 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-account-home (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Print the config home of the active Claude, Codex, or Grok account
+# cachyos-agent:args=<claude|codex|grok>
+# cachyos-agent:hidden=true
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/accounts.sh
+source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+
+if ! acct_is_provider "${1-}"; then
+  echo "Usage: cachyos-agent-account-home <claude|codex|grok>" >&2
+  exit 1
+fi
+
+# Prints nothing while the primary account (~/.claude, ~/.codex, ~/.grok) is
+# active, so a launch only sets CLAUDE_CONFIG_DIR / CODEX_HOME / GROK_HOME when
+# there is somewhere else to point it. Without a registry no Python starts at
+# all: the launcher asks on every start.
+#
+# A running session pins its home, including an empty value for Main, in
+# CACHYOS_AGENT_<PROVIDER>_HOME. Claude's implicit default also selects
+# ~/.claude.json, so Main must stay implicit.
+pin=CACHYOS_AGENT_${1^^}_HOME
+if [[ -v $pin ]]; then
+  printf '%s' "${!pin}"
+elif [[ -f $CACHYOS_AGENT_STATE_DIR/accounts/$1.json ]]; then
+  exec cachyos-agent-account-state home "$1"
+fi

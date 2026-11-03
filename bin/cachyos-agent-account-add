@@ -1,0 +1,303 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-account-add (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Sign in to a Claude, Codex, or Grok subscription
+# cachyos-agent:args=[--reauth <account>] [claude|codex|grok] [label]
+# cachyos-agent:examples=cachyos-agent account add claude | cachyos-agent account add Work | cachyos-agent account add codex Side | cachyos-agent account add --reauth work claude
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/accounts.sh
+source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: cachyos-agent account add [--reauth <account>] [claude|codex|grok] [label]
+
+Sign in to a Claude, Codex, or Grok subscription. The CLI must already be
+installed. The first account for a provider signs in through your normal
+browser, where the CLI always looks. Every one after that signs in through a
+private browser window, so the account your browser is already signed in to is
+not picked up by mistake. The provider can be left out when it is your default
+agent, and the label asks for itself when you leave it out in a terminal.
+
+--reauth <account> signs an account that is already here in again, in its own
+home, for when its sign-in has lapsed. Name "primary" for the login in
+~/.claude, ~/.codex or ~/.grok. A login that turns out to be another account's
+is refused, and an added account's earlier sign-in is put back.
+EOF
+}
+
+reauth=''
+while [[ ${1-} == -* ]]; do
+  case $1 in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --reauth)
+      reauth=${2-}
+      if [[ -z $reauth || $reauth == -* ]]; then
+        usage >&2
+        exit 1
+      fi
+      shift
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+acct_args "$@"
+set -- "${ACCT_ARGS[@]}"
+if ! acct_provider "${1-}"; then
+  usage >&2
+  exit 1
+fi
+provider=$1
+label=${*:2}
+
+# The provider's CLI does the signing in; this command only chooses where it
+# looks for and keeps the login.
+if ! ca_cmd_present "$provider"; then
+  ca_die "$ACCT_NAME's CLI ($provider) is not installed. Install it with: cachyos-agent install $provider"
+fi
+
+# Cancelling stops the CLI's login too, and leaves no half-made home behind.
+home=''
+browser=''
+snapshot=''
+cleanup() {
+  if [[ -n $browser ]]; then
+    rm -f -- "$browser"
+  fi
+  if [[ -n $snapshot ]]; then
+    rm -rf -- "$snapshot"
+  fi
+  if [[ -n $home && -d $home && $home == */.pending/* ]]; then
+    rm -rf -- "$home"
+  fi
+}
+trap cleanup EXIT
+# Before a login runs pkill finds nothing to stop, and the status it returns
+# for that must not end the script ahead of the exit below.
+trap 'pkill -TERM -P $$ || true; exit 130' TERM INT
+
+# Bash holds a trap until a foreground command finishes, and a login waits on
+# the browser for as long as it takes. Running it in the background behind a
+# `wait` lets Ctrl-C stop it at once. It keeps this script's stdin, where a
+# pasted code goes.
+interruptible() {
+  "$@" <&0 &
+  wait $!
+}
+
+# Whether a provider's own home (~/.claude, ~/.codex, ~/.grok) is signed in.
+primary_signed_in() {
+  cachyos-agent-account-state list "$provider" | jq -e '.[0].accounts | any(.primary and .signedIn)' >/dev/null
+}
+
+# The CLI's own home, whatever this shell has pointed it at.
+login() {
+  interruptible env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u GROK_HOME "${ACCT_LOGIN[@]}"
+}
+
+# Set PRIVATE_BROWSER to the words that open a URL in a private window of the
+# default web browser: its command, from its desktop entry, and the flag its
+# family uses. Chromium-family browsers take --incognito (Edge, --inprivate)
+# and Firefox-family ones --private-window. Fails when the default is not a
+# browser this knows.
+find_private_browser() {
+  local desktop dir exec_line='' word flag
+  local -a dirs words=() command=()
+  PRIVATE_BROWSER=()
+  desktop=$(xdg-settings get default-web-browser 2>/dev/null) || return 1
+  [[ $desktop == *.desktop && $desktop != */* ]] || return 1
+  IFS=: read -ra dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  for dir in "${dirs[@]}"; do
+    if [[ -r $dir/applications/$desktop ]]; then
+      exec_line=$(awk '/^Exec=/ { sub(/^Exec=/, ""); print; exit }' "$dir/applications/$desktop")
+      break
+    fi
+  done
+  read -ra words <<<"$exec_line"
+  for word in "${words[@]}"; do
+    # Field codes (%U, %u) stand for the URLs a launcher would pass.
+    [[ $word == %* ]] || command+=("$word")
+  done
+  ((${#command[@]} > 0)) || return 1
+  case ${command[0]##*/} in
+    firefox* | librewolf* | waterfox* | floorp* | zen-browser*) flag=--private-window ;;
+    microsoft-edge*) flag=--inprivate ;;
+    chromium* | google-chrome* | brave* | vivaldi* | opera*) flag=--incognito ;;
+    *) return 1 ;;
+  esac
+  ca_cmd_present "${command[0]}" || return 1
+  PRIVATE_BROWSER=("${command[@]}" "$flag")
+}
+
+# Write the script $BROWSER names. Your main browser is almost certainly signed
+# in to the account you already have, and a login would quietly reuse it. The
+# CLIs open their login page through $BROWSER, so this points it at a private
+# window instead, through a small script because BROWSER names one command. A
+# default browser this does not know gets a script that only shows the link, so
+# the normal browser never opens by itself; that case returns 1.
+write_browser_script() {
+  if find_private_browser; then
+    {
+      printf '#!/bin/bash\nexec setsid -f'
+      printf ' %q' "${PRIVATE_BROWSER[@]}"
+      # shellcheck disable=SC2016 # "$1" is for the generated script to expand
+      printf ' "$1" >/dev/null 2>&1\n'
+    } >"$browser"
+  else
+    # Best effort: a CLI that starts this detached has no terminal to write to.
+    cat >"$browser" <<'EOF'
+#!/bin/bash
+{ printf 'Open this link in a private browser window:\n  %s\n' "$1"; } 2>/dev/null >/dev/tty || true
+EOF
+    return 1
+  fi
+}
+
+# private_login <config home> <whom>: run the CLI's login in that home with its
+# login page in a private window. The CLI's own exit status is returned.
+private_login() {
+  browser=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/cachyos-agent-browser.XXXXXX")
+  chmod +x "$browser"
+  if write_browser_script; then
+    cat <<EOF
+Sign in as $2 in the private window that opens.
+If a private window was already open, close it first, or $ACCT_SITE may reuse whoever it has signed in.
+EOF
+  else
+    cat <<EOF
+Your default browser is not one this command can open in a private window.
+Open the sign-in link in a private window yourself and sign in as $2.
+Close any private window that was already open first, or $ACCT_SITE may reuse whoever it has signed in.
+EOF
+  fi
+  printf '\nDon'\''t log out of the %s CLI to do this: logging out revokes the saved sign-in.\n\n' "$ACCT_NAME"
+  interruptible env BROWSER="$browser" "$ACCT_HOME_ENV=$1" "${ACCT_LOGIN[@]}"
+}
+
+# Signing an account that is already here in again, where it lives: the
+# primary home through the normal browser, an added one through a private
+# window. Its home is never recreated or removed. The login has to be the
+# account's own: a private window still signed in to someone else would write
+# that login over this one. An added home's own files are copied aside first
+# and put back when the login is refused. The primary's login also lives in
+# ~/.claude.json and beside the history the CLI keeps in ~/.claude, so that
+# one is left as the login wrote it and the refusal says so.
+reauthenticate() {
+  local account_home refusal before=''
+  if [[ $reauth == primary ]]; then
+    account_home=$HOME/.$provider
+  else
+    account_home=$(cachyos-agent-account-state homes "$provider" | awk -F'\t' -v id="$reauth" '$1 == id { print $2 }')
+  fi
+  [[ -n $account_home ]] || ca_die "no $ACCT_NAME account named $reauth"
+
+  if [[ $account_home == "$HOME/.$provider" ]]; then
+    # Nothing can be put back here, so only an account that is already added
+    # is refused; the login may be a new one a person chose on purpose.
+    echo "Sign in to $ACCT_NAME again in the browser window that opens."
+    login || ca_die "signing in to $ACCT_NAME did not finish"
+  else
+    before=$(cachyos-agent-account-state accountid "$provider" "$reauth")
+    snapshot=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/cachyos-agent-reauth.XXXXXX")
+    find "$account_home" -maxdepth 1 -type f -exec cp -p -- {} "$snapshot" \;
+    private_login "$account_home" "the account you're signing in again" ||
+      ca_die "signing in to $ACCT_NAME did not finish"
+  fi
+
+  if ! refusal=$(cachyos-agent-account-state reauth-check "$provider" "$reauth" "$before" 2>&1); then
+    if [[ -n $snapshot ]]; then
+      find "$account_home" -maxdepth 1 -type f -delete
+      cp -a -- "$snapshot"/. "$account_home"/
+      ca_die "$refusal Its earlier sign-in is back as it was. Close any private window that is signed in, and try again."
+    fi
+    ca_die "$refusal $ACCT_NAME is now signed in as the account you just used; sign in again as the one you meant."
+  fi
+  acct_usage_refresh --force "$provider"
+  printf '\nSigned in to %s again.\n' "$ACCT_NAME"
+}
+
+# The first agent signed in on a machine with none chosen becomes the default,
+# so `cachyos-agent launch` has one to run. A default someone already picked
+# is never touched.
+default_if_none() {
+  local file=$CACHYOS_AGENT_CONFIG_DIR/default-agent
+  if [[ -z $(acct_default_agent) && ! -e $file ]]; then
+    mkdir -p -- "$CACHYOS_AGENT_CONFIG_DIR"
+    printf '%s\n' "$provider" >"$file"
+    echo "$ACCT_NAME is now your default agent."
+  fi
+}
+
+# The first subscription signs in where the CLI always looks, through your
+# normal browser: nothing is signed in there yet that it could be mistaken for.
+first_sign_in() {
+  echo "Sign in to $ACCT_NAME in the browser window that opens."
+  if login && primary_signed_in; then
+    default_if_none
+    acct_usage_refresh --force "$provider"
+    printf '\nSigned in to %s.\n' "$ACCT_NAME"
+  else
+    ca_die "signing in to $ACCT_NAME did not finish"
+  fi
+}
+
+# One line naming an account: its label, and its email when it has one.
+describe() {
+  jq -r 'if type == "array" then . else [.] end | map(.label + (if .email != "" then " (" + .email + ")" else "" end)) | join(", ")'
+}
+
+additional_sign_in() {
+  local recovered account registration_status
+
+  # Retry the final registration of a completed, interrupted sign-in before
+  # asking for another browser login. Live sign-ins are never recovered.
+  recovered=$(cachyos-agent-account-state recover "$provider")
+  if [[ $(jq length <<<"$recovered") != 0 ]]; then
+    acct_usage_refresh --force "$provider"
+    printf 'Added %s.\n' "$(describe <<<"$recovered")"
+    return 0
+  fi
+
+  if [[ -z $label && -t 0 ]]; then
+    read -r -p "Name this $ACCT_NAME account (empty to use its email): " label || exit 130
+  fi
+
+  home=$(cachyos-agent-account-state begin "$provider" "$label" "$$")
+  # Registration decides from what the CLI wrote, not from its exit status: a
+  # login that was closed halfway leaves no identity and is refused there.
+  private_login "$home" "the account you're adding" || true
+
+  if account=$(cachyos-agent-account-state register "$provider" "$label" "$home" 2>&1); then
+    home=''
+    acct_usage_refresh --force "$provider"
+    printf '\nAdded %s.\n' "$(describe <<<"$account")"
+    echo "Switch to it with: cachyos-agent account use $provider $(jq -r .id <<<"$account")"
+  else
+    registration_status=$?
+    # Keep the home for cleanup when registration was explicitly interrupted.
+    # Storage failures preserve the sign-in and receipt for the next refresh.
+    if ((registration_status != 130)); then
+      home=''
+    fi
+    ca_die "$account"
+  fi
+}
+
+if [[ -n $reauth ]]; then
+  reauthenticate
+elif ! primary_signed_in; then
+  first_sign_in
+else
+  additional_sign_in
+fi
