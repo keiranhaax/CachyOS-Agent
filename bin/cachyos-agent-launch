@@ -171,7 +171,7 @@ build_command() {
       # --yolo belongs to the interactive command only; `crush run` never prompts.
       if [[ -n $prompt ]]; then
         auto=(run)
-        command=(crush run "$prompt")
+        command=(crush run -- "$prompt")
       else
         auto=(--yolo)
         command=(crush "${auto[@]}")

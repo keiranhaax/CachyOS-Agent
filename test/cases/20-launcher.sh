@@ -353,7 +353,7 @@ cleanup_sandbox
 
 begin "a prompt that starts with a dash and holds spaces and quotes reaches the agent intact"
 setup
-stub_agents claude opencode pi qwen
+stub_agents claude opencode pi qwen crush
 tricky='-n it'\''s "quoted" $HOME `ls` * and --yolo'
 CACHYOS_AGENT_DEFAULT=claude run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call claude)" "--permission-mode|auto|--|$tricky" "claude"
@@ -361,6 +361,8 @@ CACHYOS_AGENT_DEFAULT=qwen run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call qwen)" "--yolo|--prompt-interactive=$tricky" "qwen binds the value"
 CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --prompt "$tricky"
 expect "$(last_call pi)" "--|$tricky" "pi stops option parsing first"
+CACHYOS_AGENT_DEFAULT=crush run "$CA" launch --inline --prompt "$tricky"
+expect "$(last_call crush)" "run|--|$tricky" "crush run is a cobra command: -- keeps the prompt out of its flags"
 CACHYOS_AGENT_DEFAULT=claude run "$CA" prompt --inline -- -dash "two words" 'q"uote'
 expect "$(last_call claude)" '--permission-mode|auto|--|-dash two words q"uote' "through cachyos-agent prompt"
 ok
@@ -523,7 +525,7 @@ stub wl-copy 'cat >/dev/null'
 declare -A WITH_PROMPT=(
   [agy]="--dangerously-skip-permissions|--prompt-interactive|P Q"
   [copilot]="--allow-all|--interactive|P Q"
-  [crush]="run|P Q"
+  [crush]="run|--|P Q"
   [grok]="--permission-mode|bypassPermissions|--|P Q"
   [cursor-agent]="--yolo|--trust|agent|--|P Q"
   [muse]="--approval-mode|never|--|P Q"
