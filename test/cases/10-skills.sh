@@ -352,3 +352,189 @@ else
 fi
 ok
 cleanup_sandbox
+
+# ---- update and check-upstreams ----------------------------------------------
+
+# Both run against local Git repositories, which `git ls-remote` and `git fetch` read
+# by path, so nothing here needs a network.
+git_identity() {
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
+  export GIT_CONFIG_NOSYSTEM=1
+}
+
+# update_fixture: $UP, a bare upstream, and $CK, a clone of it holding the smallest
+# tree `skills update` accepts. Its provisioner and upstream checker are scripts
+# of their own that only record that they ran in $SANDBOX/ran.
+update_fixture() {
+  git_identity
+  UP=$SANDBOX/upstream.git
+  CK=$SANDBOX/checkout
+  git init -q --bare -b main "$UP"
+  git clone -q "$UP" "$CK" 2>/dev/null
+  mkdir -p "$CK/agents/skills/cachyos" "$CK/bin"
+  printf -- '---\nname: cachyos\ndescription: t\n---\n# body\n' >"$CK/agents/skills/cachyos/SKILL.md"
+  for tool in provision check-upstreams; do
+    printf '#!/bin/bash\necho "%s $*" >>"%s/ran"\n' "$tool" "$SANDBOX" >"$CK/bin/cachyos-agent-skills-$tool"
+    chmod +x "$CK/bin/cachyos-agent-skills-$tool"
+  done
+  git -C "$CK" add -A
+  git -C "$CK" commit -qm first
+  git -C "$CK" push -q -u origin main 2>/dev/null
+}
+
+# upstream_commit <message>: a commit on the upstream, made from a second clone.
+upstream_commit() {
+  rm -rf "$SANDBOX/other"
+  git clone -q "$UP" "$SANDBOX/other" 2>/dev/null
+  echo "$1" >"$SANDBOX/other/$1.txt"
+  git -C "$SANDBOX/other" add -A
+  git -C "$SANDBOX/other" commit -qm "$1"
+  git -C "$SANDBOX/other" push -q origin main 2>/dev/null
+}
+
+# update <args...>: run `skills update`; $status and $out. The log of what ran stays in $SANDBOX/ran.
+update() {
+  status=0
+  out=$("$AGENT" skills update "$@" 2>&1) || status=$?
+}
+
+begin "update refuses a checkout with local changes and runs nothing"
+make_sandbox
+update_fixture
+upstream_commit ahead
+before=$(git -C "$CK" rev-parse HEAD)
+echo dirty >"$CK/untracked.txt"
+update "$CK"
+[[ $status -eq 1 && $out == *"refuse: checkout has local changes"* ]] || fail "a dirty checkout was not refused ($status): $out"
+[[ $(git -C "$CK" rev-parse HEAD) == "$before" ]] || fail "the dirty checkout was moved"
+[[ ! -e $SANDBOX/ran ]] || fail "the provisioner or the checker ran for a refused update: $(<"$SANDBOX/ran")"
+ok
+cleanup_sandbox
+
+begin "update refuses a branch with no upstream"
+make_sandbox
+update_fixture
+git -C "$CK" branch -q --unset-upstream
+update "$CK"
+[[ $status -eq 1 && $out == *"refuse: current branch has no configured upstream"* ]] || fail "a branch without an upstream was not refused ($status): $out"
+[[ ! -e $SANDBOX/ran ]] || fail "something ran for a refused update"
+ok
+cleanup_sandbox
+
+begin "update fast-forwards a checkout that is behind, then provisions and checks"
+make_sandbox
+update_fixture
+upstream_commit ahead
+update "$CK"
+[[ $status -eq 0 ]] || fail "update exited $status: $out"
+[[ $(git -C "$CK" rev-parse HEAD) == "$(git -C "$UP" rev-parse main)" ]] || fail "the checkout was not fast-forwarded"
+[[ $(git -C "$CK" rev-list --merges --count HEAD) == 0 ]] || fail "update made a merge commit"
+[[ $(<"$SANDBOX/ran") == "provision $CK/agents/skills"$'\n'"check-upstreams $CK" ]] || fail "the provisioner and the checker did not run, in that order: $(<"$SANDBOX/ran")"
+ok
+cleanup_sandbox
+
+begin "update says a current checkout is current, and leaves one that is ahead alone"
+make_sandbox
+update_fixture
+update "$CK"
+[[ $status -eq 0 && $out == *"source checkout is current"* ]] || fail "a current checkout ($status): $out"
+echo mine >"$CK/mine.txt"
+git -C "$CK" add -A
+git -C "$CK" commit -qm mine
+mine=$(git -C "$CK" rev-parse HEAD)
+update "$CK"
+[[ $status -eq 0 && $out == *"local checkout is ahead of origin/main"* ]] || fail "an ahead checkout ($status): $out"
+[[ $(git -C "$CK" rev-parse HEAD) == "$mine" ]] || fail "update moved a checkout that was ahead"
+ok
+cleanup_sandbox
+
+begin "update refuses a diverged branch without merging"
+make_sandbox
+update_fixture
+upstream_commit theirs
+echo mine >"$CK/mine.txt"
+git -C "$CK" add -A
+git -C "$CK" commit -qm mine
+mine=$(git -C "$CK" rev-parse HEAD)
+update "$CK"
+[[ $status -eq 1 && $out == *"have diverged"* ]] || fail "a diverged branch was not refused ($status): $out"
+[[ $(git -C "$CK" rev-parse HEAD) == "$mine" && $(git -C "$CK" rev-list --merges --count HEAD) == 0 ]] || fail "update merged into a diverged branch"
+[[ ! -e $SANDBOX/ran ]] || fail "something ran for a refused update"
+ok
+cleanup_sandbox
+
+begin "update refuses a ROOT inside a larger checkout"
+make_sandbox
+update_fixture
+mkdir -p "$CK/sub"
+update "$CK/sub"
+[[ $status -eq 1 && $out == *"refuse: ROOT is inside a larger Git checkout"* ]] || fail "a subdirectory of a checkout was accepted ($status): $out"
+ok
+cleanup_sandbox
+
+# reviewed_fixture: $SRC, a repository with a reviewed commit and a later head that
+# touches only other/, and $REVIEWED and $HEAD_COMMIT; and $ROOT holding a manifest.
+reviewed_fixture() {
+  git_identity
+  SRC=$SANDBOX/source
+  ROOT=$SANDBOX/root
+  mkdir -p "$ROOT"
+  git init -q -b main "$SRC"
+  mkdir -p "$SRC/watched" "$SRC/other"
+  echo 1 >"$SRC/watched/a"
+  echo 1 >"$SRC/other/b"
+  git -C "$SRC" add -A
+  git -C "$SRC" commit -qm one
+  REVIEWED=$(git -C "$SRC" rev-parse HEAD)
+  echo 2 >"$SRC/other/b"
+  git -C "$SRC" commit -qam two
+  HEAD_COMMIT=$(git -C "$SRC" rev-parse HEAD)
+}
+
+# check <manifest rows...>: write ROOT/upstreams.tsv with those rows (tab-separated
+# by the caller) and run `skills check-upstreams`; $status and $out.
+check() {
+  printf '%s\n' "$@" >"$ROOT/upstreams.tsv"
+  status=0
+  out=$("$AGENT" skills check-upstreams "$ROOT" 2>&1) || status=$?
+}
+
+begin "check-upstreams exits 0 for a current row and for a moved head with nothing in scope"
+make_sandbox
+reviewed_fixture
+check "$(printf 'same\t%s\trefs/heads/main\t%s' "$SRC" "$HEAD_COMMIT")"
+[[ $status -eq 0 && $out == *"current: same ${HEAD_COMMIT:0:12}"* && $out == *"all 1 reviewed upstream branch(es) are current"* ]] || fail "a current row ($status): $out"
+check "$(printf 'scoped\t%s\trefs/heads/main\t%s\twatched' "$SRC" "$REVIEWED")"
+[[ $status -eq 0 && $out == *"current in scope: scoped head moved ${REVIEWED:0:12} -> ${HEAD_COMMIT:0:12}; no changes under: watched"* ]] || fail "a moved head outside the scope ($status): $out"
+ok
+cleanup_sandbox
+
+begin "check-upstreams exits 1 when a head moved and anything in scope changed"
+make_sandbox
+reviewed_fixture
+check "$(printf 'plain\t%s\trefs/heads/main\t%s' "$SRC" "$REVIEWED")"
+[[ $status -eq 1 && $out == *"review required: plain ${REVIEWED:0:12} -> ${HEAD_COMMIT:0:12}"* && $out == *"1 of 1 upstream branch(es) changed"* ]] || fail "a row without paths ($status): $out"
+check "$(printf 'scoped\t%s\trefs/heads/main\t%s\tother' "$SRC" "$REVIEWED")"
+[[ $status -eq 1 && $out == *"(1 in-scope commit(s) under: other)"* ]] || fail "a row with a change in scope ($status): $out"
+check "$(printf 'same\t%s\trefs/heads/main\t%s' "$SRC" "$HEAD_COMMIT")" "$(printf 'plain\t%s\trefs/heads/main\t%s' "$SRC" "$REVIEWED")"
+[[ $status -eq 1 && $out == *"current: same"* && $out == *"review required: plain"* && $out == *"1 of 2 upstream branch(es) changed"* ]] || fail "one row current, one not ($status): $out"
+ok
+cleanup_sandbox
+
+begin "check-upstreams exits 2 when the check cannot be completed"
+make_sandbox
+reviewed_fixture
+check "$(printf 'gone\t%s/nowhere\trefs/heads/main\t%s' "$SANDBOX" "$REVIEWED")"
+[[ $status -eq 2 && $out == *"failed to query gone"* ]] || fail "an unreachable upstream ($status): $out"
+check "$(printf 'bad\t%s\trefs/heads/main\tnot-a-commit' "$SRC")"
+[[ $status -eq 2 && $out == *"invalid row"* ]] || fail "a row with no commit ($status): $out"
+check "$(printf 'nobranch\t%s\trefs/heads/missing\t%s' "$SRC" "$REVIEWED")"
+[[ $status -eq 2 && $out == *"no branch head returned for nobranch"* ]] || fail "a branch that is not there ($status): $out"
+check "# only a comment"
+[[ $status -eq 2 && $out == *"no upstream entries found"* ]] || fail "a manifest with no rows ($status): $out"
+rm "$ROOT/upstreams.tsv"
+status=0
+out=$("$AGENT" skills check-upstreams "$ROOT" 2>&1) || status=$?
+[[ $status -eq 2 && $out == *"cannot read upstream manifest"* ]] || fail "no manifest ($status): $out"
+ok
+cleanup_sandbox
