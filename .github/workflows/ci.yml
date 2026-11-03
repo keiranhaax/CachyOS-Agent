@@ -20,10 +20,13 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
       - name: Install check tools
-        run: pacman -Syu --noconfirm shellcheck namcap jq python
+        run: pacman -Syu --noconfirm shellcheck namcap jq python gawk kconfig desktop-file-utils fish nodejs
 
-      - name: Shellcheck scripts
-        run: shellcheck -x bin/* lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
+      - name: Shellcheck the Bash scripts
+        run: shellcheck -x $(grep -lE '^#!/bin/bash' bin/*) lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
+
+      - name: Compile the Python commands
+        run: PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
 
       - name: Validate skill tree
         run: ./bin/cachyos-agent-skills-validate
