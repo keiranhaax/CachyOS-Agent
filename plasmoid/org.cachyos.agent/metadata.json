@@ -1,0 +1,20 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "widisberto@hotmail.com",
+                "Name": "keiranhaax"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Usage limits, balances and token counts for your AI coding agents",
+        "EnabledByDefault": true,
+        "Icon": "utilities-terminal",
+        "Id": "org.cachyos.agent",
+        "License": "GPL-3.0-only",
+        "Name": "CachyOS Agents",
+        "Website": "https://github.com/keiranhaax/CachyOS-Agent"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
