@@ -17,7 +17,7 @@ ALL_AGENTS=(pi omp opencode ori claude codex grok agy hermes copilot crush curso
 TOOLS=$(mktemp -d)
 SANDBOXES+=("$TOOLS")
 for tool in bash env cat jq dirname readlink mkdir mktemp mv rm cp ln grep head tr sed cut sort basename touch chmod \
-  script kwriteconfig6 kreadconfig6 desktop-file-validate fish node; do
+  script sleep mkfifo kwriteconfig6 kreadconfig6 desktop-file-validate fish node; do
   if path=$(command -v "$tool" 2>/dev/null); then
     ln -s "$path" "$TOOLS/$tool"
   fi
@@ -196,6 +196,53 @@ contains "$ERR" "could not install Codex" "message"
 [[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "saved a default after a failed install"
 expect "$(call_count cachyos-agent-launch)" 0 "launch must not run"
 ok
+cleanup_sandbox
+
+begin "default --install holds its window after a failed install until Enter"
+setup
+# The window opened for an install closes when its command ends, so the reason
+# an install failed (the vendor's command, a declined sudo) would flash by.
+# stdin is a pipe that only the test writes to, to tell "waiting" from "gone".
+stub cachyos-agent-install 'echo "npm install -g example" >&2; exit 1'
+stub cachyos-agent-launch
+mkfifo "$SANDBOX/enter"
+"$CA" default --install pi <"$SANDBOX/enter" >/dev/null 2>"$SANDBOX/window" &
+window=$!
+exec 3>"$SANDBOX/enter"
+for _ in {1..50}; do
+  kill -0 "$window" 2>/dev/null || break
+  [[ $(<"$SANDBOX/window") == *"Press Enter"* ]] && break
+  sleep 0.1
+done
+contains "$(<"$SANDBOX/window")" "npm install -g example" "the install's own advice"
+contains "$(<"$SANDBOX/window")" "could not install Pi" "the failure"
+contains "$(<"$SANDBOX/window")" "Press Enter" "the prompt"
+if kill -0 "$window" 2>/dev/null; then
+  echo >&3
+else
+  fail "the window closed without waiting for Enter"
+fi
+exec 3>&-
+wait "$window" && RC=0 || RC=$?
+expect "$RC" 1 "exit status once Enter is pressed"
+expect "$(call_count cachyos-agent-launch)" 0 "launch must not run"
+ok
+cleanup_sandbox
+
+begin "default at a terminal does not wait after a failed install"
+setup
+# Only the window opened for the install is held; at your own terminal the
+# error is already on screen and the prompt returns.
+if ! $PTY_OK; then
+  skip "script cannot give this process a terminal"
+else
+  stub cachyos-agent-install 'exit 1'
+  tty_run "$CA" default pi
+  expect "$RC" 1 "exit status"
+  contains "$OUT" "could not install Pi" "the failure"
+  lacks "$OUT" "Press Enter" "no wait outside the install window"
+  ok
+fi
 cleanup_sandbox
 
 begin "default with a missing agent at a terminal installs it right there"

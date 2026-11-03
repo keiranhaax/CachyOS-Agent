@@ -21,6 +21,10 @@ With no agent, print the default agent (nothing when none is chosen).
 With an agent, install it when missing, make it the default, and launch it.
 CACHYOS_AGENT_DEFAULT overrides the saved choice.
 
+  --install  what the install window runs (opened when there is no terminal
+             to install in): it waits for Enter when the install fails, so
+             the window does not close on the reason
+
 Agents: ${CA_AGENT_IDS[*]}
 EOF2
 }
@@ -34,6 +38,14 @@ print_default() {
   if [[ -n $agent ]]; then
     printf '%s\n' "$agent"
   fi
+}
+
+# The terminal opened for an install closes when its command ends, and with it
+# the install's advice (the vendor's command, a declined sudo) and the reason it
+# failed. Omarchy's floating terminal holds on failure for the same reason.
+hold_window() {
+  printf 'Press Enter to close this window. ' >&2
+  read -r _ || true
 }
 
 main() {
@@ -66,7 +78,11 @@ main() {
     if ! $installing && [[ ! -t 0 ]]; then
       ca_terminal_exec --title "CachyOS Agent" cachyos-agent-default --install "$agent"
     fi
-    cachyos-agent-install "$agent" || ca_die "could not install $name"
+    if ! cachyos-agent-install "$agent"; then
+      # The trap runs on ca_die's exit, after it has printed the reason.
+      if $installing; then trap hold_window EXIT; fi
+      ca_die "could not install $name"
+    fi
   fi
 
   printf '%s\n' "$agent" | ca_atomic_write "$AGENT_FILE"
