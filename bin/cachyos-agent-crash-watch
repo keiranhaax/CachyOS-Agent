@@ -8,6 +8,30 @@
 # structured COREDUMP_* fields, which carry more than the core filenames do.
 set -euo pipefail
 
+usage() {
+  cat <<'USAGE'
+Usage: cachyos-agent crash watch
+
+Follow the journal and announce each crash of one of your programs, as the
+cachyos-agent-crash-watch user service does. It takes no arguments and runs until
+interrupted; started by hand while the service is on, every crash is announced
+twice. Turn the service on or off with: cachyos-agent crash capture
+USAGE
+}
+
+# Before anything is read or followed: a mistyped option must not start a
+# second long-running watcher.
+if (($# > 0)); then
+  case $1 in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+  esac
+  usage >&2
+  exit 1
+fi
+
 # shellcheck source=../lib/common.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 # shellcheck source=../lib/crash.sh

@@ -372,6 +372,21 @@ run env CACHYOS_AGENT_CRASH_DEDUPE_SECONDS='1+1' "$AGENT" crash watch
 ok
 cleanup_sandbox
 
+begin "crash watch answers -h and --help and refuses any argument instead of following the journal"
+make_sandbox
+watch_stubs
+for flag in -h --help; do
+  run "$AGENT" crash watch "$flag"
+  ((status == 0)) && [[ $out == "Usage: cachyos-agent crash watch"* ]] || fail "$flag did not print usage ($status): $out"
+done
+for word in --bogus now ''; do
+  run "$AGENT" crash watch "$word"
+  ((status == 1)) && [[ $out == "Usage: cachyos-agent crash watch"* ]] || fail "'$word' was not refused with usage ($status): $out"
+done
+[[ ! -e $SANDBOX/calls/journalctl ]] || fail "the journal was followed for a request that is not a watch"
+ok
+cleanup_sandbox
+
 begin "crash watch is hidden from the listing but runs through the dispatcher"
 make_sandbox
 [[ $("$AGENT" commands) != *"cachyos-agent crash watch"* ]] || fail "the watcher is listed"
