@@ -19,10 +19,10 @@ make_tree() {
   cp "$REPO_ROOT/VERSION" "$tree/"
   {
     printf '# fixture recipes\n\n'
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      huge huge:120b 80 96 65536 'the large one' \
-      mid mid:30b 24 32 32768 'the middle one' \
-      tiny tiny:1b 8 16 32768 'the small one'
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      huge huge:120b 80 96 65536 66 'the large one' \
+      mid mid:30b 24 32 32768 19 'the middle one' \
+      tiny tiny:1b 8 16 32768 1 'the small one'
   } >"$tree/data/local-models.tsv"
   TREE=$tree
   TREE_AGENT=$tree/bin/cachyos-agent
@@ -48,6 +48,11 @@ set_machine() {
   stub nvidia-smi "printf '%s\\n'$lines"
 }
 
+# set_free <bytes>: what the stubbed df reports as available.
+set_free() {
+  stub df "printf '%s\\n' Avail $1"
+}
+
 # add_amd_card <n> <bytes>: a card directory as amdgpu exposes it.
 add_amd_card() {
   mkdir -p "$SANDBOX/drm/card$1/device"
@@ -61,7 +66,9 @@ add_amd_card() {
 # create-started and wait on the hang fifo for a signal. `systemctl enable|start`
 # begins the service, stop ends it, and the stubbed pacman makes an ollama
 # appear, as installing the package would. `pacman -Q <pkg>` succeeds unless
-# not-installed-<pkg> exists, and installing <pkg> removes that file.
+# not-installed-<pkg> exists, and installing <pkg> removes that file. df reports
+# 10 TB free on the models directory, a directory in the sandbox, unless a test
+# stubs it again.
 # Without install_ollama the stubbed ollama is present from the start.
 # shellcheck disable=SC2016 # the stub bodies are scripts, not strings to expand here
 fake_service() {
@@ -96,6 +103,9 @@ if [[ $1 == -Q ]]; then [[ ! -e $state/not-installed-$2 ]]; exit; fi
 rm -f "$state/not-installed-${!#}"
 if [[ -x $state/pkg/ollama ]]; then cp "$state/pkg/ollama" "$state/stubs/ollama"; fi'
   stub sleep
+  stub df 'printf "%s\n" Avail 9999999999999'
+  mkdir -p "$SANDBOX/models"
+  export CACHYOS_AGENT_MODELS_DIR=$SANDBOX/models
 }
 
 # narrow_path: narrow PATH to what the command really needs plus the stubs, so
@@ -163,7 +173,7 @@ expect_in() {
 
 # expect_row <id> <fit>: list shows a row of that id with that fit.
 expect_row() {
-  grep -Eq "^[ *] $1 +[^ ]+ +[0-9]+K +$2 " <<<"$OUT" || fail "$1 is not listed as $2 (output: $OUT)"
+  grep -Eq "^[ *] $1 +[^ ]+ +[0-9]+K +[0-9]+ GB +$2 " <<<"$OUT" || fail "$1 is not listed as $2 (output: $OUT)"
 }
 
 state_dir() {
@@ -172,12 +182,12 @@ state_dir() {
 
 # ---- the shipped recipes --------------------------------------------------------
 
-begin "data/local-models.tsv: unique ids, numeric limits, an Ollama tag, a context an agent can use"
+begin "data/local-models.tsv: unique ids, numeric limits, an Ollama tag, a context an agent can use, a download size"
 make_sandbox
 set_machine 8188 64
 declare -A seen=()
 rows=0
-while IFS=$'\t' read -r id model vram ram ctx note; do
+while IFS=$'\t' read -r id model vram ram ctx download note; do
   [[ -n $id && $id != '#'* ]] || continue
   rows=$((rows + 1))
   [[ -z ${seen[$id]+x} ]] || fail "duplicate id $id"
@@ -186,6 +196,7 @@ while IFS=$'\t' read -r id model vram ram ctx note; do
   [[ $model =~ ^[a-z0-9._/-]+:[A-Za-z0-9._-]+$ ]] || fail "$id: $model is not name:tag"
   [[ $vram =~ ^[1-9][0-9]*$ && $ram =~ ^[1-9][0-9]*$ ]] || fail "$id: limits are not positive numbers without a leading zero"
   if ! [[ $ctx =~ ^[1-9][0-9]*$ ]] || ((ctx < 32768)); then fail "$id: context $ctx is not a number an agent can use"; fi
+  if ! [[ $download =~ ^[1-9][0-9]*$ ]] || ((download >= ram)); then fail "$id: download_gb $download is not a size smaller than min_ram_gib $ram"; fi
   [[ -n $note ]] || fail "$id: no note"
 done <"$REPO_ROOT/data/local-models.tsv"
 ((rows >= 5)) || fail "only $rows recipes"
@@ -334,20 +345,24 @@ begin "a malformed or duplicate recipe row stops with its line number"
 make_sandbox
 set_machine 8188 32
 rows=(
-  $'broken\tbroken:1b\tmany\t16\t32768\tvram is not a number'
-  $'broken\tbroken:1b\t8\tmany\t32768\tram is not a number'
-  $'broken\tbroken:1b\t8\t16\tbig\tcontext is not a number'
-  $'broken\tbroken:1b\t08\t16\t32768\tvram has a leading zero, which bash reads as octal'
-  $'broken\tbroken:1b\t8\t010\t32768\tram has a leading zero'
-  $'broken\tbroken:1b\t8\t16\t032768\tcontext has a leading zero'
-  $'broken\tbroken:1b\t0\t16\t32768\tvram is zero'
-  $'broken\tbroken:1b\t8\t0\t32768\tram is zero'
-  $'broken\tbroken:1b\t8\t16\t0\tcontext is zero'
-  $'broken\tbroken:1b\t8\t16\t32768'
-  $'broken\tbroken:1b\t8\t16\t32768\t'
-  $'Broken\tbroken:1b\t8\t16\t32768\tid has a capital'
-  $'broken\ttwo words\t8\t16\t32768\tmodel has a space'
-  'broken broken:1b 8 16 32768 spaces instead of tabs'
+  $'broken\tbroken:1b\tmany\t16\t32768\t2\tvram is not a number'
+  $'broken\tbroken:1b\t8\tmany\t32768\t2\tram is not a number'
+  $'broken\tbroken:1b\t8\t16\tbig\t2\tcontext is not a number'
+  $'broken\tbroken:1b\t8\t16\t32768\tbig\tdownload is not a number'
+  $'broken\tbroken:1b\t08\t16\t32768\t2\tvram has a leading zero, which bash reads as octal'
+  $'broken\tbroken:1b\t8\t010\t32768\t2\tram has a leading zero'
+  $'broken\tbroken:1b\t8\t16\t032768\t2\tcontext has a leading zero'
+  $'broken\tbroken:1b\t8\t16\t32768\t02\tdownload has a leading zero'
+  $'broken\tbroken:1b\t0\t16\t32768\t2\tvram is zero'
+  $'broken\tbroken:1b\t8\t0\t32768\t2\tram is zero'
+  $'broken\tbroken:1b\t8\t16\t0\t2\tcontext is zero'
+  $'broken\tbroken:1b\t8\t16\t32768\t0\tdownload is zero'
+  $'broken\tbroken:1b\t8\t16\t32768\tthe download column is missing'
+  $'broken\tbroken:1b\t8\t16\t32768\t2'
+  $'broken\tbroken:1b\t8\t16\t32768\t2\t'
+  $'Broken\tbroken:1b\t8\t16\t32768\t2\tid has a capital'
+  $'broken\ttwo words\t8\t16\t32768\t2\tmodel has a space'
+  'broken broken:1b 8 16 32768 2 spaces instead of tabs'
 )
 for row in "${rows[@]}"; do
   make_tree
@@ -357,7 +372,7 @@ for row in "${rows[@]}"; do
   expect_in "local-models.tsv:6: malformed recipe row"
 done
 make_tree
-printf 'tiny\tother:2b\t8\t16\t32768\tsame id again\n' >>"$TREE/data/local-models.tsv"
+printf 'tiny\tother:2b\t8\t16\t32768\t2\tsame id again\n' >>"$TREE/data/local-models.tsv"
 run local list
 ((RC == 1)) || fail "duplicate id exited $RC"
 expect_in "local-models.tsv:6: duplicate recipe id tiny"
@@ -397,7 +412,7 @@ run local use best
 expect_in "Best fit for this machine: tiny"
 expect_in "cachyos-agent launch --local"
 expect_in "http://127.0.0.1:11434/v1"
-[[ $(calls ollama) == "list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
+[[ $(calls ollama) == "list"$'\n'"list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
   || fail "ollama calls were: $(calls ollama)"
 [[ $(<"$SANDBOX/modelfile") == $'FROM tiny:1b\nPARAMETER num_ctx 32768' ]] || fail "Modelfile was: $(<"$SANDBOX/modelfile")"
 [[ $(<"$SANDBOX/host") == 127.0.0.1:11434 ]] || fail "ollama talked to $(<"$SANDBOX/host") instead of the endpoint it prints"
@@ -582,7 +597,7 @@ install_ollama
 PATH=$NARROW answer y local use best
 ((RC == 0)) || fail "use best exited $RC: $OUT"
 expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl enable --now ollama.service"
-[[ $(calls ollama) == "list"$'\n'"list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
+[[ $(calls ollama) == "list"$'\n'"list"$'\n'"list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
   || fail "ollama calls were: $(calls ollama)"
 [[ $(<"$(state_dir)/active") == tiny ]] || fail "active is not tiny"
 [[ $OUT != *--noconfirm* ]] || fail "the install ran with --noconfirm"
@@ -659,6 +674,100 @@ PATH=$NARROW answer y local use best
 ((RC == 1)) || fail "use without ollama and without sudo exited $RC: $OUT"
 expect_in "sudo or pacman is missing, so ollama-cuda cannot be installed from here"
 expect_in "Ollama is required; install it with 'sudo pacman -S --needed ollama-cuda'"
+ok
+cleanup_sandbox
+
+begin "use asks before a download that would leave less than 10 GB free, and stops on anything but yes"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+set_free 10999999999 # tiny is a 1 GB download: one byte short of the 1 GB plus 10 GB
+for reply in n N no '' maybe; do
+  answer "$reply" local use tiny
+  ((RC == 1)) || fail "reply '$reply' exited $RC: $OUT"
+  expect_in "tiny downloads about 1 GB, and $SANDBOX/models has 10 GB free; 10 GB should stay free."
+  expect_in "keep the files of a deleted model, so removing it later may not give the space back"
+  expect_in "Download anyway? [y/N]"
+  expect_in "Not downloading tiny:1b"
+done
+run local use tiny
+((RC == 1)) || fail "end of input exited $RC: $OUT"
+[[ $(calls ollama) != *pull* ]] || fail "pulled without room: $(calls ollama)"
+[[ $(<"$(state_dir)/active") == mid ]] || fail "active changed"
+for reply in y yes YES; do
+  answer "$reply" local use tiny
+  ((RC == 0)) || fail "reply '$reply' exited $RC: $OUT"
+  expect_in "Download anyway? [y/N]"
+  [[ $(<"$(state_dir)/active") == tiny ]] || fail "reply '$reply': active is not tiny"
+  printf 'mid\n' >"$(state_dir)/active"
+done
+[[ $(calls ollama) == *"pull tiny:1b"* ]] || fail "nothing was pulled after yes"
+ok
+cleanup_sandbox
+
+begin "use does not ask when the download and the 10 GB margin fit, whatever the size of the model"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+set_free 11000000000
+run local use tiny
+((RC == 0)) || fail "use exited $RC: $OUT"
+[[ $OUT != *"Download anyway"* ]] || fail "asked with exactly enough room: $OUT"
+set_free 28999999999 # mid is a 19 GB download
+answer n local use mid
+((RC == 1)) || fail "use mid exited $RC with 1 byte missing: $OUT"
+expect_in "mid downloads about 19 GB, and $SANDBOX/models has 28 GB free"
+set_free 29000000000
+run local use mid
+((RC == 0)) || fail "use mid exited $RC with exactly enough room: $OUT"
+ok
+cleanup_sandbox
+
+begin "use does not look at free space for a model that is already downloaded"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+set_free 1
+printf '%s\n' 'NAME      ID      SIZE   MODIFIED' 'tiny:1b   ccc333  1 GB   1 hour ago' >"$SANDBOX/installed"
+run local use tiny
+((RC == 0)) || fail "use exited $RC: $OUT"
+expect_no_calls df
+[[ $(calls ollama) == *"pull tiny:1b"* ]] || fail "the pull was skipped; it is how Ollama checks the files: $(calls ollama)"
+ok
+cleanup_sandbox
+
+begin "free space is read where the service keeps its models, else on /var/lib, and an unreadable figure does not stop use"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+export CACHYOS_AGENT_MODELS_DIR=$SANDBOX/not-created-yet
+run local use tiny
+((RC == 0)) || fail "use exited $RC: $OUT"
+expect_calls df "--output=avail -B1 -- /var/lib"
+rm -f -- "$SANDBOX/calls/df"
+unset CACHYOS_AGENT_MODELS_DIR
+run local use tiny
+if [[ -d /var/lib/ollama ]]; then want=/var/lib/ollama; else want=/var/lib; fi
+expect_calls df "--output=avail -B1 -- $want"
+export CACHYOS_AGENT_MODELS_DIR=$SANDBOX/models
+stub df 'exit 1'
+run local use tiny
+((RC == 0)) || fail "use with a failing df exited $RC: $OUT"
+expect_in "Could not read the free space on $SANDBOX/models; not checking it."
+stub df 'echo Avail; echo lots'
+run local use tiny
+((RC == 0)) || fail "use with an unreadable figure exited $RC: $OUT"
+expect_in "Could not read the free space"
 ok
 cleanup_sandbox
 
