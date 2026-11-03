@@ -54,14 +54,17 @@ else
 fi'
 
 # setup: a sandbox where claude, codex and grok are the stubs above, the
-# default browser is Brave (a stub), and nothing else is stubbed yet. $STATE is
-# where the commands keep their state.
+# default browser is Brave (a stub), and the usage collector is a stub too: the
+# usage feature's real one rewrites $STATE/usage/*.json on its own schedule,
+# over the records a case writes by hand, and would reach for the network.
+# $STATE is where the commands keep their state.
 setup() {
   make_sandbox
   export SANDBOX
   unset BROWSER
   STATE=$XDG_STATE_HOME/cachyos-agent
   : >"$SANDBOX/logins"
+  stub cachyos-agent-usage-update
   stub claude "$CLAUDE_STUB"
   stub codex "$CODEX_STUB"
   stub grok "$GROK_STUB"
@@ -125,7 +128,6 @@ begin "an additional account signs in privately in a home of its own that shares
 setup
 sign_in claude u-main main@example.com
 printf '{"theme":"light","mcpServers":{"fs":{}},"oauthAccount":{"accountUuid":"u-main","emailAddress":"main@example.com"}}\n' >"$HOME/.claude.json"
-stub cachyos-agent-usage-update
 out=$(FIX_ID=u-work FIX_EMAIL=work@example.com "$AGENT" account add claude Work)
 [[ $out == *"Added Work (work@example.com)."* && $out == *"cachyos-agent account use claude work"* ]] || fail "no confirmation with the next step: $out"
 [[ $out == *"private window that opens"* ]] || fail "the private window was not announced: $out"
@@ -273,7 +275,6 @@ setup
 sign_in claude u-main main@example.com
 sign_in claude u-work work@example.com Work
 stub notify-send
-stub cachyos-agent-usage-update
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
 [[ -z $("$AGENT" account home claude) ]] || fail "home printed a path while Main is active"
 out=$("$AGENT" account use claude work)
@@ -380,7 +381,6 @@ sign_in claude u-main main@example.com
 sign_in claude u-work work@example.com Work
 home=$STATE/accounts/claude/work
 mkdir -p "$HOME/.claude/projects" && echo keep >"$HOME/.claude/projects/keep.txt"
-stub cachyos-agent-usage-update
 if out=$("$AGENT" account remove claude main 2>&1 </dev/null); then fail "the primary account was removed"; fi
 [[ $out == *"can't be removed here"* ]] || fail "no explanation: $out"
 env CLAUDE_CONFIG_DIR="$home" sleep 30 &
