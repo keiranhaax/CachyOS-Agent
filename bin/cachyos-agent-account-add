@@ -78,7 +78,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-# pkill finds nothing to stop before a login runs, and its status must not end the script early.
+# Before a login runs pkill finds nothing to stop, and the status it returns
+# for that must not end the script ahead of the exit below.
 trap 'pkill -TERM -P $$ || true; exit 130' TERM INT
 
 # Bash holds a trap until a foreground command finishes, and a login waits on
