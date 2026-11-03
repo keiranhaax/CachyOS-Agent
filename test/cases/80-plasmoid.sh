@@ -272,6 +272,29 @@ if command -v qml6 >/dev/null; then
   ok
   cleanup_sandbox
 
+  begin "records.js reads reset times as the collectors do, in any time zone"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  # One hour from NOW, written the ways a collector passes a service's reset
+  # time through: the collectors and `cachyos-agent usage` read a time with no
+  # offset as UTC, and Python's fromisoformat also takes the basic form.
+  soon=$((NOW / 1000 + 3600))
+  stamp() { date -u -d "@$1" "+$2"; }
+  windows=$(jq -nc --arg a "$(stamp "$soon" %Y-%m-%dT%H:%M:%S)" --arg b "$(stamp "$soon" %Y%m%dT%H%M%SZ)" \
+    --arg c "$(stamp "$((soon + 19800))" %Y-%m-%dT%H:%M:%S.123456)+05:30" --arg d "$(stamp "$((soon - 7200))" %Y-%m-%dT%H:%M:%S)-0200" \
+    --arg e "$(stamp "$soon" '%Y-%m-%d %H:%M:%S')Z" \
+    '[$a, $b, $c, $d, $e] | map({label: "Session", percent: 0.95, resetsAt: .})')
+  record=$(jq -nc --argjson limits "$windows" '[{id: "x", name: "X", ready: true, tierLabel: "pro", limits: $limits}]')
+  for zone in UTC Europe/Madrid America/New_York; do
+    out=$(TZ=$zone records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
+    check "$out" '[.agents[0].limits[] | [.percentText, .resetMs]] == [range(5) | ["95%", '$((soon * 1000))' + (if . == 2 then 123 else 0 end)]]' \
+      "reset times with no offset, in the basic form, with an offset or with a fraction, read in $zone"
+  done
+  out=$(records '"load"' 0 "$(jq -Rs . <<<'[{"id": "x", "name": "X", "ready": true, "limits": [{"label": "Session", "percent": 0.5, "resetsAt": "20261103"}, {"label": "Weekly", "percent": 0.5, "resetsAt": "2026-13-45T25:61:61Z"}]}]')" '""' "$NOW")
+  check "$out" '[.agents[0].limits[] | [.percentText, .resetMs]] == [["50%", 0], ["50%", 0]]' "a date or a time that is not one has no countdown"
+  ok
+  cleanup_sandbox
+
   begin "records.js load turns usage records into what the widget draws"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log

@@ -29,6 +29,24 @@ const capitalize = value => {
     return text.charAt(0).toUpperCase() + text.slice(1);
 };
 
+// An ISO 8601 time as Python's datetime.fromisoformat reads it, which is what
+// the collectors checked before they passed the service's own string through:
+// the date and time with or without their separators, a fraction, and an
+// offset as Z, +HH, +HH:MM or +HHMM. A time with no offset is UTC, as in the
+// collectors and the sibling `cachyos-agent usage` report; Date.parse would
+// read it as local time and be hours out, and it cannot read the basic form
+// at all. Milliseconds since the epoch, or NaN for anything else.
+const ISO_TIME = /^(\d{4})-?(\d{2})-?(\d{2})[T ](\d{2}):?(\d{2})(?::?(\d{2})(?:[.,](\d{1,3})\d*)?)?(?:Z|([+-]\d{2})(?::?(\d{2}))?)?$/;
+
+function parseTime(value) {
+    const parts = ISO_TIME.exec(String(value || "").trim());
+    if (parts === null)
+        return NaN;
+    const [, year, month, day, hour, minute, second, fraction, zoneHours, zoneMinutes] = parts;
+    const zone = zoneHours === undefined ? "Z" : zoneHours + ":" + (zoneMinutes || "00");
+    return Date.parse(year + "-" + month + "-" + day + "T" + hour + ":" + minute + ":" + (second || "00") + "." + (fraction || "0").padEnd(3, "0") + zone);
+}
+
 // "3d 4h", "2h 10m" or "12m"; never less than a minute.
 function duration(ms) {
     const minutes = Math.max(1, Math.floor(ms / 60000));
@@ -74,7 +92,7 @@ function limitView(entry, now) {
     const percent = Number(entry.percent);
     if (!(percent >= 0))
         return null;
-    const resetMs = Date.parse(entry.resetsAt);
+    const resetMs = parseTime(entry.resetsAt);
     const elapsed = resetMs <= now;
     const fraction = elapsed ? 0 : Math.min(percent, 1);
     return {
