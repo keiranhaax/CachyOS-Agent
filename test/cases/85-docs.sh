@@ -58,3 +58,57 @@ while IFS=$'\t' read -r path origin; do
 done < <(grep -rE -m1 --exclude-dir=__pycache__ 'Adapted from Omarchy ' bin lib systemd data plasmoid agents shell desktop |
   sed -E 's/^([^:]+):[^A]*Adapted from Omarchy (.*) \(MIT, Copyright.*$/\1\t\2/')
 ok
+
+begin "the README command table is what cachyos-agent commands lists"
+# The table rows are generated; MAINTENANCE.md gives the command that prints them.
+make_sandbox
+mapfile -t want < <("$AGENT" commands --json | jq -r '.commands[] | "| `\(.route)` | \(.summary) |"')
+mapfile -t have < <(grep -E '^\| `cachyos-agent ' README.md || true)
+((${#want[@]} > 0)) || fail "cachyos-agent commands lists nothing"
+if [[ ${want[*]} != "${have[*]}" ]]; then
+  diff <(printf '%s\n' "${want[@]}") <(printf '%s\n' "${have[@]}") >&2 || true
+  fail "the table in README.md differs from the output of cachyos-agent commands (diff above: < is the output)"
+fi
+ok
+cleanup_sandbox
+
+begin "the README agent table matches the launcher and the installer"
+# One row per agent id, in the launcher's order. Each flag in a code span must be
+# in the launcher's source, and each package in the installer's table under the
+# same method, so a flag or package changed in the code cannot stay in the table.
+tick=$'\x60'
+source "$REPO_ROOT/lib/launcher.sh"
+mapfile -t rows < <(awk '/^\| Id \| Agent \|/ { on = 1; next } on && /^\|---/ { next } on && /^\|/ { print; next } on { exit }' README.md)
+((${#rows[@]} == ${#CA_AGENT_IDS[@]})) \
+  || fail "the agent table has ${#rows[@]} rows for ${#CA_AGENT_IDS[@]} agents"
+for i in "${!rows[@]}"; do
+  IFS='|' read -r _ id _ install flags _ <<<"${rows[i]}"
+  id=${id//[ $tick]/}
+  [[ $id == "${CA_AGENT_IDS[i]-}" ]] || { fail "row $((i + 1)) is $id, the launcher's agent $((i + 1)) is ${CA_AGENT_IDS[i]-none}"; continue; }
+  package=$(grep -oE "${tick}[^${tick}]+${tick}" <<<"$install" | tr -d "$tick" || true)
+  case $install in
+    *pacman*) grep -qF "$id) METHOD=repo PACKAGE=$package ;;" bin/cachyos-agent-install || fail "$id: the installer does not install $package with pacman" ;;
+    *AUR*) grep -qF "$id) METHOD=aur PACKAGE=$package ;;" bin/cachyos-agent-install || fail "$id: the installer does not install $package from the AUR" ;;
+    *vendor*) grep -qF "$id) METHOD=vendor" bin/cachyos-agent-install || fail "$id: the installer does not leave it to the vendor" ;;
+    *) fail "$id: the install column says neither pacman, AUR nor vendor" ;;
+  esac
+  while IFS= read -r flag; do
+    # Whole words, so a table that says --yol is not satisfied by --yolo.
+    [[ -z $flag ]] || grep -qE -- "(^|[^[:alnum:]-])$flag([^[:alnum:]-]|$)" bin/cachyos-agent-launch || fail "$id: the launcher never uses '$flag'"
+  done < <(grep -oE "${tick}[^${tick}]+${tick}" <<<"$flags" | tr -d "$tick" || true)
+done
+ok
+
+begin "every #anchor link in the documents points at a heading"
+# GitHub's slug for a heading: lowercase, anything but letters, digits, spaces,
+# '-' and '_' dropped, spaces turned into '-'. Headings and links inside a code
+# block do not count.
+for doc in "${DOCS[@]}"; do
+  [[ $doc == *.md ]] || continue
+  mapfile -t slugs < <(awk '/^```/ { fence = !fence; next } !fence && /^#+ / { sub(/^#+ +/, ""); print }' "$doc" |
+    tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9 _-]//g; s/ /-/g')
+  while IFS= read -r anchor; do
+    [[ " ${slugs[*]} " == *" $anchor "* ]] || fail "$doc links to #$anchor, which is not a heading"
+  done < <(awk '/^```/ { fence = !fence; next } !fence' "$doc" | grep -oE '\]\(#[^)]+\)' | sed -E 's/^\]\(#//; s/\)$//' || true)
+done
+ok

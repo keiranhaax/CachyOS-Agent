@@ -39,7 +39,13 @@ This project contains reviewed operational guidance, not generated documentation
 4. Source `lib/common.sh` with `source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"`, which only works from a real file under `bin/`, and use its helpers (`ca_die`, `ca_notify`, `ca_flag`, `ca_terminal_exec`, `ca_atomic_write`) instead of writing new ones.
 5. A group that is a single command receives `--help` itself, so implement `--help` and `-h`. The dispatcher answers `--help` for a group with subcommands.
 6. Add a case to `test/cases/NN-<feature>.sh` (or a new one) that runs the command through `bin/cachyos-agent`, in a sandbox from `test/lib.sh`, with stubs for every external program. A case never touches the real home directory, the network, root, a display, or a real agent CLI. Write the case first and watch it fail.
-7. Update the guide the command belongs to: `agents/skills/cachyos/agent.md` for how an agent should use it, and the user guide in `README.md`.
+7. Update the guide the command belongs to: `agents/skills/cachyos/agent.md` for how an agent should use it, and the user guide in `README.md`. The command table in `README.md` is generated, and `test/cases/85-docs.sh` fails when it differs from `cachyos-agent commands`. Print the rows to paste with:
+
+```bash
+./bin/cachyos-agent commands --json | jq -r '.commands[] | "| `\(.route)` | \(.summary) |"'
+```
+
+A new agent in `lib/launcher.sh` also needs a row in the agent table, whose flags and package the same case compares with the launcher and the installer.
 
 Privileged work stays visible: a command runs `sudo` only inside a terminal the user opened, never with `--noconfirm`, never through `pkexec`, and never from a timer or a watcher.
 
