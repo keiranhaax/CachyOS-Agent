@@ -200,7 +200,8 @@ HARNESSES = ("hermes", "kimi", "qwen", "vibe")
 
 
 def harness(name):
-  path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"cachyos-agent-usage-{name}")
+  # Beside the real file: /usr/bin holds a link to this one, not the other collectors.
+  path = os.path.join(os.path.dirname(os.path.realpath(__file__)), f"cachyos-agent-usage-{name}")
   loader = importlib.machinery.SourceFileLoader(f"cachyos_agent_usage_{name}", path)
   module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
   loader.exec_module(module)

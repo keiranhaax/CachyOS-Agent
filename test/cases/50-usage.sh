@@ -73,12 +73,17 @@ done
 ok
 cleanup_sandbox
 
-begin "a collector run through a symlink finds the shared module"
+begin "a collector run through a symlink finds the shared module and its sibling collectors"
 make_sandbox
 mkdir "$SANDBOX/empty" "$SANDBOX/link"
-ln -s "$REPO_ROOT/bin/cachyos-agent-usage-claude" "$SANDBOX/link/cachyos-agent-usage-claude"
-record=$(env -i PATH="$SANDBOX/empty" HOME="$HOME" "$SANDBOX/link/cachyos-agent-usage-claude")
-is_json "$record" '.id == "claude"' || fail "symlinked collector printed $record"
+# local reads the other harness collectors beside itself, so a link in a
+# directory that holds only the link must still reach the real ones.
+for agent in claude local; do
+  ln -s "$REPO_ROOT/bin/cachyos-agent-usage-$agent" "$SANDBOX/link/cachyos-agent-usage-$agent"
+  record=$(env -i PATH="$SANDBOX/empty" HOME="$HOME" "$SANDBOX/link/cachyos-agent-usage-$agent" 2>"$SANDBOX/err") \
+    || fail "symlinked $agent exited nonzero: $(tail -n 3 "$SANDBOX/err")"
+  is_json "$record" ".id == \"$agent\"" || fail "symlinked $agent printed $record"
+done
 ok
 cleanup_sandbox
 
