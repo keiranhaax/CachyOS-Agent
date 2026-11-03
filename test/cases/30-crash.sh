@@ -345,6 +345,30 @@ wait_for 2 "$SANDBOX/toast.*"
 ok
 cleanup_sandbox
 
+begin "a dedupe window is read as decimal, so 08 is eight seconds and 000 is none, and a number too long to be one is refused"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" firefox 1002 /usr/lib/firefox/firefox SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+CACHYOS_AGENT_CRASH_DEDUPE_SECONDS=08 run_watcher
+wait_for 1 "$SANDBOX/toast.*"
+((status == 0)) || fail "08 ended the watcher ($status): $(<"$SANDBOX/watch.log")"
+[[ $(count_files "$SANDBOX/toast.*") == 1 ]] || fail "a window of 08 should announce firefox once: $(count_files "$SANDBOX/toast.*") toasts"
+grep -q 'value too great for base' "$SANDBOX/watch.log" && fail "08 was read as octal: $(<"$SANDBOX/watch.log")"
+rm -f "$SANDBOX"/toast.*
+CACHYOS_AGENT_CRASH_DEDUPE_SECONDS=000 run_watcher
+wait_for 2 "$SANDBOX/toast.*"
+[[ $(count_files "$SANDBOX/toast.*") == 2 ]] || fail "a window of 000 should announce every crash: $(count_files "$SANDBOX/toast.*") toasts"
+rm -f "$SANDBOX"/toast.* "$SANDBOX/calls/journalctl"
+run env CACHYOS_AGENT_CRASH_DEDUPE_SECONDS=99999999999999999999 "$AGENT" crash watch
+((status == 1)) && [[ $out == *"CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number"* ]] || fail "an overflowing window was accepted ($status): $out"
+[[ ! -e $SANDBOX/calls/journalctl ]] || fail "the journal was followed with an overflowing window"
+ok
+cleanup_sandbox
+
 begin "the watcher reports a notification server that never comes up, and does not announce"
 make_sandbox
 watch_stubs

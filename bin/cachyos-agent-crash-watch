@@ -48,9 +48,10 @@ readonly dedupe_seconds=${CACHYOS_AGENT_CRASH_DEDUPE_SECONDS:-60}
 readonly ignore_pattern=${CACHYOS_AGENT_CRASH_IGNORE:-}
 
 # Checked once, here, because both values are used per crash for the rest of the
-# service's life: the window is evaluated as arithmetic, and a pattern bash
-# rejects makes every match fail, which would read as "nothing to ignore".
-[[ $dedupe_seconds =~ ^[0-9]+$ ]] || ca_die "CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number of seconds"
+# service's life: the window is evaluated as arithmetic, where a number too long
+# for 64 bits wraps around, and a pattern bash rejects makes every match fail,
+# which would read as "nothing to ignore". Nine digits is some thirty years.
+[[ $dedupe_seconds =~ ^[0-9]{1,9}$ ]] || ca_die "CACHYOS_AGENT_CRASH_DEDUPE_SECONDS must be a whole number of seconds, at most nine digits"
 if [[ -n $ignore_pattern ]]; then
   status=0
   # shellcheck disable=SC2319 # bash documents status 2 for [[ =~ ]] with an invalid regex
@@ -162,7 +163,8 @@ journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" |
     ca_flag_enabled "crash-ignore/$name" && continue
 
     now=$EPOCHSECONDS
-    ((now - ${last_notified[$name]:-0} < dedupe_seconds)) && continue
+    # 10# because arithmetic reads a leading zero as octal: 08 is an error and 010 is eight.
+    ((now - ${last_notified[$name]:-0} < 10#$dedupe_seconds)) && continue
 
     # The window starts when the toast is handed to the background, not when it
     # is delivered: whether it was is only known after the user answers.
