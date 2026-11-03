@@ -493,6 +493,33 @@ done
 ok
 cleanup_sandbox
 
+begin "the report prints no control characters from a record"
+make_sandbox
+# A label, a status or a name can come from a vendor's response: an escape
+# sequence in one must not reach the terminal, nor a newline start a line of
+# its own. The C1 control U+009B is a one-character escape on some terminals.
+# shellcheck disable=SC2016 # the $names in the program are jq variables
+write_record evil --arg esc $'\033' --arg bel $'\a' --arg nl $'\n' --arg c1 $'\xc2\x9b' '
+  {schemaVersion: 1, id: "evil", name: ("Ev" + $esc + "[2Jil"), ready: true, tierLabel: ("pro" + $nl + "FAKE"),
+   usageStatusText: ($esc + "]0;owned" + $bel), authHelpText: ("help" + $c1 + "31m"),
+   limits: [{label: ($esc + "]0;title" + $bel + "Window" + $esc + "[2J"), percent: 0.5, resetsAt: ""}],
+   balance: {remaining: 1, funded: 2, spent: 1, currency: ("X" + $esc + "[1mY")},
+   accounts: [{label: ("acct" + $esc + "[0m"), plan: ("plan" + $bel), active: true, limits: []}]}'
+expected=$(
+  cat <<'EOF'
+Ev[2Jil  ProFAKE
+  ]0;titleWindow[2J  50%
+  Balance            X[1MY 1.00 left of X[1MY 2.00 (spent X[1MY 1.00)
+  ! ]0;owned: help31m
+  Accounts
+    acct[0m  plan  (active)
+EOF
+)
+out=$("$REPORT")
+[[ $out == "$expected" ]] || { diff <(printf '%s\n' "$expected") <(printf '%s\n' "$out") | cat -v >&2 || true; fail "the report did not strip the control characters"; }
+ok
+cleanup_sandbox
+
 begin "the report copes with a record of the wrong shapes"
 make_sandbox
 mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"

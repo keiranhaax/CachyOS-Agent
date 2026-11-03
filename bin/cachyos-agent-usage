@@ -37,7 +37,12 @@ def ljust($n): . + (" " * ([$n - length, 0] | max));
 def rjust($n): (" " * ([$n - length, 0] | max)) + .;
 def arr: if type == "array" then . else [] end;
 def num: if type == "number" then . else 0 end;
-def text: if type == "string" then . else "" end;
+# A string from a record goes to a terminal, and a vendor's response can put an
+# escape sequence in one: drop every control character, C1 included (U+009B is
+# an escape on some terminals), and with them any newline that would start a
+# line of its own.
+def clean: gsub("[\u0000-\u001f\u007f-\u009f]"; "");
+def text: if type == "string" then clean else "" end;
 def capitalized: if length > 0 then (.[0:1] | ascii_upcase) + .[1:] else . end;
 
 # ISO 8601 with an optional fraction and offset. A time without an offset is
@@ -69,7 +74,7 @@ def tokens:
   else tostring end;
 
 def currency_prefix:
-  ((. // "USD") | tostring | ascii_upcase) as $c
+  ((. // "USD") | tostring | clean | ascii_upcase) as $c
   | if $c == "USD" then "$" elif $c == "EUR" then "€" elif $c == "GBP" then "£" else $c + " " end;
 def money($currency):
   num as $v
