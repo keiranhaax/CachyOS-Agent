@@ -26,7 +26,7 @@ This project contains reviewed operational guidance, not generated documentation
 | `desktop/` | The desktop entry | `/usr/share/applications` |
 | `systemd/user/` | The user units | `/usr/lib/systemd/user` |
 | `plasmoid/org.cachyos.agent/` | The panel widget | `/usr/share/plasma/plasmoids/org.cachyos.agent` |
-| `test/` | `run-tests`, `lib.sh`, `cases/NN-<feature>.sh`, and the QML harness for the widget | not installed |
+| `test/` | `run-tests`, `lib.sh`, `cases/NN-<feature>.sh`, the QML harness for the widget, `usage/<agent>.py` (a machine that uses that agent's collector, run by `usage-fixture.py`) and `golden/` (rendered agent themes) | not installed |
 | `packaging/`, `PKGBUILD`, `.github/` | Pacman repository, package recipe, CI | `packaging/` goes to the package documentation |
 
 `PKGBUILD` copies whole directories, so a new file inside one of them needs no `PKGBUILD` edit.

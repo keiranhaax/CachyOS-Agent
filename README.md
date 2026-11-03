@@ -425,7 +425,7 @@ python3 -I -X pycache_prefix=$(mktemp -d) -m py_compile $(grep -lE '^#!/usr/bin/
 namcap PKGBUILD
 ```
 
-`test/run-tests` runs every `test/cases/NN-<feature>.sh` in its own process: the dispatcher and shared helpers (`00`, `01`), the skills (`10`), the launcher (`20`), crash diagnosis (`30`), theme sync (`40`), usage (`50`), accounts (`60`), local models (`70`), the widget (`80`) and the documents (`85`). A case works in a sandbox home, with stubs for every external program, and never needs the network, root, a display or a real agent CLI. A case whose tool is missing (`git`, `kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and passes. See [`MAINTENANCE.md`](MAINTENANCE.md) for adding a command, the upstream review and the release checklist.
+`test/run-tests` runs every `test/cases/NN-<feature>.sh` in its own process: the dispatcher and shared helpers (`00`, `01`), the skills (`10`), the launcher (`20`), crash diagnosis (`30`), theme sync (`40`), usage (`50`), each collector on a machine that uses its agent (`55`, fixtures in `test/usage/`), accounts (`60`), local models (`70`), the widget (`80`) and the documents (`85`). A case works in a sandbox home, with stubs for every external program, and never needs the network, root, a display or a real agent CLI. A case whose tool is missing (`git`, `kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and passes. See [`MAINTENANCE.md`](MAINTENANCE.md) for adding a command, the upstream review and the release checklist.
 
 <details>
 <summary>Repository layout</summary>
@@ -445,7 +445,8 @@ desktop/                          cachyos-agent.desktop
 systemd/user/                     Units for usage, crash capture and theme follow
 plasmoid/org.cachyos.agent/       The panel widget
 test/run-tests test/lib.sh        Test runner and helpers
-test/cases/                       One case per feature, plus the widget QML harness in test/plasmoid/
+test/cases/                       One case per feature, plus the widget QML harness in test/plasmoid/,
+                                  the collector fixtures in test/usage/ and the theme goldens in test/golden/
 PKGBUILD .SRCINFO                 Arch/CachyOS package recipe and metadata
 cachyos-agent.install             Messages shown when the package is installed or upgraded
 packaging/                        Pacman repository configuration and release notes
