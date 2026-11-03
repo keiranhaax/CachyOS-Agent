@@ -791,6 +791,21 @@ expect "$(call_count claude)" 0 "claude must not run"
 ok
 cleanup_sandbox
 
+begin "launch --local reads an alias of pi or OpenCode as that agent"
+setup
+stub_agents pi
+stub_opencode 2.2.5
+choose_local_model 'qwen3:8b'
+run "$CA" launch --inline --local --agent open-code
+expect "$RC" 0 "exit status"
+expect "$(call_count pi)" 0 "open-code is OpenCode, not a reason to fall back to pi"
+expect "$(last_call opencode)" "--auto|--standalone" "OpenCode started"
+CACHYOS_AGENT_DEFAULT=open-code run "$CA" launch --inline --local
+expect "$(call_count pi)" 0 "an alias as the default"
+expect "$(last_call opencode)" "--auto|--standalone" "OpenCode started again"
+ok
+cleanup_sandbox
+
 begin "launch --local needs no default agent"
 setup
 stub pi

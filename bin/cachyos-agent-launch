@@ -110,8 +110,9 @@ choose_agent() {
   # Only agents with a launch-time overlay can be pointed at the local model.
   # When the default can't, or none is set, the local model opens in pi, or
   # OpenCode without pi: the agents panel launches it whether or not a default
-  # was chosen.
-  if $use_local && [[ $name != pi && $name != opencode ]]; then
+  # was chosen. The name is read as the agent it means first, so open-code is
+  # OpenCode.
+  if $use_local && ! { ca_agent_resolve "$name" && [[ $CA_AGENT == pi || $CA_AGENT == opencode ]]; }; then
     name=''
     for candidate in pi opencode; do
       if ca_agent_present "$candidate"; then
