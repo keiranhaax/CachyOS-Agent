@@ -71,6 +71,7 @@ records_json() {
   sed -e "s/@SESSION@/$(date -u -d "@$((now + 7830))" "$iso").123456+00:00/" \
     -e "s/@WEEK@/$(date -u -d "@$((now + 3 * 86400 + 4 * 3600 + 30))" "$iso")Z/" \
     -e "s/@ELAPSED@/$(date -u -d "@$((now - 60))" "$iso")Z/" \
+    -e "s/@OLD@/$(date -u -d "@$((now - 2 * 86400 - 3 * 3600 - 300))" "$iso").654321+00:00/" \
     -e "s/@FETCHED2H@/$(((now - 7200) * 1000))/" \
     -e "s/@FETCHED3H@/$(((now - 10800) * 1000))/" <<'EOF'
 [
@@ -106,7 +107,7 @@ records_json() {
     "balance": {"remaining": 1, "funded": 20, "spent": 19, "currency": "CNY", "estimated": true}
   },
   {
-    "id": "fireworks", "name": "Fireworks", "ready": true, "tierLabel": "Prepaid",
+    "id": "fireworks", "name": "Fireworks", "ready": true, "tierLabel": "Prepaid", "updatedAt": "@OLD@",
     "balance": {"remaining": 2, "currency": "EUR"}
   },
   {
@@ -295,6 +296,32 @@ if command -v qml6 >/dev/null; then
   ok
   cleanup_sandbox
 
+  begin "records.js says how old a record is once nothing has refreshed it for an hour"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  # `cachyos-agent usage` flags a record older than an hour; the widget never
+  # runs `usage update` itself, so it must too, or days-old numbers read as current.
+  ago() { stamp "$((NOW / 1000 - $1))" %Y-%m-%dT%H:%M:%S.000000+00:00; }
+  record=$(jq -nc --arg old "$(ago $((2 * 86400 + 3 * 3600 + 120)))" --arg hour "$(ago 3600)" --arg recent "$(ago 3599)" \
+    --arg future "$(ago -60)" --arg naive "$(stamp "$((NOW / 1000 - 7200))" %Y-%m-%dT%H:%M:%S)" '
+    def balance: {remaining: 5, funded: 10, spent: 5, currency: "USD"};
+    [{id: "a", name: "Old", ready: true, balance: balance, updatedAt: $old},
+     {id: "b", name: "An hour", ready: true, balance: balance, updatedAt: $hour},
+     {id: "c", name: "Recent", ready: true, balance: balance, updatedAt: $recent},
+     {id: "d", name: "Future", ready: true, balance: balance, updatedAt: $future},
+     {id: "e", name: "Naive", ready: true, balance: balance, updatedAt: $naive},
+     {id: "f", name: "Garbled", ready: true, balance: balance, updatedAt: "yesterday"},
+     {id: "g", name: "Unwritten", ready: true, balance: balance},
+     {id: "h", name: "Stale too", ready: true, balance: balance, updatedAt: $old, limitsStale: true, limitsFetchedAt: 0,
+      usageStatusText: "Sign-in expired", authHelpText: "Run `h login`."}]')
+  out=$(records '"load"' 0 "$(jq -Rs . <<<"$record")" '""' "$NOW")
+  check "$out" '[.agents[] | [.name, .notes]] == [["Old", ["Updated 2d 3h ago"]], ["An hour", ["Updated 1h 0m ago"]], ["Recent", []], ["Future", []],
+                  ["Naive", ["Updated 2h 0m ago"]], ["Garbled", []], ["Unwritten", []],
+                  ["Stale too", ["Updated 2d 3h ago", "Sign-in expired", "Run `h login`.", "Limits may be out of date"]]]' \
+    "only a record at least an hour old says how old it is, before anything else"
+  ok
+  cleanup_sandbox
+
   begin "records.js load turns usage records into what the widget draws"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
@@ -315,7 +342,8 @@ if command -v qml6 >/dev/null; then
     "a prepaid balance"
   check "$out" '.agents[2].balance | .remainingText == "CNY 1.00 left" and .detailText == "CNY 19.00 spent of CNY 20.00 (estimated)" and .low == true' \
     "a low, estimated balance in another currency"
-  check "$out" '.agents[3].balance == {remainingText: "€2.00 left", detailText: "", fraction: -1, low: false}' "a balance with no funding figure has nothing to measure against"
+  check "$out" '.agents[3] | .balance == {remainingText: "€2.00 left", detailText: "", fraction: -1, low: false} and .notes == ["Updated 2d 3h ago"]' \
+    "a balance with no funding figure has nothing to measure against, and a record two days old says so"
   check "$out" '.agents[4] | .plan == "Plus" and .notes == ["Limits paused", "Start Codex to see its limits.", "Limits last checked 2h 0m ago"]' \
     "stale limits say why and how old"
   check "$out" '.agents[5] | .tokensText == "Tokens: 500 today, 500 this week" and .limits == [] and .balance == null and .notes == []' \
@@ -366,6 +394,7 @@ esac'
                 and index("Tokens: 1.2M today, 3.3M this week") and index("Work · Max") and index("<b>Evil</b><img src=x>")' \
     "the page lacks a name, plan, limit, balance, tokens line, account or the raw agent name"
   check "$out" '.page.texts | any(contains("42%") and contains("resets in 2h 10m"))' "a limit shows its percent and reset time"
+  check "$out" '.page.texts | index("Updated 2d 3h ago")' "the page does not say that a record is two days old"
   check "$out" '.page.bars == [0.42, 0.95, 0, 0.42, 0.8, 0.175, 0.05, 0.5, 1]' "meters of limits, accounts and balances, in page order"
   check "$out" '.page.notPlain == []' "text that is not plain text"
   qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
@@ -429,7 +458,7 @@ esac'
   stub_agent
   echo '[]' >"$FIXTURE"
   out=$(app dump "")
-  check "$out" '.agents == [] and .problem == "" and (.page.texts | index("No agent usage yet. Press Refresh to collect it."))' "the empty state"
+  check "$out" '.agents == [] and .problem == "" and (.page.texts | index("No agent usage yet. Press Refresh to collect it, and run `cachyos-agent usage schedule on` to keep it current."))' "the empty state"
   ok
   cleanup_sandbox
 else

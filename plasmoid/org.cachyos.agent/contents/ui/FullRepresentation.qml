@@ -71,7 +71,8 @@ PlasmaExtras.Representation {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: full.agents.length === 0 && full.problem === ""
-            text: full.loaded ? "No agent usage yet. Press Refresh to collect it." : "Loading usage…"
+            // The widget only reads: the records stay as they are until Refresh or the timer writes new ones.
+            text: full.loaded ? "No agent usage yet. Press Refresh to collect it, and run `cachyos-agent usage schedule on` to keep it current." : "Loading usage…"
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter

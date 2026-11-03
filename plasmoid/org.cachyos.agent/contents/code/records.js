@@ -127,6 +127,19 @@ function balanceView(balance) {
     };
 }
 
+// The records are written by `cachyos-agent usage update`, from a timer the
+// person may never have switched on, and the widget does not run it by itself.
+// A record this old is not today's, and the sibling `cachyos-agent usage` report
+// says so at the same age (RECORD_OLD_SECONDS).
+const RECORD_OLD_MS = 3600 * 1000;
+
+// "Updated 2d 3h ago" for a record at least an hour old. A record with no
+// updatedAt, one that does not parse, or one from the future says nothing.
+function ageNotes(updatedAt, now) {
+    const updated = parseTime(updatedAt);
+    return updated <= now - RECORD_OLD_MS ? ["Updated " + duration(now - updated) + " ago"] : [];
+}
+
 // What is wrong with an agent's numbers, one line each. A status is always
 // said; its help only with it, or when the limits shown are old, because a
 // healthy agent may still carry its sign-in hint.
@@ -175,7 +188,7 @@ function agentView(record, now) {
         limits: limitViews(record.limits, now),
         balance: balanceView(record.balance),
         tokensText: today > 0 || week > 0 ? "Tokens: " + tokens(today) + " today, " + tokens(week) + " this week" : "",
-        notes: notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now),
+        notes: ageNotes(record.updatedAt, now).concat(notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now)),
         accounts: Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(account => accountView(account, now)) : []
     };
 }
