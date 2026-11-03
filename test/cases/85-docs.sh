@@ -105,9 +105,27 @@ bad=$(unknown_commands "$SANDBOX/doc.md" "$catalog" "$groups" | tr '\n' ',')
 ok
 cleanup_sandbox
 
+# A header reads "# Adapted from Omarchy <origin> (MIT, Copyright ..." (or after //).
+# header_problems <dir...>: what is wrong with the Omarchy headers under those
+# directories, one line each: a header that does not have that shape (which would
+# otherwise read as an unlisted file with no origin and match another one), a file
+# the notices do not list, and a file whose origin differs from the notices'.
+header_re='^([^:]+):(#|//)[[:space:]]+Adapted from Omarchy (.+) \(MIT, Copyright'
+header_problems() {
+  local hit path origin
+  while IFS= read -r hit; do
+    if [[ $hit =~ $header_re ]]; then
+      path=${BASH_REMATCH[1]} origin=${BASH_REMATCH[3]}
+      [[ ${origin_of[$path]-} == "$origin" ]] \
+        || echo "$path comes from '$origin' but THIRD_PARTY_NOTICES.md says '${origin_of[$path]-not listed}'"
+    else
+      echo "an Omarchy header of an unexpected shape: $hit"
+    fi
+  done < <(grep -rE -m1 --exclude-dir=__pycache__ 'Adapted from Omarchy' "$@")
+}
+
 begin "THIRD_PARTY_NOTICES.md lists every file that carries an Omarchy header, with its origin"
-# A header reads "Adapted from Omarchy <origin> (MIT, Copyright ...". The notices
-# list each file as a table row, | `path` | origin |.
+# The notices list each file as a table row, | `path` | origin |.
 declare -A origin_of=()
 # shellcheck disable=SC2016 # the backticks are literal characters of the table row
 while IFS=$'\t' read -r path origin; do
@@ -117,12 +135,32 @@ done < <(sed -nE 's/^\| `([^`]+)` \| (.*) \|$/\1\t\2/p' THIRD_PARTY_NOTICES.md)
 for path in "${!origin_of[@]}"; do
   [[ -f $path ]] || fail "THIRD_PARTY_NOTICES.md lists $path, which does not exist"
 done
-while IFS=$'\t' read -r path origin; do
-  [[ ${origin_of[$path]-} == "$origin" ]] \
-    || fail "$path comes from '$origin' but THIRD_PARTY_NOTICES.md says '${origin_of[$path]-not listed}'"
-done < <(grep -rE -m1 --exclude-dir=__pycache__ 'Adapted from Omarchy ' bin lib systemd data plasmoid agents shell desktop |
-  sed -E 's/^([^:]+):[^A]*Adapted from Omarchy (.*) \(MIT, Copyright.*$/\1\t\2/')
+problems=$(header_problems bin lib systemd data plasmoid agents shell desktop)
+[[ -z $problems ]] || fail "$(tr '\n' ';' <<<"$problems")"
 ok
+
+begin "the check of Omarchy headers refuses a header it cannot read, an unlisted file and a wrong origin"
+make_sandbox
+listed=${!origin_of[*]}
+listed=${listed%% *}
+known_origin=${origin_of[$listed]}
+mkdir -p "$SANDBOX/tree/lib" "$SANDBOX/tree/${listed%/*}"
+header() { printf '%s Adapted from Omarchy %s (MIT, Copyright (c) Someone); see THIRD_PARTY_NOTICES.md\n' "$1" "$2"; }
+header '#' "$known_origin" >"$SANDBOX/tree/$listed"
+header '#' 'bin/omarchy-wrong' >"$SANDBOX/tree/lib/wrong-origin.sh"
+header '#' 'bin/omarchy-foo' >"$SANDBOX/tree/lib/unlisted.sh"
+header '//' 'bin/omarchy-foo' >"$SANDBOX/tree/lib/unlisted.js"
+# What the old reader took for an empty origin and let through.
+echo '# Adapted from Omarchy bin/omarchy-foo (MIT licence, see notices)' >"$SANDBOX/tree/lib/typo.sh"
+echo '# A Adapted from Omarchy bin/omarchy-foo (MIT, Copyright (c) Someone)' >"$SANDBOX/tree/lib/stray.sh"
+problems=$(cd "$SANDBOX/tree" && header_problems lib "${listed%%/*}" | LC_ALL=C sort -u)
+for expected in "lib/wrong-origin.sh comes from 'bin/omarchy-wrong'" "lib/unlisted.sh comes from 'bin/omarchy-foo' but THIRD_PARTY_NOTICES.md says 'not listed'" \
+  "lib/unlisted.js comes from" "an Omarchy header of an unexpected shape: lib/typo.sh" "an Omarchy header of an unexpected shape: lib/stray.sh"; do
+  [[ $problems == *"$expected"* ]] || fail "the check missed: $expected (it said: $problems)"
+done
+[[ $problems != *"$listed comes"* && $problems != *"$listed:"* ]] || fail "the check refused the listed file with its own origin: $problems"
+ok
+cleanup_sandbox
 
 begin "the README command table is what cachyos-agent commands lists"
 # The table rows are generated; MAINTENANCE.md gives the command that prints them.
