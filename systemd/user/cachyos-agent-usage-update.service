@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the AI agent usage records
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/cachyos-agent-usage-update
+# The collectors probe several services; none of that should compete with the desktop.
+Nice=10
+IOSchedulingClass=idle
+# A hung probe must not hold the timer's next run back for ever.
+TimeoutStartSec=5min
