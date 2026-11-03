@@ -322,10 +322,10 @@ echo '{"accounts":[{"id":"main","limits":[{"label":"5h","percent":0.42}]},{"id":
 echo '{"limits":[{"label":"week","percent":0.1}]}' >"$STATE/usage/grok.json"
 echo '{not json' >"$STATE/usage/codex.json"
 out=$("$AGENT" account list)
-[[ $out == "Claude: manual switching at 95%"* ]] || fail "no provider header: $out"
+[[ $out == "Claude: notify mode at 95%"* ]] || fail "no provider header: $out"
 grep -qE '^ +\* +main +Main +Max 5x +main@example.com +5h: 42%$' <<<"$out" || fail "Main's line is wrong: $out"
 grep -qE '^ +work +Work +Max 5x +work@example.com +7d: 90%$' <<<"$out" || fail "Work's line is wrong: $out"
-grep -qE '^Grok: manual switching at 95%$' <<<"$out" || fail "no Grok header: $out"
+grep -qE '^Grok: notify mode at 95%$' <<<"$out" || fail "no Grok header: $out"
 grep -qE 'week: 10%$' <<<"$out" || fail "the single-account record's limits are missing: $out"
 [[ $out != *Codex* ]] || fail "a provider nobody signed in to was listed"
 [[ $out != *SECRET* ]] || fail "a token reached the listing"
@@ -455,6 +455,7 @@ sign_in claude u-main main@example.com
 [[ $("$AGENT" account mode claude) == "Claude notifies at 95% and switches when you say so." ]] || fail "default mode: $("$AGENT" account mode claude)"
 [[ $("$AGENT" account mode claude auto 90) == "Claude switches new sessions to the account with the most headroom at 90%." ]] || fail "auto 90"
 [[ $(registry claude '[.switch, .threshold] | join(",")') == auto,90 ]] || fail "registry: $(<"$STATE/accounts/claude.json")"
+[[ $("$AGENT" account list claude | head -n1) == "Claude: auto mode at 90%" ]] || fail "list header for auto: $("$AGENT" account list claude)"
 [[ $("$AGENT" account mode claude notify) == "Claude notifies at 90% and switches when you say so." && $(registry claude .switch) == manual ]] || fail "notify is not stored as manual"
 "$AGENT" account mode claude auto >/dev/null
 [[ $(registry claude '[.switch, .threshold] | join(",")') == auto,90 ]] || fail "a mode without a threshold changed the threshold"
@@ -465,7 +466,7 @@ sign_in claude u-main main@example.com
 if out=$("$AGENT" account mode claude auto abc 2>&1); then fail "a non-numeric threshold was accepted"; fi
 [[ $out == *"percentage between 50 and 100"* && $(registry claude .threshold) == 100 ]] || fail "bad threshold: $out"
 if out=$("$AGENT" account mode claude sometimes 2>&1); then fail "an unknown mode was accepted"; fi
-[[ $out == *"manual or auto"* ]] || fail "bad mode: $out"
+[[ $out == *"notify or auto"* ]] || fail "bad mode: $out"
 ok
 cleanup_sandbox
 

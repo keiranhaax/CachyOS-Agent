@@ -69,7 +69,8 @@ fi
 # as "-" because column(1) would otherwise merge them away.
 while IFS= read -r entry; do
   jq -e '.accounts | any(.signedIn)' <<<"$entry" >/dev/null || continue
-  jq -r '"\(.name): \(.switch) switching at \(.threshold)%"' <<<"$entry"
+  # The registry stores notify mode as "manual"; this command says "notify".
+  jq -r '"\(.name): \(if .switch == "manual" then "notify" else .switch end) mode at \(.threshold)%"' <<<"$entry"
   jq -r '.accounts[] | [
       (if .active then "*" else " " end), .id, .label,
       (.plan | if . == "" then "-" else . end),

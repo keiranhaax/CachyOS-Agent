@@ -593,7 +593,7 @@ def remove(provider: str, target: str) -> dict[str, Any]:
 
 def set_mode(provider: str, mode: str, threshold: str | None) -> dict[str, Any]:
   if mode not in SWITCH_MODES:
-    raise AccountError("Switch mode is manual or auto")
+    raise AccountError("Switch mode is notify or auto")
   with Locked(provider) as registry:
     registry["switch"] = mode
     if threshold is not None:
