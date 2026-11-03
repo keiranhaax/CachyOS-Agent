@@ -274,6 +274,9 @@ else
 fi'
 }
 
+# refreshed_at_least <n>: whether the usage refresh stub has been started n times.
+refreshed_at_least() { (($(call_count cachyos-agent-usage-update) >= $1)); }
+
 # two_accounts: Main and Work signed in through the real add command, with the
 # usage refresh that add and use trigger stubbed out (a later chain runs the
 # real one) and the private browser the CLI would open not found.
@@ -285,7 +288,7 @@ two_accounts() {
   FIX_ID=u-work FIX_EMAIL=work@example.com "$AGENT" account add claude Work >/dev/null
   # Each add refreshes the usage record in the background; let both finish
   # starting before a chain replaces the stub, or the real command would run.
-  eventually test "$(call_count cachyos-agent-usage-update)" = 2 || fail "adding accounts did not refresh the usage record twice"
+  eventually refreshed_at_least 2 || fail "adding accounts did not refresh the usage record twice"
 }
 
 begin "account use makes launch run the agent in that account's home, and use main puts it back"
