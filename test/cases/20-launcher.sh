@@ -820,6 +820,8 @@ CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local
 expect "$(<"$SANDBOX/pi-env")" "qwen3.8-27b|http://127.0.0.1:11434/v1|32768" "extension environment: a recipe has the context it was created with"
 CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local-model qwen3-coder-next
 expect "$(<"$SANDBOX/pi-env")" "qwen3-coder-next|http://127.0.0.1:11434/v1|65536" "extension environment: --local-model names a recipe too"
+CACHYOS_AGENT_DEFAULT=pi run "$CA" launch --inline --local-model qwen3-coder-30b:latest
+expect "$(<"$SANDBOX/pi-env")" "qwen3-coder-30b:latest|http://127.0.0.1:11434/v1|32768" "extension environment: the :latest name that ollama list prints is the recipe too"
 [[ -f $REPO_ROOT/data/pi-ollama.ts ]] || fail "the extension is not shipped"
 ok
 cleanup_sandbox

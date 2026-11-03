@@ -347,10 +347,11 @@ resolve_local_model() {
 # that plans for more loses the start of its conversation. A recipe is created
 # with the context in data/local-models.tsv; any other model runs with Ollama's
 # own default, which is 4096 below 24 GiB of VRAM, and that is what is assumed.
+# `ollama list` prints a recipe as <id>:latest, which is the same model.
 local_context() {
-  local id context
+  local id context name=${local_model%:latest}
   while IFS=$'\t' read -r id _ _ _ context _; do
-    if [[ $id == "$local_model" && $context =~ ^[0-9]+$ ]]; then
+    if [[ $id == "$name" && $context =~ ^[0-9]+$ ]]; then
       printf '%s' "$context"
       return 0
     fi
