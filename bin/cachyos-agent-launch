@@ -419,7 +419,9 @@ hand_over_prompt() {
 }
 
 # The user's own install in ~/.local/bin, which counts as installed, is run by
-# path when PATH does not reach it (a desktop session often lacks it).
+# path when PATH does not reach it (a desktop session often lacks it). This
+# must run before hand_over_prompt: the first word equal to the agent's id is
+# its command only until a wrapper puts the prompt in front of it.
 use_user_install() {
   local binary i
   binary=$(ca_agent_binary "$agent")
@@ -494,10 +496,10 @@ main() {
   if $use_local; then
     apply_local
   fi
+  use_user_install
   if [[ -n $prompt && -n $prompt_via_clipboard ]]; then
     hand_over_prompt
   fi
-  use_user_install
   pin_account
 
   if $inline; then

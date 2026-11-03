@@ -677,6 +677,27 @@ expect "$(tr '\n' '|' <"$SANDBOX/user-install")" "--permission-mode|auto|--|hi t
 ok
 cleanup_sandbox
 
+begin "a prompt that is the agent's own name is not mistaken for its command"
+setup
+mkdir -p "$HOME/.local/bin"
+# No clipboard tool, so the prompt travels in front of the command in the window's own wrapper.
+for agent in freebuff dsh; do
+  printf '#!/bin/bash\nprintf "%%s\\n" "$@" >"%s/ran-%s"\n' "$SANDBOX" "$agent" >"$HOME/.local/bin/$agent"
+  chmod +x "$HOME/.local/bin/$agent"
+  run "$CA" launch --inline --agent "$agent" --prompt "$agent"
+  expect "$RC" 0 "$agent exit status"
+  contains "$OUT" $'\n\n'"$agent"$'\n\n' "$agent: the prompt is shown as typed, not as a path"
+  [[ -e $SANDBOX/ran-$agent ]] || fail "$agent did not start: $OUT $ERR"
+done
+# amp carries its command and its prompt side by side in a wrapper of its own.
+printf '#!/bin/bash\ncat >"%s/amp-stdin"\n' "$SANDBOX" >"$HOME/.local/bin/amp"
+chmod +x "$HOME/.local/bin/amp"
+run "$CA" launch --inline --agent amp --prompt amp
+expect "$RC" 0 "amp exit status"
+expect "$(<"$SANDBOX/amp-stdin")" "amp" "amp's first message"
+ok
+cleanup_sandbox
+
 begin "launch pins the active account's home when an accounts command exists"
 setup
 for agent in claude codex grok; do
