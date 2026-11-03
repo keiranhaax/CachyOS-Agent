@@ -505,6 +505,33 @@ if "$AGENT" account remove claude work >/dev/null 2>&1 </dev/null; then fail "an
 ok
 cleanup_sandbox
 
+begin "remove never deletes a home outside accounts/<provider>/, whatever the registry says"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+mkdir -p "$HOME/.claude/projects" "$SANDBOX/precious"
+echo keep >"$HOME/.claude/projects/keep.txt"
+echo keep >"$SANDBOX/precious/notes.txt"
+# A registry entry whose home is the primary's own, one with no home (which falls back to
+# the primary's), and one pointing at a directory that is not an account's at all: the
+# registry is a file on disk and may say anything, and only a home the commands made
+# under accounts/claude/ is theirs to delete.
+jq --arg claude "$HOME/.claude" --arg precious "$SANDBOX/precious" '.accounts += [
+    {id: "aliased", label: "Aliased", home: $claude, primary: false},
+    {id: "blank", label: "Blank", home: "", primary: false},
+    {id: "elsewhere", label: "Elsewhere", home: $precious, primary: false}]' "$STATE/accounts/claude.json" >"$SANDBOX/registry.json"
+cp "$SANDBOX/registry.json" "$STATE/accounts/claude.json"
+for id in aliased blank elsewhere; do
+  out=$("$AGENT" account remove claude "$id" </dev/null 2>&1) || fail "removing $id failed: $out"
+  [[ $out == "Forgot "* ]] || fail "remove said: $out"
+done
+[[ -f $HOME/.claude/projects/keep.txt && -f $HOME/.claude/.credentials.json && -f $HOME/.claude.json ]] || fail "remove deleted the primary's files"
+[[ -f $SANDBOX/precious/notes.txt ]] || fail "remove deleted a directory outside accounts/claude/"
+[[ $(registry claude '[.accounts[].id] | join(",")') == main,work ]] || fail "the entries were not dropped: $(registry claude '[.accounts[].id]')"
+[[ -d $STATE/accounts/claude/work ]] || fail "remove deleted an account it was not asked about"
+ok
+cleanup_sandbox
+
 begin "remove asks first in a terminal and keeps the account unless told yes"
 setup
 sign_in claude u-main main@example.com
