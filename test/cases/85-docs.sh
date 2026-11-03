@@ -177,8 +177,10 @@ cleanup_sandbox
 
 begin "the README agent table matches the launcher and the installer"
 # One row per agent id, in the launcher's order. Each flag in a code span must be
-# in the launcher's source, and each package in the installer's table under the
-# same method, so a flag or package changed in the code cannot stay in the table.
+# in that agent's own branch of the launcher's build_command, and each package in
+# the installer's table under the same method, so a flag or package changed in the
+# code cannot stay in the table. A flag that only another agent uses (--yolo is
+# in several) does not stand for this one.
 tick=$'\x60'
 source "$REPO_ROOT/lib/launcher.sh"
 mapfile -t rows < <(awk '/^\| Id \| Agent \|/ { on = 1; next } on && /^\|---/ { next } on && /^\|/ { print; next } on { exit }' README.md)
@@ -188,6 +190,12 @@ for i in "${!rows[@]}"; do
   IFS='|' read -r _ id _ install flags _ <<<"${rows[i]}"
   id=${id//[ $tick]/}
   [[ $id == "${CA_AGENT_IDS[i]-}" ]] || { fail "row $((i + 1)) is $id, the launcher's agent $((i + 1)) is ${CA_AGENT_IDS[i]-none}"; continue; }
+  branch=$(awk -v id="$id" '
+    $0 == "build_command() {" { in_build = 1; next }
+    in_build && $0 == "    " id ")" { grab = 1; next }
+    grab && $0 == "      ;;" { exit }
+    grab { print }' bin/cachyos-agent-launch)
+  [[ -n $branch ]] || { fail "$id: the launcher's build_command has no branch for it"; continue; }
   package=$(grep -oE "${tick}[^${tick}]+${tick}" <<<"$install" | tr -d "$tick" || true)
   case $install in
     *pacman*) grep -qF "$id) METHOD=repo PACKAGE=$package ;;" bin/cachyos-agent-install || fail "$id: the installer does not install $package with pacman" ;;
@@ -197,7 +205,7 @@ for i in "${!rows[@]}"; do
   esac
   while IFS= read -r flag; do
     # Whole words, so a table that says --yol is not satisfied by --yolo.
-    [[ -z $flag ]] || grep -qE -- "(^|[^[:alnum:]-])$flag([^[:alnum:]-]|$)" bin/cachyos-agent-launch || fail "$id: the launcher never uses '$flag'"
+    [[ -z $flag ]] || grep -qE -- "(^|[^[:alnum:]-])$flag([^[:alnum:]-]|$)" <<<"$branch" || fail "$id: the launcher never uses '$flag' for it"
   done < <(grep -oE "${tick}[^${tick}]+${tick}" <<<"$flags" | tr -d "$tick" || true)
 done
 ok
