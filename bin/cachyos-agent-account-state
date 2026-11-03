@@ -772,19 +772,45 @@ def notify(title: str, body: str) -> None:
   print(f"{title}: {body}", file=sys.stderr)
 
 
+# What a waiter started in a unit of its own needs from this run: the gate
+# can_notify() read, the PATH that finds notify-send and the sibling commands,
+# and the state directory `account use` writes the new choice to.
+WAITER_ENV = ("PATH", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "CACHYOS_AGENT_STATE_DIR")
+
+
+# Start the waiter so it outlives this process; True when it is running.
+# Inside a systemd unit, as the usage timer runs this, setsid is not enough: a
+# oneshot service's cgroup is killed the moment its main process exits, and a
+# waiter left in it never reaches notify-send. systemd-run puts it in a
+# transient unit of the user manager instead, which --collect removes after.
+# KillMode=process lets what `account use` starts in the background after a
+# click (the usage refresh) finish once the waiter itself has exited.
+def start_waiter(waiter: list[str]) -> bool:
+  try:
+    if os.environ.get("INVOCATION_ID"):
+      setenv = [f"--setenv={name}" for name in WAITER_ENV if name in os.environ]
+      return subprocess.run(
+        ["systemd-run", "--user", "--collect", "--quiet", "--property=KillMode=process", *setenv, "--", *waiter],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, check=False,
+      ).returncode == 0
+    subprocess.Popen(waiter, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+  except OSError:
+    return False
+  return True
+
+
 # A notification that switches accounts when it is clicked. notify-send only
 # reports the click by staying until the notification closes, so a detached
 # copy of this script (the `offer` command) waits for it while autoswitch
-# returns and lets go of the registry lock.
+# returns and lets go of the registry lock. Without a desktop, or when the
+# waiter can't be started, the notification would be one nothing can answer,
+# so the way to switch is printed instead.
 def offer_switch(provider: str, target: dict[str, Any], title: str, body: str) -> None:
   command = f"cachyos-agent account use {provider} {target['id']}"
-  if not can_notify():
+  script = str(Path(__file__).resolve())
+  waiter = [sys.executable, script, "offer", provider, target["id"], title, f"{body} Click to switch new sessions to it, or run: {command}"]
+  if not can_notify() or not start_waiter(waiter):
     print(f"{title}: {body} Switch new sessions to it with: {command}", file=sys.stderr)
-    return
-  subprocess.Popen(
-    [sys.executable, str(Path(__file__).resolve()), "offer", provider, target["id"], title, f"{body} Click to switch new sessions to it, or run: {command}"],
-    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-  )
 
 
 # Plasma shows "switch" as a button and runs "default" when the notification

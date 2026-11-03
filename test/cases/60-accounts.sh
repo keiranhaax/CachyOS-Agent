@@ -61,7 +61,9 @@ fi'
 setup() {
   make_sandbox
   export SANDBOX
-  unset BROWSER
+  # A case run from a terminal that systemd started would otherwise look like
+  # it runs inside a unit, which changes how an offer is detached.
+  unset BROWSER INVOCATION_ID
   STATE=$XDG_STATE_HOME/cachyos-agent
   : >"$SANDBOX/logins"
   stub cachyos-agent-usage-update
@@ -517,6 +519,54 @@ stub notify-send 'case "$*" in *--action*) echo switch ;; esac'
 eventually active_is work || fail "clicking the notification did not switch"
 called notify-send "--action=switch=Switch" || fail "no switch action: $(<"$SANDBOX/calls/notify-send")"
 called notify-send "Work is at 10%. Click to switch" || fail "no offer: $(<"$SANDBOX/calls/notify-send")"
+ok
+cleanup_sandbox
+
+# in_a_unit: act as the usage-update service does. systemd marks every process
+# of a unit with INVOCATION_ID, and kills whatever is left in the unit's cgroup
+# when its main process ends, so an offer must be started outside the unit.
+in_a_unit() {
+  export INVOCATION_ID=0123456789abcdef0123456789abcdef
+}
+
+begin "inside a systemd unit the notify-mode offer starts in a unit of its own"
+two_accounts
+in_a_unit
+usage_record 0.97 0.1
+stub systemd-run
+[[ -z $("$AGENT" account state autoswitch claude) ]] || fail "notify mode switched by itself"
+called systemd-run "--user" || fail "the offer was not started in the user manager: $(<"$SANDBOX/calls/systemd-run")"
+called systemd-run "--collect" || fail "the offer's unit is not cleaned up when it ends"
+called systemd-run "--property=KillMode=process" || fail "the usage refresh a click starts would die with the waiter"
+called systemd-run "--setenv=CACHYOS_AGENT_STATE_DIR" || fail "the offer's unit would not find the registry"
+called systemd-run "Work is at 10%. Click to switch" || fail "the unit does not run the offer: $(<"$SANDBOX/calls/systemd-run")"
+sleep 0.3
+[[ ! -e $SANDBOX/calls/notify-send ]] || fail "the offer also ran as a child of the unit, where systemd kills it"
+ok
+cleanup_sandbox
+
+begin "the offer started in its own unit carries out a click"
+two_accounts
+in_a_unit
+usage_record 0.97 0.1
+# what systemd-run does: run the words after -- somewhere else and return
+# shellcheck disable=SC2016 # a program for the stub's own bash
+stub systemd-run 'while [[ $1 != -- ]]; do shift; done; shift; "$@" >/dev/null 2>&1 </dev/null &'
+stub notify-send 'case "$*" in *--action*) echo switch ;; esac'
+[[ -z $("$AGENT" account state autoswitch claude) ]] || fail "notify mode switched by itself"
+eventually active_is work || fail "clicking the notification did not switch"
+ok
+cleanup_sandbox
+
+begin "when no unit can be started the offer says how to switch"
+two_accounts
+in_a_unit
+usage_record 0.97 0.1
+stub systemd-run 'exit 1'
+err=$("$AGENT" account state autoswitch claude 2>&1 >/dev/null)
+[[ $err == "Main is at 97% of a Claude limit: Work is at 10%. Switch new sessions to it with: cachyos-agent account use claude work" ]] || fail "stderr said: $err"
+sleep 0.3
+[[ ! -e $SANDBOX/calls/notify-send ]] || fail "a notification was sent that nothing waits on"
 ok
 cleanup_sandbox
 
