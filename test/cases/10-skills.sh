@@ -397,10 +397,15 @@ else
   # Commands that read those files, run from the staged /usr/bin with nothing on PATH to help.
   staged_env=(env -i HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" PATH=/usr/bin:/bin)
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
-  "${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" theme sync >/dev/null 2>&1 || fail "the staged theme sync failed"
-  for rendered in claude.json hermes.yaml opencode.json pi.json; do
-    [[ -s $XDG_STATE_HOME/cachyos-agent/theme/$rendered ]] || fail "the staged theme sync rendered no $rendered: it needs data/themed/ and the shell helpers"
-  done
+  # theme sync reads the Plasma scheme through kreadconfig6 (kconfig, an optional dependency).
+  if PATH=/usr/bin:/bin type -P kreadconfig6 >/dev/null; then
+    "${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" theme sync >/dev/null 2>&1 || fail "the staged theme sync failed"
+    for rendered in claude.json hermes.yaml opencode.json pi.json; do
+      [[ -s $XDG_STATE_HOME/cachyos-agent/theme/$rendered ]] || fail "the staged theme sync rendered no $rendered: it needs data/themed/ and the shell helpers"
+    done
+  else
+    echo "UNVERIFIED the staged theme sync: kreadconfig6 is not installed here"
+  fi
   recipes=$("${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" local list 2>&1) || fail "the staged local list failed: $recipes"
   [[ $recipes == *qwen3-coder-next* ]] || fail "the staged local list does not show the recipes of data/local-models.tsv: $recipes"
 
