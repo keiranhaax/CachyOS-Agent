@@ -24,6 +24,11 @@ unverified() {
   printf 'UNVERIFIED %s: %s\n' "$1" "$2"
 }
 
+# stamp <epoch seconds> <date format>: that moment in UTC.
+stamp() {
+  date -u -d "@$1" "+$2"
+}
+
 # check <json> <jq filter> <what>: fails unless the filter is true for the json.
 check() {
   jq -e "$2" <<<"$1" >/dev/null 2>&1 || fail "$3: $1"
@@ -285,7 +290,6 @@ if command -v qml6 >/dev/null; then
   # time through: the collectors and `cachyos-agent usage` read a time with no
   # offset as UTC, and Python's fromisoformat also takes the basic form.
   soon=$((NOW / 1000 + 3600))
-  stamp() { date -u -d "@$1" "+$2"; }
   windows=$(jq -nc --arg a "$(stamp "$soon" %Y-%m-%dT%H:%M:%S)" --arg b "$(stamp "$soon" %Y%m%dT%H%M%SZ)" \
     --arg c "$(stamp "$((soon + 19800))" %Y-%m-%dT%H:%M:%S.123456)+05:30" --arg d "$(stamp "$((soon - 7200))" %Y-%m-%dT%H:%M:%S)-0200" \
     --arg e "$(stamp "$soon" '%Y-%m-%d %H:%M:%S')Z" \
