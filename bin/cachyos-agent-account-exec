@@ -12,6 +12,9 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 # shellcheck source=../lib/accounts.sh
 source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
 
+# `cachyos-agent launch` pins the selected account itself. Anything else that
+# starts a CLI, such as a shell shortcut, goes through this command to follow
+# the selection too; a CLI started any other way uses the login in ~/.<provider>.
 if ! acct_provider "${1-}"; then
   echo "Usage: cachyos-agent-account-exec <claude|codex|grok> [args...]" >&2
   exit 1

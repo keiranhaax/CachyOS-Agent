@@ -307,13 +307,14 @@ stub notify-send
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
 [[ -z $("$AGENT" account home claude) ]] || fail "home printed a path while Main is active"
 out=$("$AGENT" account use claude work)
-[[ $out == "New Claude sessions now use Work (Max 5x). Running sessions stay on Main." ]] || fail "use said: $out"
+[[ $out == "New Claude sessions now use Work (Max 5x). Running sessions stay on Main.
+They follow it when started with cachyos-agent launch or cachyos-agent account exec claude; a plain claude command still uses the login in ~/.claude." ]] || fail "use said: $out"
 [[ $("$AGENT" account home claude) == "$STATE/accounts/claude/work" ]] || fail "home is not the work home: $("$AGENT" account home claude)"
 [[ $(registry claude .active) == work ]] || fail "the registry does not record the switch"
 called notify-send "New Claude sessions use Work" || fail "no notification for a use that was not run in a terminal"
 eventually called cachyos-agent-usage-update "--limits-only" || fail "the usage record was not refreshed"
 [[ $("$AGENT" account use claude work) == "New Claude sessions already use Work (Max 5x)." ]] || fail "using the active account again said the wrong thing"
-"$AGENT" account use claude main >/dev/null
+[[ $("$AGENT" account use claude main) == "New Claude sessions now use Main (Max 5x). Running sessions stay on Work." ]] || fail "switching back to Main said something about plain claude"
 [[ -z $("$AGENT" account home claude) ]] || fail "home printed a path after switching back to Main"
 "$AGENT" account use claude next >/dev/null
 [[ $(registry claude .active) == work ]] || fail "next did not move on to work"
