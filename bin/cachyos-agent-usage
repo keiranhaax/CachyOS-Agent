@@ -88,6 +88,13 @@ def money($currency):
   | (if $v < 0 then "-" else "" end) + ($currency | currency_prefix)
     + "\($cents / 100 | floor)." + (($cents % 100 | tostring) | rjust(2) | gsub(" "; "0"));
 
+# What a window is called: its title, which names the model a per-model window
+# belongs to (its label is then the generic "5h window"), else its label. The
+# panel widget picks the same way.
+def limit_name:
+  (.title | text) as $title
+  | if $title != "" then $title else (.label | text) end;
+
 # One row per limit window that has a usable percentage. A window whose reset
 # time has passed is untouched again, so it reads 0% with no reset to wait for.
 def limit_rows($now):
@@ -95,7 +102,7 @@ def limit_rows($now):
     | (.resetsAt | epoch) as $reset
     | ($reset != null and $reset <= $now) as $elapsed
     | ((if $elapsed then 0 else (.percent * 100 | round) end | tostring) + "%") as $pct
-    | [(.label | text), $pct]
+    | [limit_name, $pct]
       + (if $reset != null and ($elapsed | not) then ["resets in \($reset - $now | duration)"] else [] end) ];
 
 def balance_rows:

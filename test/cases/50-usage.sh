@@ -624,6 +624,27 @@ actual=$("$REPORT")
 ok
 cleanup_sandbox
 
+begin "the report names a limit by its title, as the widget does, and falls back to its label"
+make_sandbox
+mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"
+# Codex's per-model buckets carry the model only in title; their label is the generic one.
+write_record codex '
+  {schemaVersion: 1, id: "codex", name: "Codex", ready: true, tierLabel: "pro", limits: [
+     {label: "5h window", percent: 0.4}, {label: "Weekly (7-day)", percent: 0.2},
+     {label: "5h window", title: "GPT-5.3-Codex-Spark Session", percent: 0.05},
+     {label: "Weekly (7-day)", title: "GPT-5.3-Codex-Spark Weekly", percent: 0.01},
+     {label: "Monthly", title: "", percent: 0.5}]}'
+expected='Codex  Pro
+  5h window                    40%
+  Weekly (7-day)               20%
+  GPT-5.3-Codex-Spark Session  5%
+  GPT-5.3-Codex-Spark Weekly   1%
+  Monthly                      50%'
+actual=$("$REPORT")
+[[ $actual == "$expected" ]] || { diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true; fail "the report does not tell the model's limits from the account's"; }
+ok
+cleanup_sandbox
+
 begin "the report filters by agent name and says when one is not in use"
 make_sandbox
 make_report_fixtures
@@ -709,13 +730,15 @@ make_sandbox
 write_record evil --arg esc $'\033' --arg bel $'\a' --arg nl $'\n' --arg c1 $'\xc2\x9b' '
   {schemaVersion: 1, id: "evil", name: ("Ev" + $esc + "[2Jil"), ready: true, tierLabel: ("pro" + $nl + "FAKE"),
    usageStatusText: ($esc + "]0;owned" + $bel), authHelpText: ("help" + $c1 + "31m"),
-   limits: [{label: ($esc + "]0;title" + $bel + "Window" + $esc + "[2J"), percent: 0.5, resetsAt: ""}],
+   limits: [{label: ($esc + "]0;title" + $bel + "Window" + $esc + "[2J"), percent: 0.5, resetsAt: ""},
+            {label: "plain", title: ($esc + "[31mModel" + $bel), percent: 0.25}],
    balance: {remaining: 1, funded: 2, spent: 1, currency: ("X" + $esc + "[1mY")},
    accounts: [{label: ("acct" + $esc + "[0m"), plan: ("plan" + $bel), active: true, limits: []}]}'
 expected=$(
   cat <<'EOF'
 Ev[2Jil  ProFAKE
   ]0;titleWindow[2J  50%
+  [31mModel          25%
   Balance            X[1MY 1.00 left of X[1MY 2.00 (spent X[1MY 1.00)
   ! ]0;owned: help31m
   Accounts
