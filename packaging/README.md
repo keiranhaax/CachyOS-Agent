@@ -1,12 +1,24 @@
 # Pacman packaging
 
-`PKGBUILD` produces the architecture-independent `cachyos-agent` package. It installs reviewed, immutable source files under `/usr/share/cachyos-agent`, executable helpers under `/usr/bin`, documentation under `/usr/share/doc/cachyos-agent`, and the GPL license under `/usr/share/licenses/cachyos-agent`.
+`PKGBUILD` produces the architecture-independent `cachyos-agent` package. It installs reviewed, immutable source files:
 
-The package never writes to a user's home directory. After installation, each user runs:
+| Where | What |
+|---|---|
+| `/usr/share/cachyos-agent/` | The data root: `bin/`, `lib/`, `agents/skills/`, `data/`, `shell/`, `VERSION`, `AGENTS.md`, `upstreams.tsv` |
+| `/usr/bin/` | A symlink to each command in the data root's `bin/`, plus `cachyos-provision-agent-skills` for the former package |
+| `/usr/share/applications/` | `cachyos-agent.desktop` |
+| `/usr/lib/systemd/user/` | The user units for the usage timer, the crash watcher and the theme follower. None is enabled |
+| `/usr/share/plasma/plasmoids/org.cachyos.agent/` | The panel widget |
+| `/usr/share/doc/cachyos-agent/` | `README.md`, `MAINTENANCE.md`, `THIRD_PARTY_NOTICES.md` and this directory's files |
+| `/usr/share/licenses/cachyos-agent/` | The GPL license |
+
+The package never writes to a user's home directory and enables nothing. Hard dependencies are what every command needs (`bash`, `jq`, `python`, `coreutils`, `gawk`, `systemd`); each optional dependency names the feature it enables, so a machine without a terminal, libnotify or Ollama still installs. After installation, each user runs:
 
 ```bash
 cachyos-agent skills provision
 ```
+
+and then opts in to whatever else they want; the [`README.md`](../README.md) describes each step.
 
 ## Local build
 
@@ -17,11 +29,13 @@ makepkg -Ccf
 namcap PKGBUILD cachyos-agent-[0-9]*.pkg.tar.zst
 ```
 
+`check()` runs the skill validator and `test/run-tests` on the tagged source. A case that needs a tool the build machine lacks (`kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and still passes. `namcap` reports no errors on the package. Its warnings are expected: the usage collectors import `collectors` from the `lib/` directory beside `bin/`, which `namcap` cannot see, and the widget's QML modules come with `plasma-desktop`, which is an optional dependency.
+
 Install the inspected artifact with `sudo pacman -U ./cachyos-agent-[0-9]*.pkg.tar.zst`.
 
 ## Update repository
 
-Pushing a matching `v*` tag runs `.github/workflows/release.yml`. The workflow validates the tree (shellcheck, skill validator, isolated tests), builds the package, signs the package and the repository database with the maintainer key, publishes the package, its detached signature, the SHA-256 checksums, and the public signing key on the GitHub release, and updates the `repo` branch's `x86_64/cachyos-agent` database. The repository retains only the newest package version.
+Pushing a matching `v*` tag runs `.github/workflows/release.yml`. The workflow validates the tree (shellcheck on the Bash files, `py_compile` on the Python ones, the skill validator, isolated tests), builds the package, signs the package and the repository database with the maintainer key, publishes the package, its detached signature, the SHA-256 checksums, and the public signing key on the GitHub release, and updates the `repo` branch's `x86_64/cachyos-agent` database. The repository retains only the newest package version.
 
 ## Signing
 

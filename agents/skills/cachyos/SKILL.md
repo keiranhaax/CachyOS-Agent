@@ -5,8 +5,11 @@ description: >
   schedulers, hardware profiles, boot and snapshots, packaged desktop defaults,
   handheld systems, and CachyOS packaging. Use for linux-cachyos*, Kernel Manager,
   ISA repos, scx_loader, chwd, Limine, snapper, cachy-chroot, Noctalia/UWSM,
-  deckify, or CachyOS-PKGBUILDS. Do not use for ordinary application work or a
-  vanilla Arch system unless the task is adding or managing CachyOS repositories.
+  deckify, or CachyOS-PKGBUILDS. Also covers the cachyos-agent runtime that
+  launches and watches coding agents: default agent, prompts, usage limits,
+  accounts, crash diagnosis, theme sync, local models. Do not use for ordinary
+  application work or a vanilla Arch system unless the task is adding or
+  managing CachyOS repositories.
 ---
 
 # CachyOS Skill
@@ -46,6 +49,7 @@ Read the matching guide before starting:
 - [`install.md`](install.md) — desktop vs handheld ISO, installer, Arch overlay
 - [`packaging.md`](packaging.md) — CachyOS-PKGBUILDS, march/LTO/PGO
 - [`handheld.md`](handheld.md) — Handheld Edition, `linux-cachyos-deckify`, `scx_lavd`
+- [`agent.md`](agent.md) — the coding agents themselves: `cachyos-agent`, default agent, usage, accounts, crash diagnosis, themes, local models
 
 ## Critical Safety Rules
 
@@ -106,6 +110,32 @@ Use `sudo` in a visible terminal for privileged work. NEVER start interactive `s
 | Limine + snapper | Default boot + snapshots | `/etc/default/limine` |
 | `cachyos-*-settings` | DE / WM defaults | user `~/.config/` after first login |
 
+## Command Discovery
+
+The agent runtime ships one CLI, `cachyos-agent`, which runs the `cachyos-agent-*` commands as `cachyos-agent <group> [command]`. Prefer that form: it documents itself. The underlying `cachyos-agent-*` files sit beside the dispatcher, and reading them is safe. The package also links each one into `/usr/bin`; a Git checkout links only `cachyos-agent` into `PATH`, so look for the others beside it, as below.
+
+```bash
+# List every documented command and its summary (--all adds hidden plumbing)
+cachyos-agent commands
+
+# Show the commands inside a group
+cachyos-agent usage --help
+cachyos-agent crash --help
+
+# Show help for one command; --help does not run it
+cachyos-agent crash mute --help
+
+# Machine-readable listing (binary, route, group, name, summary, args, examples, hidden)
+cachyos-agent commands --json
+
+# Read a command's source to understand it. The file is the "binary" field
+# of commands --json (crash mute is cachyos-agent-crash-mute), and it sits
+# beside the dispatcher in a package and in a Git checkout alike.
+cat "$(dirname "$(readlink -f "$(command -v cachyos-agent)")")/cachyos-agent-crash"
+```
+
+Some commands start an agent that does not stop to ask, or change units and shortcuts. Read [`agent.md`](agent.md) before running one that is not plain reading.
+
 ## Decision Framework
 
 1. **Is this a handheld?** Read [`handheld.md`](handheld.md) first. Stop if you were about to use desktop ISO/kernel/scheduler advice.
@@ -117,12 +147,12 @@ Use `sudo` in a visible terminal for privileged work. NEVER start interactive `s
 7. **Is it a desktop / compositor tweak?** [`desktop.md`](desktop.md). `/etc/skel` does not update existing users.
 8. **Is it install media or converting Arch?** [`install.md`](install.md). Existing Arch is a repo overlay, not a conversion.
 9. **Is it a PKGBUILD?** [`packaging.md`](packaging.md) only.
+10. **Is it about the coding agents themselves?** The default agent, launching or prompting one, usage limits, subscription accounts, crash notifications, theme sync, or local models: [`agent.md`](agent.md). Diagnosing a crash itself is the `diagnose-crash` skill.
 
 ## Out of Scope
 
 - Vanilla Arch advice as if Cachy packages and repos were absent
 - Another distro's agent skill text
-- Inventing a default-agent CLI, mise stubs, or hotkeys (CachyOS has none)
 - ISO engineering (image build, Calamares branding, first-login hooks). [`install.md`](install.md) covers using the published ISO only.
 - Deep PKGBUILD authoring except via [`packaging.md`](packaging.md)
 
@@ -134,3 +164,5 @@ Use `sudo` in a visible terminal for privileged work. NEVER start interactive `s
 - "System will not boot after a kernel update" → [`boot.md`](boot.md), live ISO, `cachy-chroot`, Btrfs preset, Limine snapshot
 - "Tune Hyprland gaps" → [`desktop.md`](desktop.md). Do not follow the stock Hyprland wiki as if this were a stock install. Do not install archived `cachyos-hyprland-settings`.
 - "Add Cachy repos to this Arch box" → [`repos.md`](repos.md) + [`install.md`](install.md). Overlay, not a conversion.
+- "Which coding agent is my default?" → [`agent.md`](agent.md), `cachyos-agent default`
+- "Why did Firefox just crash?" → the `diagnose-crash` skill, from `coredumpctl list`; [`agent.md`](agent.md) covers the notification that starts it

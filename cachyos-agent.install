@@ -1,16 +1,25 @@
 post_install() {
   printf '%s\n' \
-    'cachyos-agent was installed under /usr/share/cachyos-agent.' \
-    'Run "cachyos-agent skills provision" as each user who should receive the skill.' \
+    'Installed cachyos-agent under /usr/share/cachyos-agent.' \
+    'Run "cachyos-agent skills provision" as each user who should receive the skills.' \
     'Users of the former cachyos-agent-system: your skill links still work through the' \
     'compatibility path /usr/share/cachyos-agent-system; the same command moves them.' \
-    'Run "cachyos-agent commands" to list everything the runtime can do.'
+    '' \
+    'Nothing runs by itself. Each user opts in to what they want:' \
+    '  cachyos-agent default <agent>      choose a coding agent; it starts at once, unattended' \
+    '  cachyos-agent usage schedule on    refresh the agent usage records every 15 minutes' \
+    '  cachyos-agent crash capture on     offer an agent diagnosis when a program crashes' \
+    '' \
+    'Run "cachyos-agent commands" to list everything the runtime can do.' \
+    'The guide is /usr/share/doc/cachyos-agent/README.md.'
 }
 
 post_upgrade() {
   printf '%s\n' \
-    'cachyos-agent was updated.' \
+    'Updated cachyos-agent.' \
     'Links made by cachyos-agent already target the package-owned skill directory.' \
     'Links made by the former cachyos-agent-system use a compatibility path a later release drops;' \
-    'run "cachyos-agent skills provision" as each user to move them, and again when a release adds a skill.'
+    'run "cachyos-agent skills provision" as each user to move them, and again when a release adds a skill.' \
+    'A crash watcher you turned on keeps running the old files until it restarts:' \
+    '  systemctl --user restart cachyos-agent-crash-watch.service'
 }
