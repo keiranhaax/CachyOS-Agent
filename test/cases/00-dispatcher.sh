@@ -239,31 +239,34 @@ out=$("$TREE_AGENT" multi --help)
 ok
 cleanup_sandbox
 
-begin "a --help later on the line shows the command's help and does not run it"
+begin "a --help later on the line runs the command with --help alone"
 make_sandbox
 make_tree
-add_command cachyos-agent-multi "cachyos-agent:summary=Multi root" "cachyos-agent:args=<pid>" "cachyos-agent:examples=cachyos-agent multi 1 | cachyos-agent multi 2"
+add_command cachyos-agent-multi "cachyos-agent:summary=Multi root" "cachyos-agent:args=<pid>"
 add_command cachyos-agent-multi-mute "cachyos-agent:summary=Multi mute" "cachyos-agent:args=[on|off]"
 add_command cachyos-agent-lone "cachyos-agent:summary=Lone command" "cachyos-agent:args=[--force] <name>"
 add_command cachyos-agent-multi-hidden "cachyos-agent:summary=Pass-through" "cachyos-agent:hidden=true"
-# A command prints its own usage for a leading --help (checked above); a later
-# one would be taken as a value or a label by most commands, which then act.
-for line in "multi 1234 --help" "multi 1234 -h" "multi mute off --help" "lone --force x --help" "lone x -h"; do
+# A command answers a leading --help itself (checked above). A later one would
+# be taken as a value or a label by most commands, which then act on the words
+# before it, so the command gets --help and nothing else.
+declare -A help_alone=(
+  ["multi 1234 --help"]="cachyos-agent-multi:--help"
+  ["multi 1234 -h"]="cachyos-agent-multi:--help"
+  ["multi mute off --help"]="cachyos-agent-multi-mute:--help"
+  ["lone --force x --help"]="cachyos-agent-lone:--help"
+  ["lone x -h"]="cachyos-agent-lone:--help"
+)
+for line in "${!help_alone[@]}"; do
   # shellcheck disable=SC2086 # the words are the point
-  out=$("$TREE_AGENT" $line)
-  [[ $out == *"cachyos-agent "* && $out != "cachyos-agent-"* ]] || fail "'$line' did not show help, or ran the command: $out"
+  [[ $("$TREE_AGENT" $line) == "${help_alone[$line]}" ]] || fail "'$line' did not become the command's --help: $("$TREE_AGENT" $line)"
 done
-out=$("$TREE_AGENT" multi 1234 --help)
-[[ $out == *"cachyos-agent multi <pid>"* && $out == *"Multi root"* && $out == *"e.g. cachyos-agent multi 1"* ]] || fail "the help of multi is wrong: $out"
-[[ $out != *"Multi mute"* ]] || fail "the help of multi lists another command: $out"
-out=$("$TREE_AGENT" lone --force x --help)
-[[ $out == *"cachyos-agent lone [--force] <name>"* && $out == *"Lone command"* ]] || fail "the help of lone is wrong: $out"
 # After --, a help flag belongs to the command, and so does one in a hidden command's words.
 [[ $("$TREE_AGENT" multi 1234 -- --help) == "cachyos-agent-multi:1234 -- --help" ]] || fail "--help after -- did not reach the command"
 [[ $("$TREE_AGENT" multi mute -- --help) == "cachyos-agent-multi-mute:-- --help" ]] || fail "--help after -- on a subcommand did not reach the command"
 [[ $("$TREE_AGENT" multi hidden claude --help) == "cachyos-agent-multi-hidden:claude --help" ]] || fail "a hidden command did not get its --help"
-# A leading --help is still the command's own.
+# A leading --help is still the command's own, and other words are untouched.
 [[ $("$TREE_AGENT" lone --help) == "cachyos-agent-lone:--help" ]] || fail "lone --help did not reach the command"
+[[ $("$TREE_AGENT" lone --force x) == "cachyos-agent-lone:--force x" ]] || fail "words without a help flag changed"
 ok
 cleanup_sandbox
 
@@ -275,8 +278,19 @@ for line in "usage schedule off --help" "usage schedule on -h" "account add clau
   "prompt --inline --help" "account use work --help" "local use best --help" "install claude --help"; do
   # shellcheck disable=SC2086 # the words are the point
   out=$("$AGENT" $line 2>&1) || fail "'$line' failed: $out"
-  [[ $out == *"cachyos-agent "* && $out == *"e.g. "* || $out == "Usage:"* ]] || fail "'$line' did not show help: $out"
+  [[ $out == *"sage: cachyos-agent "* || $out == *"cachyos-agent "*"["* ]] || fail "'$line' did not print the command's usage: $out"
 done
+# Every visible command answers a lone --help before it does anything, which is
+# all the dispatcher passes it, so none acts whatever words stand before it.
+routes=$("$AGENT" commands --json | jq -r '.commands[] | select(.hidden | not) | .route | ltrimstr("cachyos-agent ")')
+swept=0
+while IFS= read -r route; do
+  # shellcheck disable=SC2086 # the words are the point
+  out=$("$AGENT" $route x --help 2>&1) || fail "'$route x --help' failed: $out"
+  [[ -n $out ]] || fail "'$route x --help' printed nothing"
+  swept=$((swept + 1))
+done <<<"$routes"
+[[ $swept == "$("$AGENT" commands | wc -l)" ]] || fail "the sweep reached $swept of the listed commands"
 for tool in systemctl claude kwriteconfig6 kreadconfig6 cachyos-agent-launch notify-send; do
   [[ ! -e $SANDBOX/calls/$tool ]] || fail "$tool was run by a --help: $(<"$SANDBOX/calls/$tool")"
 done

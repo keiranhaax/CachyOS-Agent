@@ -115,34 +115,19 @@ EOF
     done | print_table
 }
 
-# One command: its route and arguments, summary and examples.
-print_command() {
-  local route=$1 summary=$2 args=$3 examples=$4 example
-  printf '  %s%s\n      %s\n' "$route" "${args:+ $args}" "$summary"
-  if [[ -n $examples ]]; then
-    while IFS= read -r example; do
-      printf '      e.g. %s\n' "$example"
-    done <<<"${examples// | /$'\n'}"
-  fi
-}
-
 # Usage, summary and examples of every visible command in one group.
 show_group_help() {
-  local group=$1 route cmd_group summary args examples
+  local group=$1 route cmd_group summary args examples example
   load_commands
   printf 'cachyos-agent %s: %s\n' "$group" "${GROUP_DESC[$group]:-$group commands}"
   while IFS=$US read -r route _ cmd_group _ summary args examples _; do
     if [[ $cmd_group != "$group" ]]; then continue; fi
-    printf '\n'
-    print_command "$route" "$summary" "$args" "$examples"
-  done < <(records)
-}
-
-# The same for the one command whose file is $1.
-show_command_help() {
-  local route binary summary args examples
-  while IFS=$US read -r route binary _ _ summary args examples _; do
-    if [[ $binary == "$1" ]]; then print_command "$route" "$summary" "$args" "$examples"; fi
+    printf '\n  %s%s\n      %s\n' "$route" "${args:+ $args}" "$summary"
+    if [[ -n $examples ]]; then
+      while IFS= read -r example; do
+        printf '      e.g. %s\n' "$example"
+      done <<<"${examples// | /$'\n'}"
+    fi
   done < <(records)
 }
 
@@ -260,12 +245,13 @@ wants_group_help() {
 }
 
 # Whether -h or --help stands among a visible command's arguments after the
-# first, before any --. The first is the command's own to answer, with a usage
-# text richer than its metadata. Later on the line it is no option the command
-# reads: `usage schedule off --help` would turn the timer off, `account add claude
-# --help` would start a sign-in, `crash 1234 --help` a diagnosis. A hidden command
-# is plumbing that passes its arguments on (`account exec claude --help` is
-# Claude's), so it gets them untouched.
+# first, before any --. A command answers a leading --help itself, but later on
+# the line most commands take it for a value or a label and act: `usage schedule
+# off --help` would turn the timer off, `account add claude --help` would start a
+# sign-in, `crash 1234 --help` a diagnosis. Such a line is run as the command's
+# --help alone, which every command answers before it does anything. A hidden
+# command is plumbing that passes its arguments on (`account exec claude --help`
+# is Claude's), so it gets them untouched.
 wants_command_help() {
   local binary=$1 i
   shift
@@ -291,8 +277,7 @@ dispatch() {
   if resolve "$@"; then
     shift "$CONSUMED"
     if wants_command_help "$RESOLVED" "$@"; then
-      show_command_help "$RESOLVED"
-      return 0
+      set -- --help
     fi
     exec "$BIN_DIR/$RESOLVED" "$@"
   fi
