@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Adapted from Omarchy shell/plugins/agents/Panel.qml and Main.qml (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+.pragma library
+
+// What the widget draws, derived from the output of `cachyos-agent usage --json`:
+// a JSON array of usage records in Omarchy's format (docs/agent-usage-collectors.md).
+// Everything here is a pure function of its arguments, with the clock passed in
+// as `now` (milliseconds since the epoch), so test/cases/80-plasmoid.sh can run
+// it under qml6 without a desktop. A collector may leave a field out or fill it
+// badly, so every field is checked here and none is trusted.
+
+// A limit this full is drawn in the warning colour, and a prepaid balance with
+// this little of its funding left is low.
+const HIGH = 0.9;
+const LOW = 0.1;
+
+const CURRENCY_SYMBOLS = { USD: "$", EUR: "€", GBP: "£" };
+
+const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// A token or prompt count: a finite number above zero, else zero.
+const count = value => {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+};
+
+const capitalize = value => {
+    const text = String(value || "");
+    return text.charAt(0).toUpperCase() + text.slice(1);
+};
+
+// "3d 4h", "2h 10m" or "12m"; never less than a minute.
+function duration(ms) {
+    const minutes = Math.max(1, Math.floor(ms / 60000));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0)
+        return days + "d " + (hours % 24) + "h";
+    if (hours > 0)
+        return hours + "h " + (minutes % 60) + "m";
+    return minutes + "m";
+}
+
+// The line under a limit: when its window resets. resetMs is 0 for a window
+// with no reset time. The widget calls this again as its clock ticks.
+function resetText(resetMs, now) {
+    if (!(resetMs > 0))
+        return "";
+    return resetMs > now ? "resets in " + duration(resetMs - now) : "resetting";
+}
+
+// 1234 -> "1.2K". The threshold sits just under each unit so that 999950
+// reads 1.0M and never 1000.0K.
+function tokens(value) {
+    for (const [unit, size] of [["B", 1e9], ["M", 1e6], ["K", 1e3]]) {
+        if (value >= size * 0.99995)
+            return (value / size).toFixed(1) + unit;
+    }
+    return String(Math.round(value));
+}
+
+function money(value, currency) {
+    const code = String(currency || "USD").toUpperCase();
+    return (CURRENCY_SYMBOLS[code] || code + " ") + value.toFixed(2);
+}
+
+// One limit window. percent is a fraction of 0..1. A window whose reset time
+// has passed is untouched again, as the collectors keep it, not unknown, so it
+// reads 0% with nothing to count down to. A window without a percent is
+// dropped; one without a reset time is kept as it is.
+function limitView(entry, now) {
+    if (!isObject(entry))
+        return null;
+    const percent = Number(entry.percent);
+    if (!(percent >= 0))
+        return null;
+    const resetMs = Date.parse(entry.resetsAt);
+    const elapsed = resetMs <= now;
+    const fraction = elapsed ? 0 : Math.min(percent, 1);
+    return {
+        title: String(entry.title || entry.label || "Limit"),
+        fraction: fraction,
+        percentText: Math.round(fraction * 100) + "%",
+        resetMs: elapsed || Number.isNaN(resetMs) ? 0 : resetMs,
+        high: fraction >= HIGH
+    };
+}
+
+function limitViews(entries, now) {
+    return Array.isArray(entries) ? entries.map(entry => limitView(entry, now)).filter(view => view !== null) : [];
+}
+
+// A prepaid agent's credit ledger. fraction is how much of the funding is
+// left, or -1 when the collector does not know the funding and there is
+// nothing to measure it against.
+function balanceView(balance) {
+    if (!isObject(balance))
+        return null;
+    const remaining = Number(balance.remaining);
+    if (!(remaining >= 0))
+        return null;
+    const funded = count(balance.funded);
+    const spent = count(balance.spent);
+    return {
+        remainingText: money(remaining, balance.currency) + " left",
+        detailText: funded > 0 ? money(spent, balance.currency) + " spent of " + money(funded, balance.currency) + (balance.estimated === true ? " (estimated)" : "") : "",
+        fraction: funded > 0 ? Math.min(remaining / funded, 1) : -1,
+        low: funded > 0 && remaining / funded <= LOW
+    };
+}
+
+// What is wrong with an agent's numbers, one line each. A status is always
+// said; its help only with it, or when the limits shown are old, because a
+// healthy agent may still carry its sign-in hint.
+function notes(status, help, stale, fetchedAt, now) {
+    const lines = [];
+    const statusText = String(status || "");
+    const helpText = String(help || "");
+    if (statusText !== "" || (stale && helpText !== "")) {
+        if (statusText !== "")
+            lines.push(statusText);
+        if (helpText !== "")
+            lines.push(helpText);
+    }
+    if (stale) {
+        const measured = Number(fetchedAt);
+        lines.push(measured > 0 && measured <= now ? "Limits last checked " + duration(now - measured) + " ago" : "Limits may be out of date");
+    }
+    return lines;
+}
+
+// recentDays holds seven {date, messageCount} entries; messageCount is the
+// day's tokens.
+function weekTokens(days) {
+    return Array.isArray(days) ? days.reduce((sum, day) => sum + (isObject(day) ? count(day.messageCount) : 0), 0) : 0;
+}
+
+// An agent with two or more registered accounts lists each one's own limits;
+// the record's top-level limits describe the active account.
+function accountView(account, now) {
+    return {
+        name: String(account.label || account.id || "Account"),
+        plan: capitalize(account.plan),
+        active: account.active === true,
+        limits: limitViews(account.limits, now),
+        notes: notes(account.usageStatusText, account.authHelpText, account.stale === true, account.fetchedAt, now)
+    };
+}
+
+function agentView(record, now) {
+    const today = count(record.todayTotalTokens);
+    const week = weekTokens(record.recentDays);
+    return {
+        name: String(record.name || record.id || "Unknown agent"),
+        ready: record.ready === true,
+        plan: capitalize(record.tierLabel),
+        limits: limitViews(record.limits, now),
+        balance: balanceView(record.balance),
+        tokensText: today > 0 || week > 0 ? "Tokens: " + tokens(today) + " today, " + tokens(week) + " this week" : "",
+        notes: notes(record.usageStatusText, record.authHelpText, record.limitsStale === true, record.limitsFetchedAt, now),
+        accounts: Array.isArray(record.accounts) ? record.accounts.filter(isObject).map(account => accountView(account, now)) : []
+    };
+}
+
+// The collectors print a record for every agent they know, empty and not
+// ready for one this machine does not use. Only an agent in use gets a section.
+function isShown(view) {
+    return view.ready || view.plan !== "" || view.limits.length > 0 || view.accounts.length > 0 || view.balance !== null || view.tokensText !== "";
+}
+
+// "<command> failed: <first line of stderr>", or the exit code when it said nothing.
+function failure(command, exitCode, stderr) {
+    const line = String(stderr || "").split("\n").find(text => text.trim() !== "");
+    return command + " failed" + (line ? ": " + line.trim() : " (exit " + exitCode + ")");
+}
+
+// The widget's one entry point: the exit code, stdout and stderr of
+// `cachyos-agent usage --json` in, {agents, error} out. agents is what to draw;
+// error is "" or the one line that says why there is nothing to draw.
+function load(exitCode, stdout, stderr, now) {
+    if (exitCode !== 0)
+        return { agents: [], error: failure("cachyos-agent usage --json", exitCode, stderr) };
+    let records = null;
+    try {
+        records = JSON.parse(stdout);
+    } catch (e) {
+        // Not JSON: reported below with every other wrong answer.
+    }
+    if (!Array.isArray(records))
+        return { agents: [], error: "cachyos-agent usage --json did not print a JSON array" };
+    return { agents: records.filter(isObject).map(record => agentView(record, now)).filter(isShown), error: "" };
+}
+
+// The tooltip: each agent that has limits with its fullest window.
+function summary(agents) {
+    return agents
+        .filter(agent => agent.limits.length > 0)
+        .map(agent => agent.name + " " + Math.round(100 * Math.max(...agent.limits.map(limit => limit.fraction))) + "%")
+        .join(", ");
+}
