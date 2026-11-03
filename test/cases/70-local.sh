@@ -514,9 +514,17 @@ mkfifo "$SANDBOX/hang"
 mkdir -p "$(state_dir)"
 printf 'mid\n' >"$(state_dir)/active"
 set -m # a background job gets its own process group, as a command run from a terminal does
+# A case that was itself started as a background job of a script (an agent's shell,
+# a CI wrapper) has SIGINT ignored, and a process cannot take that back for its
+# children. Ctrl-C at a terminal reaches the command with the default action, so the
+# build is started through a program that restores it first. It becomes the
+# command by exec, so $! is the command's own process and wait sees its end.
+restore_sigint='import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])'
 for sig in INT TERM; do
   rm -f -- "$SANDBOX/create-started"
-  "$TREE_AGENT" local use tiny >"$SANDBOX/out" 2>&1 </dev/null &
+  python3 -I -c "$restore_sigint" "$TREE_AGENT" local use tiny >"$SANDBOX/out" 2>&1 </dev/null &
   pid=$!
   for _ in {1..100}; do
     [[ -e $SANDBOX/create-started ]] && break
