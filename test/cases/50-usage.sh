@@ -573,18 +573,22 @@ cleanup_sandbox
 
 begin "the report reads a reset time in every form the collectors let through"
 make_sandbox
-now=$(date +%s)
-reset=$((now + 2 * 3600 + 13 * 60 + 30))
+# The clock the report is given stands still, on a whole minute. A time with no
+# seconds is a whole minute, so how many minutes remain to it depends on the
+# second the report runs in: read against the moving clock, this case failed
+# whenever it started in the first second of a minute or finished in the next.
+real_date=$(type -P date)
+now=$(($("$real_date" +%s) / 60 * 60))
+stub date "if [[ \${1-} == +%s ]]; then echo $now; else exec $real_date \"\$@\"; fi"
+reset=$((now + 2 * 3600 + 13 * 60))
 # The same instant five ways: basic form, a space separator with a comma
 # fraction, +HH and +HHMM offsets, and a time with no offset, which is UTC.
-# The last one has no seconds, so it is written 30 s later to land on the
-# same minute boundary as the others.
 # shellcheck disable=SC2016 # the $names are jq variables
 write_record claude --arg basic "$(date -u -d "@$reset" +%Y%m%dT%H%M%SZ)" \
   --arg spaced "$(date -u -d "@$reset" '+%Y-%m-%d %H:%M:%S,5Z')" \
   --arg hours "$(TZ=Etc/GMT-2 date -d "@$reset" +%Y-%m-%dT%H:%M:%S+02)" \
   --arg compact "$(TZ=Etc/GMT+5 date -d "@$reset" +%Y-%m-%dT%H:%M:%S-0500)" \
-  --arg naked "$(date -u -d "@$((reset + 30))" +%Y-%m-%dT%H:%M)" '
+  --arg naked "$(date -u -d "@$reset" +%Y-%m-%dT%H:%M)" '
   {schemaVersion: 1, id: "claude", name: "Claude Code", ready: true,
    limits: [{label: "Basic", percent: 0.1, resetsAt: $basic},
             {label: "Spaced", percent: 0.2, resetsAt: $spaced},
