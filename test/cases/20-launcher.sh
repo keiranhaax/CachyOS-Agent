@@ -894,3 +894,37 @@ fi
 ok
 cleanup_sandbox
 
+begin "shell functions run what the launcher runs (bash)"
+setup
+stub_agents opencode claude codex
+bash -n "$REPO_ROOT/shell/cachyos-agent.bash" || fail "bash syntax"
+for pair in "c:opencode" "cx:claude" "cy:codex"; do
+  IFS=: read -r fn agent <<<"$pair"
+  CACHYOS_AGENT_DEFAULT=$agent run "$CA" launch --inline
+  flags=$(last_call "$agent")
+  rm -f "$SANDBOX/calls/$agent"
+  bash -c 'source "$1"; shift; "$@"' _ "$REPO_ROOT/shell/cachyos-agent.bash" "$fn" hello "two words" </dev/null 2>/dev/null
+  expect "$(last_call "$agent")" "$flags|hello|two words" "$fn adds its arguments to the launcher's flags"
+done
+CACHYOS_AGENT_DEFAULT=claude bash -c 'source "$1"; a --prompt "via a"' _ "$REPO_ROOT/shell/cachyos-agent.bash" </dev/null
+expect "$(last_call claude)" "--permission-mode|auto|--|via a" "a launches the default agent inline"
+ok
+cleanup_sandbox
+
+begin "shell functions run what the launcher runs (fish)"
+setup
+if ! command -v fish >/dev/null; then
+  skip "fish is not installed"
+else
+  stub_agents opencode claude codex
+  fish --no-config -n "$REPO_ROOT/shell/cachyos-agent.fish" || fail "fish syntax"
+  fish --no-config -c 'source $argv[1]; c --prompt one; cx two three; cy -- four' "$REPO_ROOT/shell/cachyos-agent.fish" </dev/null
+  expect "$(last_call opencode)" "--auto|--prompt|one" "c"
+  expect "$(last_call claude)" "--permission-mode|auto|two|three" "cx"
+  expect "$(last_call codex)" "--approve-for-me|--|four" "cy"
+  CACHYOS_AGENT_DEFAULT=claude fish --no-config -c 'source $argv[1]; a --prompt "via a"' "$REPO_ROOT/shell/cachyos-agent.fish" </dev/null
+  expect "$(last_call claude)" "--permission-mode|auto|--|via a" "a"
+  ok
+fi
+cleanup_sandbox
+
