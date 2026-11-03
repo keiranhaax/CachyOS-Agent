@@ -12,6 +12,7 @@ This file is for any agent working on or with CachyOS (running install, packagin
 - Treat `upstreams.tsv` as a review marker, not proof that prose is current. Run `bin/cachyos-agent-skills-check-upstreams` after CachyOS updates; changed commits require human review against the live system and official sources.
 - Plan the change. Take a snapper snapshot when the work is destructive. Apply. Verify. Roll back if it is wrong.
 - ALWAYS prefer Cachy tools: Kernel Manager (`cachyos-kernel-manager`), `chwd`, `scx_loader`, `cachyos-repo.sh`, `cachy-chroot`, `game-performance`.
+- NEVER guess a `cachyos-agent` command or flag. List the commands with `cachyos-agent commands --json`, read a group with `cachyos-agent <group> --help`, and read a command's source with `cat "$(command -v cachyos-agent-<name>)"`. Some commands start an agent that does not stop to ask; read [`agents/skills/cachyos/agent.md`](agents/skills/cachyos/agent.md) before running one.
 
 ## Skill index
 
@@ -27,9 +28,14 @@ Read the matching topic before starting that class of work:
 - [`agents/skills/cachyos/install.md`](agents/skills/cachyos/install.md) — ISO, installer, overlay vs conversion
 - [`agents/skills/cachyos/packaging.md`](agents/skills/cachyos/packaging.md) — CachyOS-PKGBUILDS, march/LTO/PGO (deep authoring lives only here)
 - [`agents/skills/cachyos/handheld.md`](agents/skills/cachyos/handheld.md) — Handheld Edition, `linux-cachyos-deckify`, `scx_lavd`
+- [`agents/skills/cachyos/agent.md`](agents/skills/cachyos/agent.md) — the coding agents themselves: `cachyos-agent` default agent, usage, accounts, crash diagnosis, themes, local models
 - [`agents/skills/diagnose-crash/SKILL.md`](agents/skills/diagnose-crash/SKILL.md) — diagnose a crash from its systemd-coredump core dump
 - [`agents/skills/diagnose-crash/reporting.md`](agents/skills/diagnose-crash/reporting.md) — decide whether a crash is CachyOS's bug and where to report it
 
-Install the skill into local harness directories with [`bin/cachyos-agent-skills-provision`](bin/cachyos-agent-skills-provision).
+Install the skills into local harness directories with `cachyos-agent skills provision` ([`bin/cachyos-agent-skills-provision`](bin/cachyos-agent-skills-provision) in a checkout).
 
 Repository releases and upstream review are documented in [`MAINTENANCE.md`](MAINTENANCE.md). Never auto-rewrite guidance from fetched documentation and never pull Git as root from a pacman hook.
+
+## Layout
+
+`bin/` holds the `cachyos-agent` dispatcher and the `cachyos-agent-<group>-<command>` commands, `lib/` their shared Bash and Python modules, and `test/cases/NN-<feature>.sh` the isolated tests that `./test/run-tests` runs. The rest of the tree and the rules for adding a command are in `MAINTENANCE.md`.
