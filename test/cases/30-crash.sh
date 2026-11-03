@@ -110,3 +110,70 @@ run "$REPO_ROOT/bin/cachyos-agent-crash" --help
 [[ ! -e $SANDBOX/launch-args ]] || fail "the launcher ran for a bad request"
 ok
 cleanup_sandbox
+
+# ---- mutes --------------------------------------------------------------------
+
+MUTES_REL=.local/state/cachyos-agent/toggles/crash-ignore
+
+begin "mute silences a program by name or by path, lists it, and lifts it"
+make_sandbox
+[[ $("$AGENT" crash mute) == "No programs muted. Crashes all notify." ]] || fail "empty list message differs"
+[[ $("$AGENT" crash mute firefox) == "Muted crash notifications for firefox." ]] || fail "mute did not say what is true"
+[[ -f $HOME/$MUTES_REL/firefox ]] || fail "no flag file for firefox"
+"$AGENT" crash mute /usr/bin/ffmpeg >/dev/null
+[[ -f $HOME/$MUTES_REL/ffmpeg ]] || fail "a path was not reduced to its basename"
+[[ $("$AGENT" crash mute) == $'ffmpeg\nfirefox' ]] || fail "list differs: $("$AGENT" crash mute)"
+[[ $("$AGENT" crash mute firefox off) == "Crash notifications for firefox are back on." ]] || fail "off did not say what is true"
+[[ ! -e $HOME/$MUTES_REL/firefox && -f $HOME/$MUTES_REL/ffmpeg ]] || fail "off touched the wrong flag"
+[[ $("$AGENT" crash mute ffmpeg toggle) == "Crash notifications for ffmpeg are back on." ]] || fail "toggle did not lift an existing mute"
+[[ $("$AGENT" crash mute ffmpeg toggle) == "Muted crash notifications for ffmpeg." ]] || fail "toggle did not set a lifted mute"
+[[ $("$AGENT" crash mute ffmpeg on) == "Muted crash notifications for ffmpeg." && $("$AGENT" crash mute ffmpeg on) == "Muted crash notifications for ffmpeg." ]] \
+  || fail "on is not idempotent"
+ok
+cleanup_sandbox
+
+begin "mute keeps odd names inside the mute directory"
+make_sandbox
+"$AGENT" crash mute "Some App's" >/dev/null
+[[ -f "$HOME/$MUTES_REL/Some App's" ]] || fail "a name with a space and a quote was not kept as written"
+"$AGENT" crash mute $'a\nb' >/dev/null
+[[ -f "$HOME/$MUTES_REL/a?b" ]] || fail "a control character was not replaced"
+"$AGENT" crash mute .hidden >/dev/null
+[[ $("$AGENT" crash mute) == *.hidden* ]] || fail "a program called .hidden is not listed"
+mkdir "$HOME/$MUTES_REL/adir"
+[[ $("$AGENT" crash mute) != *adir* ]] || fail "a directory was listed as muted"
+"$AGENT" crash mute -- -h >/dev/null
+[[ -f $HOME/$MUTES_REL/-h ]] || fail "-- did not let a program be called -h"
+for bad in '' . .. / dir/; do
+  run "$AGENT" crash mute "$bad"
+  ((status == 1)) && [[ $out == *"Not a program name"* ]] || fail "'$bad' was accepted as a program ($status): $out"
+done
+[[ $(ls -A "$HOME/.local/state/cachyos-agent/toggles") == crash-ignore ]] || fail "a bad name reached outside the mute directory"
+ok
+cleanup_sandbox
+
+begin "mute rejects bad options and actions without changing anything"
+make_sandbox
+run "$AGENT" crash mute -x
+((status == 1)) && [[ $out == *"Unknown option: -x"* ]] || fail "an unknown option was taken for a program ($status): $out"
+run "$AGENT" crash mute firefox sideways
+((status == 1)) && [[ $out == *"Not an action: sideways"* ]] || fail "a bad action was accepted ($status): $out"
+run "$AGENT" crash mute a on extra
+((status == 1)) || fail "three arguments were accepted"
+run "$REPO_ROOT/bin/cachyos-agent-crash-mute" -h
+((status == 0)) && [[ $out == *"Usage: cachyos-agent crash mute"* ]] || fail "-h did not print usage ($status)"
+[[ ! -e $HOME/$MUTES_REL/-x && ! -e $HOME/$MUTES_REL/firefox && ! -e $HOME/$MUTES_REL/a && ! -e $HOME/$MUTES_REL/-h ]] || fail "a rejected request left a flag"
+ok
+cleanup_sandbox
+
+begin "crash_program_name reduces a path the way the watcher keys a mute"
+make_sandbox
+names=$(bash -c '
+  source "$1/lib/common.sh"
+  source "$1/lib/crash.sh"
+  for raw in /usr/bin/firefox firefox /opt/a/b/ / . .. "" "$(printf "tab\there")" - /x/..; do
+    printf "[%s]\n" "$(crash_program_name "$raw" || echo FAIL)"
+  done' _ "$REPO_ROOT")
+[[ $names == $'[firefox]\n[firefox]\n[FAIL]\n[FAIL]\n[FAIL]\n[FAIL]\n[FAIL]\n[tab?here]\n[-]\n[FAIL]' ]] || fail "unexpected names: $names"
+ok
+cleanup_sandbox
