@@ -56,6 +56,39 @@ make_skill_src
 ok
 cleanup_sandbox
 
+begin "provision points the links it made earlier at a new source, a vanished one included"
+make_sandbox
+make_skill_src
+"$PROVISION" "$SRC" >/dev/null
+# A checkout that moved, or an old package, leaves links to a source that is gone.
+rm -rf -- "$SANDBOX/src"
+moved=$SANDBOX/moved/agents/skills
+mkdir -p "$moved/cachyos"
+printf -- '---\nname: cachyos\ndescription: test skill\n---\n' >"$moved/cachyos/SKILL.md"
+"$PROVISION" "$moved" >/dev/null
+for parent in "${DEST_PARENTS[@]}"; do
+  [[ $(readlink "$HOME/$parent/cachyos") == "$moved/cachyos" ]] || fail "$HOME/$parent/cachyos still points at $(readlink "$HOME/$parent/cachyos")"
+done
+ok
+cleanup_sandbox
+
+begin "provision refuses an unknown option, a second source and one that is missing or empty, each with its own status"
+make_sandbox
+make_skill_src
+mkdir -p "$SANDBOX/empty"
+# timeout: an option the parser did not consume would keep it looping.
+for refusal in "2|unknown option: --bogus|--bogus" "2|too many arguments|$SRC $SRC" "1|skills directory not found: $SANDBOX/missing|$SANDBOX/missing" \
+  "1|no skill subdirectories in $SANDBOX/empty|$SANDBOX/empty"; do
+  IFS='|' read -r want_status want_text arguments <<<"$refusal"
+  status=0
+  # shellcheck disable=SC2086 # the arguments are words of a command line
+  out=$(timeout 10 "$PROVISION" $arguments 2>&1) || status=$?
+  [[ $status == "$want_status" && $out == *"$want_text"* ]] || fail "provision $arguments ended with status $status: $out"
+done
+[[ ! -e $HOME/.claude ]] || fail "a refused run linked a skill"
+ok
+cleanup_sandbox
+
 begin "provision honors the Hermes profile home"
 make_sandbox
 make_skill_src
