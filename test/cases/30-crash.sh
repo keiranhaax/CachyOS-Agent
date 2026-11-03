@@ -395,6 +395,27 @@ ok
 cleanup_sandbox
 
 begin "a click on a crash with missing fields hands over what is known"
+begin "a mute made with a name that has a backslash or a control character holds"
+make_sandbox
+watch_stubs
+me=$(id -u)
+{
+  journal_entry "$me" x 4001 '/usr/bin/with\back' SIGSEGV
+  journal_entry "$me" x 4002 $'/usr/bin/tab\there' SIGSEGV
+  journal_entry "$me" x 4003 $'/usr/bin/new\nline' SIGSEGV
+  journal_entry "$me" x 4004 '/usr/bin/open\backed' SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+"$AGENT" crash mute 'with\back' >/dev/null
+"$AGENT" crash mute $'tab\there' >/dev/null
+"$AGENT" crash mute $'new\nline' >/dev/null
+run_watcher
+((status == 0)) || fail "the watcher did not end cleanly with the journal ($status): $(<"$SANDBOX/watch.log")"
+wait_for 1 "$SANDBOX/toast.*"
+[[ $(toast_summaries) == 'Process crashed: open\backed' ]] \
+  || fail "a muted name was announced, or an unmuted backslash was changed: $(toast_summaries)"
+ok
+cleanup_sandbox
+
 make_sandbox
 watch_stubs
 me=$(id -u)

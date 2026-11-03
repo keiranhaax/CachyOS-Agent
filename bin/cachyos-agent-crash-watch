@@ -46,6 +46,10 @@ readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1
 # sender, and only systemd-coredump's entries carry this one.
 readonly COREDUMP_SENDER=/usr/lib/systemd/systemd-coredump
 
+# At most this many toasts wait for an answer at once. Each keeps a notify-send and
+# a reader alive until it is answered, and critical toasts never time out.
+readonly MAX_WAITING=10
+
 # Crash loops dump core repeatedly, so announce each program at most once a
 # window.
 readonly dedupe_seconds=${CACHYOS_AGENT_CRASH_DEDUPE_SECONDS:-60}
@@ -164,15 +168,20 @@ journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" |
     # used to be read as somebody else's and dropped. A field that is not a
     # string (journald encodes non-UTF-8 text as an array of bytes) counts as
     # missing too.
+    #
+    # Control characters become ? here, as crash_program_name does, and the
+    # fields are joined with a real tab: @tsv would escape a backslash as \\ and a
+    # tab or newline as \t and \n, so the name keyed here would not be the one
+    # `crash mute` writes for the same program.
     IFS=$'\t' read -r uid comm pid exe signal < <(
       jq -r --arg sender "$COREDUMP_SENDER" '
-             def field: if type == "string" and . != "" then . else "unknown" end;
+             def field: if type == "string" and . != "" then gsub("[\u0000-\u001f\u007f]"; "?") else "unknown" end;
              select(._EXE == $sender)
              | [(._UID | field),
                 (.COREDUMP_COMM | field),
                 (.COREDUMP_PID | field),
                 (.COREDUMP_EXE | field),
-                (.COREDUMP_SIGNAL_NAME | field)] | @tsv' <<<"$entry" 2>/dev/null
+                (.COREDUMP_SIGNAL_NAME | field)] | join("\t")' <<<"$entry" 2>/dev/null
     )
 
     [[ $pid =~ ^[0-9]+$ ]] || continue
@@ -206,6 +215,11 @@ journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" |
 
     # 10# because arithmetic reads a leading zero as octal: 08 is an error and 010 is eight.
     ((EPOCHSECONDS - ${last_notified[$name]:-0} < 10#$dedupe_seconds)) && continue
+
+    if (($(jobs -rp | wc -l) >= MAX_WAITING)); then
+      echo "$MAX_WAITING crash notifications are waiting for an answer: crash of $name (PID $pid) not announced" >&2
+      continue
+    fi
 
     # An if, not &&: a toast that failed must not become the loop's exit status.
     if announce "$name" "$pid" "$comm" "$exe" "$signal" "$agent"; then
