@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy default/systemd/user/omarchy-crash-watch.service (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
 [Unit]
 Description=Announce process crashes and offer an AI diagnosis
 # Needs the session bus to notify and a display for the diagnosis terminal. Both

@@ -571,6 +571,19 @@ run "$REPO_ROOT/bin/cachyos-agent-crash-capture" -h
 ok
 cleanup_sandbox
 
+begin "the shipped unit carries its licence and the attribution to the Omarchy unit it was ported from"
+make_sandbox
+[[ $(sed -n 1p "$SHIPPED_UNIT") == '# SPDX-License-Identifier: GPL-3.0-only' ]] || fail "the unit does not start with the SPDX line"
+[[ $(sed -n 2p "$SHIPPED_UNIT") == '# Adapted from Omarchy default/systemd/user/omarchy-crash-watch.service (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md' ]] \
+  || fail "the unit does not name Omarchy, the MIT licence and THIRD_PARTY_NOTICES.md on its second line"
+# The copy `capture on` writes under ~/.config is the one a user can read.
+make_tree 'attribution'
+capture_stubs
+"$tree/bin/cachyos-agent-crash-capture" on >/dev/null
+grep -qF 'Adapted from Omarchy default/systemd/user/omarchy-crash-watch.service (MIT' "$HOME/$UNIT_DIR_REL/$UNIT" || fail "the generated copy lost the attribution"
+ok
+cleanup_sandbox
+
 begin "the shipped unit follows the session on Wayland and X11 and restarts"
 make_sandbox
 for expected in 'After=graphical-session.target' 'PartOf=graphical-session.target' 'WantedBy=graphical-session.target' \
