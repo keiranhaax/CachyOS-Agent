@@ -1,0 +1,125 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-default-agent (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Install an agent CLI with pacman or paru
+# cachyos-agent:args=<agent>
+# cachyos-agent:examples=cachyos-agent install claude | cachyos-agent install codex
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/launcher.sh
+source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
+
+# Omarchy installs agents with mise. Here an agent comes from pacman when a
+# repository packages it, from the AUR through paru when a package is known to
+# install its command, and otherwise from the vendor, whose documented command
+# is printed and never run. Nothing is piped from curl into a shell.
+#
+# Verified 2026-11-02. Repository packages with pacman -Si, and AUR packages
+# with paru -Si, each checked to install the agent's command (/usr/bin/<id>)
+# from the package files or the PKGBUILD:
+#   repo: claude-code (claude), opencode, openai-codex (codex),
+#         github-copilot-cli (copilot), qwen-code (qwen), hermes-agent (hermes)
+#   aur:  oh-my-pi (omp), antigravity-cli (agy), crush, grok-build (grok),
+#         kilo-bin (kilo), ampcode (amp), command-code (commandcode),
+#         kiro-cli, cursor-cli (cursor-agent)
+# Names that look right but are not: AUR "dsh" is the distributed shell,
+# "copilot-cli" is AWS Copilot, and AUR "ori" is not OpenRouter's Ori.
+# The remaining agents have no package, so install_plan prints the vendor's way.
+
+usage() {
+  cat <<EOF2
+Usage: cachyos-agent install <agent>
+
+Install an agent's command: from a repository with sudo pacman -S --needed,
+from the AUR with paru -S --needed, or, when no package exists, print the
+vendor's documented command to run yourself.
+
+Agents: ${CA_AGENT_IDS[*]}
+EOF2
+}
+
+# install_plan <id>: set METHOD to repo, aur or vendor. A package method sets
+# PACKAGE; the vendor method sets ADVICE, the lines to show the user.
+install_plan() {
+  PACKAGE='' ADVICE=''
+  case $1 in
+    claude) METHOD=repo PACKAGE=claude-code ;;
+    opencode) METHOD=repo PACKAGE=opencode ;;
+    codex) METHOD=repo PACKAGE=openai-codex ;;
+    copilot) METHOD=repo PACKAGE=github-copilot-cli ;;
+    qwen) METHOD=repo PACKAGE=qwen-code ;;
+    hermes) METHOD=repo PACKAGE=hermes-agent ;;
+    omp) METHOD=aur PACKAGE=oh-my-pi ;;
+    agy) METHOD=aur PACKAGE=antigravity-cli ;;
+    crush) METHOD=aur PACKAGE=crush ;;
+    grok) METHOD=aur PACKAGE=grok-build ;;
+    kilo) METHOD=aur PACKAGE=kilo-bin ;;
+    amp) METHOD=aur PACKAGE=ampcode ;;
+    commandcode) METHOD=aur PACKAGE=command-code ;;
+    kiro-cli) METHOD=aur PACKAGE=kiro-cli ;;
+    cursor-agent) METHOD=aur PACKAGE=cursor-cli ;;
+    pi) METHOD=vendor ADVICE="npm install -g --ignore-scripts @earendil-works/pi-coding-agent" ;;
+    kimi) METHOD=vendor ADVICE="npm install -g @moonshot-ai/kimi-code" ;;
+    dsh) METHOD=vendor ADVICE="npm install -g @deepseek-ai/dsh" ;;
+    mcode) METHOD=vendor ADVICE="npm install -g @minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3 --registry=https://registry.npmjs.org/" ;;
+    freebuff) METHOD=vendor ADVICE="npm install -g freebuff" ;;
+    ori) METHOD=vendor ADVICE="Ori installs with a shell script: https://openrouter.ai/docs/guides/ori/overview" ;;
+    muse) METHOD=vendor ADVICE="Muse Code installs with a shell script: https://dev.meta.ai/install.sh" ;;
+    devin) METHOD=vendor ADVICE="Devin installs with a shell script: https://cli.devin.ai/" ;;
+  esac
+}
+
+install_repo() {
+  # The CachyOS repositories carry most of these, a vanilla Arch mirror may not.
+  pacman -Si -- "$PACKAGE" >/dev/null 2>&1 \
+    || ca_die "$PACKAGE is not in the enabled pacman repositories (pacman -Si $PACKAGE failed)"
+  # Run here, in the terminal the user is watching, so sudo can ask for a password.
+  sudo pacman -S --needed "$PACKAGE"
+}
+
+install_aur() {
+  if ! ca_cmd_present paru; then
+    printf 'Install an AUR helper such as paru, or build the package by hand:\n  https://aur.archlinux.org/packages/%s\n' "$PACKAGE" >&2
+    return 1
+  fi
+  echo "$PACKAGE is an AUR package: read the PKGBUILD paru shows before you build it." >&2
+  paru -S --needed "$PACKAGE"
+}
+
+install_vendor() {
+  printf '%s has no pacman or AUR package that installs it.\n' "$CA_AGENT_NAME" >&2
+  if [[ $ADVICE == npm\ * ]]; then
+    printf 'Its vendor documents this command; run it yourself:\n  %s\n' "$ADVICE" >&2
+  else
+    printf '%s\nThe installer is a script fetched with curl. cachyos-agent never pipes one into a shell:\nread it, then run it yourself.\n' "$ADVICE" >&2
+  fi
+  return 1
+}
+
+main() {
+  case ${1-} in
+    -h | --help)
+      usage
+      return 0
+      ;;
+  esac
+  (($# == 1)) || {
+    usage >&2
+    return 1
+  }
+  ca_agent_resolve "$1" || {
+    usage >&2
+    return 1
+  }
+  if ca_agent_present "$CA_AGENT"; then
+    printf '%s is already installed.\n' "$CA_AGENT_NAME"
+    return 0
+  fi
+  install_plan "$CA_AGENT"
+  "install_$METHOD"
+  ca_agent_present "$CA_AGENT" || ca_die "$CA_AGENT_NAME was installed but '$CA_AGENT' is not on PATH"
+}
+
+main "$@"
