@@ -200,8 +200,14 @@ def grok_identity(home: Path) -> dict[str, str]:
 # ---------------------------------------------------------------- registry
 
 
+# An id names a directory under accounts/<provider>/, so it is cut short enough
+# for any file name: a label of 250 characters or more made the final rename of
+# a completed sign-in fail for good.
+SLUG_LENGTH = 40
+
+
 def slug(label: str) -> str:
-  return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+  return re.sub(r"[^a-z0-9]+", "-", label.lower())[:SLUG_LENGTH].strip("-")
 
 
 def empty_registry(provider: str) -> dict[str, Any]:

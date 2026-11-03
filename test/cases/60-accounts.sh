@@ -337,6 +337,16 @@ FIX_ID=u-two FIX_EMAIL=two@example.com "$AGENT" account add "codex grok" >/dev/n
 ok
 cleanup_sandbox
 
+begin "a very long label still registers, under a shortened id"
+setup
+sign_in claude u-main main@example.com
+label=$(printf 'a%.0s' {1..300})
+out=$(FIX_ID=u-long FIX_EMAIL=long@example.com "$AGENT" account add claude "$label" 2>&1) || fail "a 300 character label did not register: $out"
+[[ $(registry claude '.accounts | length') == 2 && $(registry claude '.accounts[1].id | length') -le 40 ]] || fail "the id is not short: $(registry claude '.accounts[1].id')"
+[[ -z $(ls -A "$STATE/accounts/claude/.pending" 2>/dev/null) ]] || fail "the login was left pending: $(ls -A "$STATE/accounts/claude/.pending")"
+ok
+cleanup_sandbox
+
 begin "add explains how to install a missing CLI, and checks the provider first"
 setup
 mkdir "$SANDBOX/tools"
