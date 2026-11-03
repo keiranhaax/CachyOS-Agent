@@ -687,6 +687,23 @@ cleanup_sandbox
 
 # ---- the dispatcher ---------------------------------------------------------------
 
+begin "every command answers --help and -h with the usage, before it looks at the machine"
+make_sandbox
+set_machine 8188 32
+fake_service
+help=$("$AGENT" local --help)
+for args in "list --help" "use --help" "use -h" "start --help" "stop -h" "status --help" "remove -h" "remove --help"; do
+  # shellcheck disable=SC2086 # the words are the point
+  out=$("$AGENT" local $args 2>&1 </dev/null) && rc=0 || rc=$?
+  ((rc == 0)) || fail "local $args exited $rc: $out"
+  [[ $out == "$help" ]] || fail "local $args did not print the usage: $out"
+done
+expect_no_calls nvidia-smi
+expect_no_calls ollama
+expect_no_calls sudo
+ok
+cleanup_sandbox
+
 begin "the dispatcher lists the command, answers --help, and usage mistakes exit 2"
 make_sandbox
 jq -e '.commands | map(select(.route == "cachyos-agent local")) | length == 1 and (.[0].summary | length > 0)' \

@@ -413,6 +413,9 @@ cmd_remove() {
 main() {
   local cmd=${1-}
   if (($# > 0)); then shift; fi
+  # `local <command> --help` answers like `local --help`, before the command
+  # reads the recipes or looks at the machine.
+  case ${1-} in -h | --help) cmd=--help ;; esac
   case $cmd in
     -h | --help) usage ;;
     list) cmd_list "$@" ;;
