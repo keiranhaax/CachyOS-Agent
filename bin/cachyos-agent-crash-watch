@@ -40,6 +40,12 @@ source "$CACHYOS_AGENT_ROOT/lib/crash.sh"
 # See systemd.journal-fields(7).
 readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1
 
+# MESSAGE_ID and every COREDUMP_* field are user fields: journald does not check
+# them, and any process of the user can write them (logger --journald does) with
+# the user's own _UID. _EXE has a leading underscore, so journald sets it from the
+# sender, and only systemd-coredump's entries carry this one.
+readonly COREDUMP_SENDER=/usr/lib/systemd/systemd-coredump
+
 # Crash loops dump core repeatedly, so announce each program at most once a
 # window.
 readonly dedupe_seconds=${CACHYOS_AGENT_CRASH_DEDUPE_SECONDS:-60}
@@ -150,6 +156,8 @@ set +e
 # restarts this (systemd) learns why journalctl failed from its stderr.
 journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" |
   while IFS= read -r entry; do
+    # Only what systemd-coredump journaled, by its _EXE (see COREDUMP_SENDER).
+    #
     # A word for a field that is empty or missing: tab is IFS whitespace, so an
     # empty field collapses into the next delimiter and every field after it
     # shifts along one. A process can set its own comm to nothing, and that crash
@@ -157,12 +165,14 @@ journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" |
     # string (journald encodes non-UTF-8 text as an array of bytes) counts as
     # missing too.
     IFS=$'\t' read -r uid comm pid exe signal < <(
-      jq -r 'def field: if type == "string" and . != "" then . else "unknown" end;
-             [(._UID | field),
-              (.COREDUMP_COMM | field),
-              (.COREDUMP_PID | field),
-              (.COREDUMP_EXE | field),
-              (.COREDUMP_SIGNAL_NAME | field)] | @tsv' <<<"$entry" 2>/dev/null
+      jq -r --arg sender "$COREDUMP_SENDER" '
+             def field: if type == "string" and . != "" then . else "unknown" end;
+             select(._EXE == $sender)
+             | [(._UID | field),
+                (.COREDUMP_COMM | field),
+                (.COREDUMP_PID | field),
+                (.COREDUMP_EXE | field),
+                (.COREDUMP_SIGNAL_NAME | field)] | @tsv' <<<"$entry" 2>/dev/null
     )
 
     [[ $pid =~ ^[0-9]+$ ]] || continue
