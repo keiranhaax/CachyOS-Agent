@@ -103,13 +103,14 @@ expect "$(call_n claude 2)" "--permission-mode|auto|--|hi there" "launch --inlin
 expect "$(<"$SANDBOX/inline.err")" "$notice" "launch --inline does not print the notice"
 expect "$(call_count konsole)" 1 "launch --inline opened a window"
 
-"$AGENT" prompt "x" 2>"$SANDBOX/window.err"
+# Two words: a one-word Claude prompt gets a trailing space on purpose (20-launcher covers it).
+"$AGENT" prompt "fix it" 2>"$SANDBOX/window.err"
 expect "$(call_count konsole)" 2 "prompt did not open a window"
 terminal=$(call_n konsole 2)
 [[ $terminal == "-p|tabtitle=CachyOS Agent|-e|bash|-c|"* ]] || fail "the terminal got the wrong words: $terminal"
-[[ $terminal == *"|claude|--permission-mode|auto|--|x" ]] || fail "the terminal does not run claude with the prompt: $terminal"
+[[ $terminal == *"|claude|--permission-mode|auto|--|fix it" ]] || fail "the terminal does not run claude with the prompt: $terminal"
 contains "$terminal" "$notice" "the terminal does not carry the notice"
-expect "$(call_n claude 3)" "--permission-mode|auto|--|x" "prompt reached claude with the wrong argv"
+expect "$(call_n claude 3)" "--permission-mode|auto|--|fix it" "prompt reached claude with the wrong argv"
 expect "$(head -n 1 "$SANDBOX/window.err")" "$notice" "the prompt window does not open with the notice"
 
 # A prompt that starts with a dash, holds quotes and spans words stays one literal argument.
