@@ -47,7 +47,8 @@ readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1
 readonly COREDUMP_SENDER=/usr/lib/systemd/systemd-coredump
 
 # At most this many toasts wait for an answer at once. Each keeps a notify-send and
-# a reader alive until it is answered, and critical toasts never time out.
+# a reader alive until it is answered or its notification server is replaced, and
+# critical toasts never time out.
 readonly MAX_WAITING=10
 
 # Exit status 78 (EX_CONFIG) is in the unit's RestartPreventExitStatus=. What is
@@ -101,13 +102,40 @@ wait_for_notification_server() {
   return 1
 }
 
+# The unique bus name (":1.57") of the process that owns the notification
+# service, or nothing when it has no owner or the bus does not answer.
+notification_server_owner() {
+  local reply
+  reply=$(busctl --user --timeout=1 call org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus GetNameOwner s org.freedesktop.Notifications 2>/dev/null) || return 0
+  reply=${reply#s \"}
+  printf '%s' "${reply%\"}"
+}
+
 # One per toast on screen, in the background: the toast stays until it is
 # answered or dismissed, and the loop must keep reading the journal meanwhile.
 # notify-send prints the name of the action that was chosen, and nothing when the
 # toast is dismissed.
+#
+# The server that took the toast is the only one that can answer it, and its
+# notify-send does not notice the server change: after Plasma's shell restarts
+# it waits for ever, and its slot in MAX_WAITING with it. So this looks at the
+# server every few seconds and, once another process owns the name, stops that
+# notify-send. A bus that does not answer, or a name with no owner yet, is no
+# reason to give a toast up.
 diagnose_when_chosen() {
-  local toast=$1 name=$2 pid=$3 comm=$4 exe=$5 signal=$6 action
-  read -r -u "$toast" action || return 0
+  local toast=$1 name=$2 pid=$3 comm=$4 exe=$5 signal=$6 notify_pid=$7 owner=$8 action status current
+  while true; do
+    status=0
+    read -r -t 5 -u "$toast" action || status=$?
+    ((status > 128)) || break
+    current=$(notification_server_owner)
+    if [[ -n $owner && -n $current && $current != "$owner" ]]; then
+      kill "$notify_pid" 2>/dev/null
+      return 0
+    fi
+  done
+  ((status == 0)) || return 0
   [[ $action == diagnose ]] || return 0
   # A scope of its own, because the agent's terminal must outlive this service:
   # stopping it (cachyos-agent crash capture off, which the diagnosis itself may
@@ -153,7 +181,7 @@ announce() {
     echo "could not announce crash of $name (PID $pid)" >&2
     return 1
   fi
-  diagnose_when_chosen "$toast" "$name" "$pid" "$comm" "$exe" "$signal" &
+  diagnose_when_chosen "$toast" "$name" "$pid" "$comm" "$exe" "$signal" "$notify_pid" "$(notification_server_owner)" &
   exec {toast}<&-
 }
 

@@ -222,6 +222,8 @@ journal_entry() {
 #   refuse-first         the next call writes ID 0, as when the server refuses
 #                        the toast, then waits for ever (up to 30 s here) and
 #                        records its PID in refused.pid
+# busctl names the notification server's owner as :1.<contents of the file
+# "server">, 1 without one, so a case restarts the server by writing a new number.
 # shellcheck disable=SC2016 # stub bodies are scripts for the stub's own shell
 watch_stubs() {
   stub journalctl 'cat "${self%/stubs/*}/journal.jsonl"'
@@ -253,7 +255,8 @@ fi
 [[ -z $idfd ]] || echo 7 >&"$idfd"
 if [[ -r $sb/block-on && $summary == *"$(<"$sb/block-on")"* ]]; then hold; fi
 if [[ -r $sb/click-on && $summary == *"$(<"$sb/click-on")"* ]]; then echo diagnose; fi'
-  stub busctl
+  stub busctl 'sb=${self%/stubs/*}
+if [[ $* == *GetNameOwner* ]]; then printf "s \":1.%s\"\n" "$(cat "$sb/server" 2>/dev/null || echo 1)"; fi'
   stub systemd-run 'while [[ $1 != -- ]]; do shift; done; shift; exec "$@"'
   stub cachyos-agent-crash 'printf "%s\n" "$@" >"${self%/stubs/*}/diagnosis.$$"'
   stub cachyos-agent-default 'echo claude'
@@ -364,6 +367,32 @@ wait_for 14 "$SANDBOX/toast.*"
 touch "$SANDBOX/release"
 [[ $(count_files "$SANDBOX/toast.*") == 10 ]] || fail "expected ten toasts, got $(count_files "$SANDBOX/toast.*")"
 grep -q '10 crash notifications are waiting' "$SANDBOX/watch.log" || fail "the dropped crashes were not reported: $(<"$SANDBOX/watch.log")"
+ok
+cleanup_sandbox
+
+begin "a toast left unanswered when the notification server restarts is closed"
+make_sandbox
+watch_stubs
+me=$(id -u)
+journal_entry "$me" firefox 1001 /usr/lib/firefox/firefox SIGSEGV >"$SANDBOX/journal.jsonl"
+printf 'Process crashed' >"$SANDBOX/block-on"
+echo 5 >"$SANDBOX/server"
+run_watcher
+wait_for 1 "$SANDBOX/toast.*"
+toasts=("$SANDBOX"/toast.*)
+waiter=${toasts[0]##*.}
+# It checks on the server every few seconds: while the same one runs, the toast stays.
+"$REAL_SLEEP" 6
+kill -0 "$waiter" 2>/dev/null || fail "a toast was closed although its notification server never changed"
+# Plasma's shell restarting is a new owner of the name. The old toast can no longer be
+# answered, and its notify-send never learns that.
+echo 6 >"$SANDBOX/server"
+for ((i = 0; i < 100; i++)); do
+  kill -0 "$waiter" 2>/dev/null || break
+  "$REAL_SLEEP" 0.1
+done
+if kill -0 "$waiter" 2>/dev/null; then fail "the notify-send of a toast the restarted server never heard of was left waiting"; fi
+touch "$SANDBOX/release"
 ok
 cleanup_sandbox
 
