@@ -28,17 +28,24 @@ make_tree() {
   TREE_AGENT=$tree/bin/cachyos-agent
 }
 
-# set_machine <vram> <ram_gib>: what the command will see. <vram> is the MiB
-# figure nvidia-smi prints per card (several figures make several cards), or
-# "none" for an nvidia-smi that fails the way it does without a driver.
+# set_machine <cards> <ram_gib>: what the command will see. <cards> is a list of
+# NVIDIA cards, or "none" for an nvidia-smi that fails the way it does without a
+# driver. A card is the MiB nvidia-smi prints for it, optionally followed by
+# @<compute capability> (8.9 when left out): "8188" or "16384@6.1".
 set_machine() {
+  local card cc lines=''
   printf 'MemTotal:       %d kB\nMemFree:           1024 kB\n' $(($2 * 1048576)) >"$SANDBOX/meminfo"
   export CACHYOS_AGENT_MEMINFO=$SANDBOX/meminfo CACHYOS_AGENT_DRM_DIR=$SANDBOX/drm
   if [[ $1 == none ]]; then
     stub nvidia-smi 'exit 9'
-  else
-    stub nvidia-smi "printf '%s\\n' $1"
+    return 0
   fi
+  for card in $1; do
+    cc=8.9
+    if [[ $card == *@* ]]; then cc=${card#*@}; fi
+    lines+=" '${card%@*}, $cc'"
+  done
+  stub nvidia-smi "printf '%s\\n'$lines"
 }
 
 # add_amd_card <n> <bytes>: a card directory as amdgpu exposes it.
@@ -195,7 +202,7 @@ expect_row huge no
 expect_in "needs 24 GiB VRAM to stay on the GPU; this GPU has 8 GiB, so the rest runs from RAM, slower"
 expect_in "needs 96 GiB RAM or 80 GiB VRAM; this machine has 32 GiB RAM and 8 GiB VRAM"
 expect_in "cachyos-agent local use best picks tiny."
-expect_calls nvidia-smi "--query-gpu=memory.total --format=csv,noheader,nounits"
+expect_calls nvidia-smi "--query-gpu=memory.total,compute_cap --format=csv,noheader,nounits"
 ok
 cleanup_sandbox
 
@@ -237,6 +244,51 @@ expect_in "This machine: AMD GPU with 24 GiB VRAM, 16 GiB RAM"
 expect_row mid gpu
 expect_row tiny gpu
 expect_in "picks mid."
+ok
+cleanup_sandbox
+
+begin "list counts only NVIDIA cards with compute capability 7.5 or newer, the floor of the CUDA build"
+make_sandbox
+make_tree
+set_machine "8188@6.1" 32
+run local list
+expect_in "This machine: no supported GPU, 32 GiB RAM"
+expect_row tiny cpu
+# 16384@6.1 and 8188@7.4 are too old; 24576@7.5, 8188@10.0 and 8188@12.0 are
+# not, so the sum is 8188 + 24576 + 8188 + 8188 MiB, 48 GiB.
+set_machine "16384@6.1 8188 24576@7.5 8188@7.4 8188@10.0 8188@12.0" 32
+run local list
+expect_in "This machine: NVIDIA GPU with 48 GiB VRAM, 32 GiB RAM"
+ok
+cleanup_sandbox
+
+begin "list reads only well-formed nvidia-smi lines"
+make_sandbox
+make_tree
+set_machine none 32
+stub nvidia-smi "printf '%s\\n' 'NVIDIA-SMI has failed 99999, 8.9' '99999 MiB, 8.9' '99999, 8.9 extra' 'x99999, 8.9' '99999, 8.9x' '99999, [N/A]' '[N/A], 8.9' '99999' '' ' 8188 , 8.9 ' '4096,8.9'"
+run local list
+expect_in "This machine: NVIDIA GPU with 12 GiB VRAM, 32 GiB RAM"
+ok
+cleanup_sandbox
+
+begin "list does not take an AMD integrated GPU's carve-out for a GPU, but counts a card of 4 GiB or more"
+make_sandbox
+make_tree
+set_machine none 32
+add_amd_card 0 536870912
+run local list
+expect_in "This machine: no supported GPU, 32 GiB RAM"
+add_amd_card 0 4294967295
+run local list
+expect_in "This machine: no supported GPU, 32 GiB RAM"
+add_amd_card 0 4294967296
+run local list
+expect_in "This machine: AMD GPU with 4 GiB VRAM, 32 GiB RAM"
+add_amd_card 0 17179869184
+add_amd_card 1 536870912
+run local list
+expect_in "This machine: AMD GPU with 16 GiB VRAM, 32 GiB RAM"
 ok
 cleanup_sandbox
 
@@ -492,6 +544,19 @@ PATH=$NARROW answer n local use best
 expect_in "sudo pacman -S --needed ollama-rocm"
 set_machine none 32
 rm -rf -- "$SANDBOX/drm"
+PATH=$NARROW answer n local use best
+expect_in "Install ollama with: sudo pacman -S --needed ollama"$'\n'
+expect_no_calls sudo
+ok
+cleanup_sandbox
+
+begin "a machine whose only AMD GPU is an integrated one is offered plain ollama, not ollama-rocm"
+make_sandbox
+make_tree
+fake_service
+install_ollama
+set_machine none 32
+add_amd_card 0 536870912
 PATH=$NARROW answer n local use best
 expect_in "Install ollama with: sudo pacman -S --needed ollama"$'\n'
 expect_no_calls sudo

@@ -28,6 +28,9 @@ RECIPES=$CACHYOS_AGENT_ROOT/data/local-models.tsv
 ACTIVE_FILE=$CACHYOS_AGENT_STATE_DIR/local/active
 ID_RE='^[a-z0-9][a-z0-9._-]*$'
 NUMBER_RE='^[1-9][0-9]*$'
+NVIDIA_LINE_RE='^[[:space:]]*([0-9]+)[[:space:]]*,[[:space:]]*([0-9]+)\.([0-9]+)[[:space:]]*$'
+CUDA_MIN_CC=75          # compute capability 7.5, times ten
+AMD_MIN_VRAM=4294967296 # 4 GiB, in bytes
 
 # The endpoint above is the one clients are told about, so every ollama call
 # here must reach that server whatever OLLAMA_HOST says in the caller's shell.
@@ -111,29 +114,51 @@ detect_ram() {
   ca_die "cannot read MemTotal from ${CACHYOS_AGENT_MEMINFO:-/proc/meminfo}"
 }
 
-# GPU vendor and the VRAM of all its cards together, in GiB rounded to the
-# nearest: a card sold as 8 GB reports 8188 MiB. NVIDIA first, through
-# nvidia-smi (silent when the driver is not loaded), then AMD through amdgpu's
-# sysfs files, which hold bytes.
-detect_gpu() {
+# nvidia_mib: print the MiB of memory.total of every NVIDIA card the CUDA build
+# can use, added together; a card sold as 8 GB reports 8188. Arch's ollama-cuda
+# is built for compute capability 7.5 and newer (CMAKE_CUDA_ARCHITECTURES in its
+# PKGBUILD), so an older card, a GTX 10 series for one, would run on the CPU
+# whatever it holds. nvidia-smi is silent when the driver is not loaded, and a
+# line that is not "<MiB>, <major>.<minor>" counts for nothing.
+nvidia_mib() {
+  local line total=0
+  while IFS= read -r line; do
+    if [[ $line =~ $NVIDIA_LINE_RE ]] && ((10#${BASH_REMATCH[2]} * 10 + 10#${BASH_REMATCH[3]} >= CUDA_MIN_CC)); then
+      total=$((total + 10#${BASH_REMATCH[1]}))
+    fi
+  done < <(nvidia-smi --query-gpu=memory.total,compute_cap --format=csv,noheader,nounits 2>/dev/null || true)
+  echo "$total"
+}
+
+# amd_bytes: print the bytes of VRAM amdgpu reports for every card with at
+# least AMD_MIN_VRAM, added together. A smaller figure is the carve-out of an
+# integrated GPU: no card to size a model by, and not worth the ollama-rocm
+# package, which pulls in the ROCm libraries.
+amd_bytes() {
   local line file total=0
+  for file in "${CACHYOS_AGENT_DRM_DIR:-/sys/class/drm}"/card*/device/mem_info_vram_total; do
+    [[ -r $file ]] || continue
+    IFS= read -r line <"$file" || true
+    if [[ $line =~ ^[0-9]+$ ]] && ((10#$line >= AMD_MIN_VRAM)); then total=$((total + 10#$line)); fi
+  done
+  echo "$total"
+}
+
+# GPU vendor and the VRAM of all its usable cards together, in GiB rounded to
+# the nearest. NVIDIA first, then AMD.
+detect_gpu() {
+  local total
   GPU_VENDOR=none
   VRAM_GIB=0
   if ca_cmd_present nvidia-smi; then
-    while IFS= read -r line; do
-      if [[ $line =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then total=$((total + BASH_REMATCH[1])); fi
-    done < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || true)
+    total=$(nvidia_mib)
     if ((total > 0)); then
       GPU_VENDOR=nvidia
       VRAM_GIB=$(((total + 512) / 1024))
       return 0
     fi
   fi
-  for file in "${CACHYOS_AGENT_DRM_DIR:-/sys/class/drm}"/card*/device/mem_info_vram_total; do
-    [[ -r $file ]] || continue
-    IFS= read -r line <"$file" || true
-    if [[ $line =~ ^[0-9]+$ ]]; then total=$((total + line)); fi
-  done
+  total=$(amd_bytes)
   if ((total > 0)); then
     GPU_VENDOR=amd
     VRAM_GIB=$(((total + 536870912) / 1073741824))
