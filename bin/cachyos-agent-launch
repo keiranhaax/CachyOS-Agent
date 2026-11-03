@@ -385,7 +385,7 @@ apply_local() {
       # such flag and rejects it.
       # The copy that will run answers, which is the one in ~/.local/bin when
       # PATH lacks OpenCode.
-      major=$("$(ca_agent_binary opencode)" --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)
+      major=$(ca_opencode_major)
       if [[ $major != 1 ]]; then
         command+=(--standalone)
       fi

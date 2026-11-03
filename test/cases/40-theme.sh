@@ -282,6 +282,7 @@ sync_env() {
   make_sandbox
   stub kreadconfig6 "$KREAD_STUB"
   stub hermes ''
+  stub opencode 'echo 2.2.5'
   dark_colors "$XDG_CONFIG_HOME/kdeglobals"
   THEME=$XDG_STATE_HOME/cachyos-agent/theme
 }
@@ -400,12 +401,13 @@ printf '{"model":"opus","theme":"dark","permissions":{"allow":["Bash(ls)"]},"env
   || fail "claude settings.json changed more than the theme: $(jq -c . "$HOME/.claude/settings.json")"
 [[ $(<"$SANDBOX/calls/hermes") == $'skin\nuse\ncachyos' ]] || fail "hermes was not called with 'skin use cachyos': $(<"$SANDBOX/calls/hermes")"
 [[ $(jq -c . "$HOME/.pi/agent/settings.json") == '{"theme":"cachyos"}' ]] || fail "pi settings were not created"
-[[ $(jq -c . "$XDG_CONFIG_HOME/opencode/tui.json") == '{"theme":"cachyos"}' ]] || fail "opencode tui.json was not created"
+[[ $(jq -c . "$XDG_CONFIG_HOME/opencode/cli.json") == '{"theme":{"name":"cachyos"}}' ]] || fail "opencode cli.json was not created"
+[[ ! -e $XDG_CONFIG_HOME/opencode/tui.json ]] || fail "OpenCode 2 reads no tui.json, yet one was created"
 for file in "$HOME/.pi/agent/themes/cachyos.json" "$XDG_CONFIG_HOME/opencode/themes/cachyos.json"; do
   [[ -s $file ]] || fail "$file was not published"
 done
 "$SYNC" --activate >"$SANDBOX/out"
-[[ $(grep -c 'unchanged .*settings.json\|unchanged .*tui.json' "$SANDBOX/out") == 3 ]] || fail "a second --activate rewrote a setting: $(<"$SANDBOX/out")"
+[[ $(grep -c 'unchanged .*settings.json\|unchanged .*cli.json' "$SANDBOX/out") == 3 ]] || fail "a second --activate rewrote a setting: $(<"$SANDBOX/out")"
 ok
 cleanup_sandbox
 
@@ -419,6 +421,50 @@ printf '{"keybinds":{"leader":"ctrl+x"},"theme":"tokyonight","scroll_speed":3}\n
 [[ -L $HOME/.claude/settings.json ]] || fail "the symlinked settings.json was replaced by a file"
 [[ $(jq -c . "$SANDBOX/dotfiles/settings.json") == '{"theme":"custom:cachyos","model":"opus"}' ]] || fail "the link's target was not updated"
 [[ $(jq -c . "$XDG_CONFIG_HOME/opencode/tui.json") == '{"keybinds":{"leader":"ctrl+x"},"theme":"cachyos","scroll_speed":3}' ]] || fail "tui.json lost a key"
+# OpenCode 2 reads tui.json once, when it first starts without a cli.json, so a cli.json made now would
+# keep the rest of the user's settings from being carried over.
+[[ ! -e $XDG_CONFIG_HOME/opencode/cli.json ]] || fail "a cli.json was created beside the user's tui.json"
+ok
+cleanup_sandbox
+
+begin "sync --activate sets the theme in OpenCode 2's cli.json and keeps its mode and other settings"
+sync_env
+mkdir -p "$XDG_CONFIG_HOME/opencode"
+printf '{"$schema":"https://opencode.ai/v2/cli.json","theme":{"name":"tokyonight","mode":"dark"},"animations":false}\n' >"$XDG_CONFIG_HOME/opencode/cli.json"
+# A tui.json OpenCode 2 has already migrated is no longer read, so it stays as it is.
+printf '{"theme":"nord"}\n' >"$XDG_CONFIG_HOME/opencode/tui.json"
+"$SYNC" --activate --only opencode >"$SANDBOX/out"
+[[ $(jq -c . "$XDG_CONFIG_HOME/opencode/cli.json") == '{"$schema":"https://opencode.ai/v2/cli.json","theme":{"name":"cachyos","mode":"dark"},"animations":false}' ]] \
+  || fail "cli.json changed more than the theme name: $(<"$XDG_CONFIG_HOME/opencode/cli.json")"
+[[ $(<"$XDG_CONFIG_HOME/opencode/tui.json") == '{"theme":"nord"}' ]] || fail "tui.json was edited although cli.json exists"
+grep -q "set theme.name to cachyos in .*cli.json" "$SANDBOX/out" || fail "no word about cli.json: $(<"$SANDBOX/out")"
+"$SYNC" --activate --only opencode >"$SANDBOX/out"
+grep -q 'unchanged .*cli.json' "$SANDBOX/out" || fail "a second --activate rewrote cli.json: $(<"$SANDBOX/out")"
+ok
+cleanup_sandbox
+
+begin "sync --activate writes tui.json for OpenCode 1, which has no cli.json"
+sync_env
+stub opencode 'echo 1.14.2'
+mkdir -p "$XDG_CONFIG_HOME/opencode"
+"$SYNC" --activate --only opencode >/dev/null
+[[ $(jq -c . "$XDG_CONFIG_HOME/opencode/tui.json") == '{"theme":"cachyos"}' ]] || fail "OpenCode 1 got no tui.json"
+[[ ! -e $XDG_CONFIG_HOME/opencode/cli.json ]] || fail "a cli.json was made for OpenCode 1"
+ok
+cleanup_sandbox
+
+begin "sync --activate leaves a cli.json that holds no theme object as it was and says so"
+sync_env
+mkdir -p "$XDG_CONFIG_HOME/opencode"
+file=$XDG_CONFIG_HOME/opencode/cli.json
+for content in $'\n' 'null' '[]' '"dark"' '{"theme":"nord"}'; do
+  printf '%s' "$content" >"$file"
+  status=0
+  "$SYNC" --activate --only opencode >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+  ((status == 1)) || fail "cli.json of '$content' exited $status, not 1"
+  cmp -s "$file" <(printf '%s' "$content") || fail "cli.json of '$content' was modified"
+  grep -qF "cannot update $file" "$SANDBOX/err" || fail "no explanation for '$content': $(<"$SANDBOX/err")"
+done
 ok
 cleanup_sandbox
 
@@ -430,8 +476,8 @@ printf '{"theme": "dark",}\n' >"$HOME/.claude/settings.json"
 status=0
 "$SYNC" --activate --only claude,pi,opencode >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
 ((status == 1)) || fail "a broken settings.json should fail the sync, got $status"
-[[ ! -e $XDG_CONFIG_HOME/opencode/tui.json ]] || fail "tui.json was created beside a tui.jsonc"
-grep -q 'not editing .*tui.jsonc' "$SANDBOX/out" || fail "no word about tui.jsonc"
+[[ ! -e $XDG_CONFIG_HOME/opencode/tui.json && ! -e $XDG_CONFIG_HOME/opencode/cli.json ]] || fail "a settings file was created beside a tui.jsonc"
+grep -q 'not editing .*tui.jsonc.*/themes' "$SANDBOX/out" || fail "no word about tui.jsonc"
 [[ $(<"$HOME/.claude/settings.json") == '{"theme": "dark",}' ]] || fail "the broken settings.json was modified"
 grep -q 'claude: cannot update' "$SANDBOX/err" || fail "no explanation for claude: $(<"$SANDBOX/err")"
 [[ -s $HOME/.claude/themes/cachyos.json && -s $HOME/.pi/agent/themes/cachyos.json ]] || fail "one failing agent stopped the others"

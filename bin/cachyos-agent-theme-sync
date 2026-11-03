@@ -12,6 +12,8 @@ set -euo pipefail
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/launcher.sh
+source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
 # shellcheck source=../lib/theme.sh
 source "$CACHYOS_AGENT_ROOT/lib/theme.sh"
 
@@ -39,8 +41,10 @@ stays. --activate creates the directories and makes cachyos the agent's theme.
             except that a themes/ folder created after Claude Code started
             needs one restart.
   pi        ~/.pi/agent/themes/cachyos.json; --activate sets theme in settings.json
-  opencode  ~/.config/opencode/themes/cachyos.json; --activate sets theme in
-            tui.json. A running OpenCode picks the colors up on restart.
+  opencode  ~/.config/opencode/themes/cachyos.json; --activate sets theme.name
+            in cli.json (OpenCode 2), or theme in tui.json while you have one
+            and no cli.json yet, and for OpenCode 1. A running OpenCode picks
+            the colors up on restart.
 
 Rendered files are kept in $XDG_STATE_HOME/cachyos-agent/theme/.
 USAGE
@@ -131,22 +135,24 @@ publish() {
   fi
 }
 
-# set_setting <agent> <json-file> <key> <value>: set one top-level string in an
-# agent's settings, keeping every other key. A file that is not a JSON object is
-# left as it was. That includes one holding only whitespace or null: jq prints
-# nothing for the first and would swap an object in for the second, either way
-# a file that is not what the agent wrote and may be mid-write.
+# set_setting <agent> <json-file> <key> <value>: set one string in an agent's
+# settings, keeping every other key. The key is a top-level one, or a dotted
+# path into nested objects (theme.name). A file that is not a JSON object is
+# left as it was, and so is one whose nested value is not an object. That
+# includes a file holding only whitespace or null: jq prints nothing for the
+# first and would swap an object in for the second, either way a file that is
+# not what the agent wrote and may be mid-write.
 set_setting() {
   local agent=$1 file=$2 key=$3 value=$4 data
   local -a args=(--arg key "$key" --arg value "$value")
   if [[ -s $file ]]; then
-    if jq -e "${args[@]}" '.[$key] == $value' "$file" >/dev/null 2>&1; then
+    if jq -e "${args[@]}" 'getpath($key | split(".")) == $value' "$file" >/dev/null 2>&1; then
       echo "$agent: unchanged $file"
       return 0
     fi
-    data=$(jq -e "${args[@]}" 'if type == "object" then .[$key] = $value else empty end' "$file")
+    data=$(jq -e "${args[@]}" 'if type == "object" then setpath($key | split("."); $value) else empty end' "$file")
   else
-    data=$(jq -n "${args[@]}" '{($key): $value}')
+    data=$(jq -n "${args[@]}" 'setpath($key | split("."); $value)')
   fi || { echo "$agent: cannot update $file; left as it was" >&2; return 1; }
   printf '%s\n' "$data" | ca_atomic_write "$file" || return 1
   echo "$agent: set $key to $value in $file"
@@ -217,21 +223,29 @@ sync_pi() {
   ((ACTIVATE == 0)) || set_setting pi "$dir/settings.json" theme "$THEME_NAME"
 }
 
-# OpenCode reads themes/*.json from its config directory and the chosen theme
-# from tui.json. A tui.jsonc may hold comments that jq would drop, so with one
-# present the choice stays with the user. Omarchy's omarchy-restart-opencode
-# sends SIGUSR2 to reload a running OpenCode; the current docs do not promise a
-# handler, and a process without one is terminated by that signal, so none is sent.
+# OpenCode reads themes/*.json from its config directory. The chosen theme is
+# theme.name in cli.json for OpenCode 2, which reads the old tui.json only once,
+# on a start that finds no cli.json, and carries its settings over. So a user's
+# tui.json or tui.jsonc keeps the choice until then, and a cli.json is made only
+# where there is none to carry over (a tui.jsonc may hold comments that jq would
+# drop, so the choice stays with the user). OpenCode 1 reads tui.json.
+# Omarchy's omarchy-restart-opencode sends SIGUSR2 to reload a running OpenCode;
+# the current docs do not promise a handler, and a process without one is
+# terminated by that signal, so none is sent.
 sync_opencode() {
   local dir=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
   present opencode "$dir" || return 0
   publish opencode opencode.json "$dir/themes/$THEME_NAME.json" || return 1
   ((ACTIVATE == 1)) || return 0
-  if [[ -e $dir/tui.jsonc ]]; then
-    echo "opencode: not editing $dir/tui.jsonc; choose $THEME_NAME with /theme"
-    return 0
+  if [[ -e $dir/cli.json ]]; then
+    set_setting opencode "$dir/cli.json" theme.name "$THEME_NAME"
+  elif [[ -e $dir/tui.jsonc ]]; then
+    echo "opencode: not editing $dir/tui.jsonc; choose $THEME_NAME with /themes (/theme in OpenCode 1)"
+  elif [[ -e $dir/tui.json || $(ca_opencode_major) == 1 ]]; then
+    set_setting opencode "$dir/tui.json" theme "$THEME_NAME"
+  else
+    set_setting opencode "$dir/cli.json" theme.name "$THEME_NAME"
   fi
-  set_setting opencode "$dir/tui.json" theme "$THEME_NAME"
 }
 
 mkdir -p "$THEME_DIR"

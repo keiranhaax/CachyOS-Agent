@@ -248,9 +248,9 @@ cachyos-agent theme follow on                 # repeat the sync whenever the col
 | Hermes | `skins/cachyos.yaml` in `$HERMES_HOME` (`~/.hermes`) and every profile | runs `hermes skin use cachyos`; Hermes must have run once |
 | Claude Code | `~/.claude/themes/cachyos.json` (or `$CLAUDE_CONFIG_DIR`) | sets `theme` to `custom:cachyos` in `settings.json` |
 | Pi | `~/.pi/agent/themes/cachyos.json` | sets `theme` in `settings.json` |
-| OpenCode | `~/.config/opencode/themes/cachyos.json` | sets `theme` in `tui.json`; with a `tui.jsonc` it leaves the choice to you (`/theme`) |
+| OpenCode | `~/.config/opencode/themes/cachyos.json` | sets `theme.name` in `cli.json`, which OpenCode 2 reads; while you have only a `tui.json` (OpenCode 2 carries it over on its first start) and for OpenCode 1 it sets `theme` in `tui.json`; with a `tui.jsonc` it leaves the choice to you (`/themes`) |
 
-Without `--activate` only an agent whose directory already exists gets the file, and no agent is switched, so a theme you chose yourself stays. Hermes also needs the `config.yaml` it writes on its first run, with or without `--activate`: the `~/.hermes` that `skills provision` creates is not enough, and `theme sync` says it skipped Hermes. An unchanged file is not rewritten, and one agent failing does not stop the rest. Claude Code and Pi reload a changed theme file while they run (a `themes/` folder created after Claude Code started needs one restart); OpenCode needs a restart or `/theme`.
+Without `--activate` only an agent whose directory already exists gets the file, and no agent is switched, so a theme you chose yourself stays. Hermes also needs the `config.yaml` it writes on its first run, with or without `--activate`: the `~/.hermes` that `skills provision` creates is not enough, and `theme sync` says it skipped Hermes. An unchanged file is not rewritten, and one agent failing does not stop the rest. Claude Code and Pi reload a changed theme file while they run (a `themes/` folder created after Claude Code started needs one restart); OpenCode needs a restart or `/themes` (`/theme` in OpenCode 1).
 
 `theme follow on` enables a user path unit that watches `kdeglobals` and runs `theme sync` (without `--activate`) when it changes. It does not sync by itself when you turn it on: run `cachyos-agent theme sync` once. `theme follow off` stops it.
 

@@ -62,3 +62,12 @@ ca_agent_binary() {
 ca_agent_present() {
   ca_agent_binary "$1" >/dev/null
 }
+
+# ca_opencode_major: the major version of the OpenCode that will run, or nothing
+# when it is not installed or does not say. OpenCode 1 and 2 differ in what the
+# launcher passes it and where it reads its settings, and this is where both ask.
+ca_opencode_major() {
+  local binary
+  binary=$(ca_agent_binary opencode) || return 0
+  "$binary" --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true
+}

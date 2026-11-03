@@ -70,7 +70,7 @@ Only sessions started with `cachyos-agent launch` or `cachyos-agent account exec
 
 ## Theme sync
 
-`cachyos-agent theme sync` reads the active Plasma color scheme (`kdeglobals`) and writes a theme named `cachyos` for Hermes, Claude Code, Pi and OpenCode. Without `--activate` it only publishes to agents whose config directory exists and switches none of them. Hermes also needs the `config.yaml` it writes on its first run: the `~/.hermes` that `skills provision` creates is not enough. `theme follow on` repeats the sync whenever `kdeglobals` changes. The rendered files stay in `theme/` in the state directory. Claude Code and Pi reload a changed theme file while running (a `themes/` folder created after Claude Code started needs one restart), and OpenCode needs a restart or `/theme`.
+`cachyos-agent theme sync` reads the active Plasma color scheme (`kdeglobals`) and writes a theme named `cachyos` for Hermes, Claude Code, Pi and OpenCode. Without `--activate` it only publishes to agents whose config directory exists and switches none of them. Hermes also needs the `config.yaml` it writes on its first run: the `~/.hermes` that `skills provision` creates is not enough. `theme follow on` repeats the sync whenever `kdeglobals` changes. The rendered files stay in `theme/` in the state directory. Claude Code and Pi reload a changed theme file while running (a `themes/` folder created after Claude Code started needs one restart), and OpenCode needs a restart or `/themes` (`/theme` in OpenCode 1). `--activate` sets the OpenCode theme in `cli.json`, and in `tui.json` only while that is the file OpenCode 2 has yet to carry over, or for OpenCode 1.
 
 ## Local models
 
