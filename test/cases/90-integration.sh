@@ -484,7 +484,14 @@ cleanup_sandbox
 
 begin "theme follow generates units for the checkout that run the sync, and off removes them"
 setup
-if type -P kreadconfig6 >/dev/null; then
+# theme follow refuses a checkout whose path would need escaping in an ExecStart=
+# line (bin/cachyos-agent-theme-follow, generate_units), so there is nothing to
+# generate from one: a developer's ~/My Code or a build directory with an @ in it.
+if ! type -P kreadconfig6 >/dev/null; then
+  printf 'skip %s (kconfig is not installed)\n' "$CURRENT_TEST"
+elif [[ ! $REPO_ROOT/bin =~ ^[A-Za-z0-9/._+-]+$ ]]; then
+  printf 'skip %s (theme follow does not generate units for the checkout at %s)\n' "$CURRENT_TEST" "$REPO_ROOT"
+else
   stub systemctl 'case ${2-} in is-enabled) echo enabled ;; is-active) echo active ;; esac'
   export CACHYOS_AGENT_SYSTEM_UNIT_DIR=$SANDBOX/no-packaged-units
   units=$XDG_CONFIG_HOME/systemd/user
@@ -509,8 +516,6 @@ if type -P kreadconfig6 >/dev/null; then
   contains "$(calls systemctl | tr '\n' ' ')" "--user|disable|--now|cachyos-agent-theme-sync.path" "follow off did not disable the path unit"
   unset CACHYOS_AGENT_SYSTEM_UNIT_DIR
   ok
-else
-  printf 'skip %s (kconfig is not installed)\n' "$CURRENT_TEST"
 fi
 cleanup_sandbox
 
@@ -678,6 +683,10 @@ begin "every unit file is well formed, runs a command the package ships, and loa
 setup
 units=$REPO_ROOT/systemd/user
 mkdir "$SANDBOX/units"
+# The packaged units name /usr/bin; systemd is shown this checkout's commands
+# instead, through a link, so a checkout path with a space in it does not split
+# the ExecStart= line.
+ln -s "$REPO_ROOT/bin" "$SANDBOX/shipped-bin"
 shopt -s nullglob
 unit_files=("$units"/*.service "$units"/*.timer "$units"/*.path)
 shopt -u nullglob
@@ -703,8 +712,7 @@ for file in "${unit_files[@]}"; do
     [[ $command_path == /usr/bin/cachyos-agent-* ]] || fail "$name does not run an absolute /usr/bin/cachyos-agent-* command: $exec_line"
     [[ -x $REPO_ROOT/bin/${command_path##*/} ]] || fail "$name runs ${command_path##*/}, which the package does not ship"
   fi
-  # The packaged units name /usr/bin; systemd is shown this checkout's commands instead.
-  sed "s|^ExecStart=/usr/bin/|ExecStart=$REPO_ROOT/bin/|" "$file" >"$SANDBOX/units/$name"
+  sed "s|^ExecStart=/usr/bin/|ExecStart=$SANDBOX/shipped-bin/|" "$file" >"$SANDBOX/units/$name"
 done
 if type -P systemd-analyze >/dev/null; then
   verdict=$(cd "$SANDBOX/units" && systemd-analyze --user verify ./* 2>&1 || true)
