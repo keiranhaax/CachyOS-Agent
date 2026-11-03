@@ -9,6 +9,12 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 
 AGENT=$REPO_ROOT/bin/cachyos-agent
 
+# `account add` asks for a label when its stdin is a terminal. The case would then
+# depend on how it was started: from a keyboard it stops at the first prompt, and
+# makepkg's check() runs it with the stdin it inherited. Cases that want a terminal
+# get one from script(1) below.
+exec </dev/null
+
 # The stubs sign in as whoever FIX_ID and FIX_EMAIL name when they run, so one
 # test plays several accounts. FIX_NOLOGIN makes a login that writes nothing.
 # FIX_TIER and FIX_SUB set what Claude's credentials say of the plan.
@@ -357,6 +363,25 @@ ok
 cleanup_sandbox
 
 # ---- use, home -----------------------------------------------------------------
+
+begin "add asks for a label at a terminal and uses the answer"
+setup
+# script(1) gives the command a terminal on stdin and passes what it is given to it.
+if ! script -qec 'test -t 0' /dev/null </dev/null >/dev/null 2>&1; then
+  printf 'UNVERIFIED add asks for a label: script cannot provide a terminal here\n'
+else
+  sign_in claude u-main main@example.com
+  cmd=$(printf '%q ' env FIX_ID=u-work FIX_EMAIL=work@example.com "$AGENT" account add claude)
+  out=$(printf 'Prompted\n' | SHELL=/bin/bash script -qec "$cmd" /dev/null) || fail "add at a terminal failed: $out"
+  [[ $out == *"Name this Claude account (empty to use its email): "* ]] || fail "no prompt for a label: $out"
+  [[ $(registry claude '.accounts[1].label') == Prompted ]] || fail "the label typed at the prompt was not used: $(registry claude '.accounts[1].label')"
+  # An empty answer takes the email's name, as the prompt says.
+  cmd=$(printf '%q ' env FIX_ID=u-home FIX_EMAIL=home@example.com "$AGENT" account add claude)
+  printf '\n' | SHELL=/bin/bash script -qec "$cmd" /dev/null >/dev/null || fail "add with an empty answer failed"
+  [[ $(registry claude '.accounts[2].label') == home ]] || fail "an empty answer did not take the email's name: $(registry claude '.accounts[2].label')"
+fi
+ok
+cleanup_sandbox
 
 begin "use and add print no control characters from an account's label, email or plan"
 setup
