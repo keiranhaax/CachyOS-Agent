@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch the Plasma color scheme for the agent theme sync
+
+[Path]
+# %E is $XDG_CONFIG_HOME of the user manager (systemd.unit(5)). PathModified=
+# also fires on plain writes; PathChanged= would wait for the file to be closed.
+PathModified=%E/kdeglobals
+
+[Install]
+WantedBy=default.target
