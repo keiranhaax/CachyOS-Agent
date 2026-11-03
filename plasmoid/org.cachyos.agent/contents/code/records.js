@@ -3,7 +3,7 @@
 .pragma library
 
 // What the widget draws, derived from the output of `cachyos-agent usage --json`:
-// a JSON array of usage records in Omarchy's format (docs/agent-usage-collectors.md).
+// a JSON array of usage records in Omarchy's format (its docs/agent-usage-collectors.md).
 // Everything here is a pure function of its arguments, with the clock passed in
 // as `now` (milliseconds since the epoch), so test/cases/80-plasmoid.sh can run
 // it under qml6 without a desktop. A collector may leave a field out or fill it
