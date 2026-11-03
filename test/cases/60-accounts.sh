@@ -990,6 +990,25 @@ cleanup_sandbox
 
 # ---- commands ------------------------------------------------------------------
 
+begin "commands that edit the registry at the same moment all keep their edit"
+setup
+sign_in claude u-0 acct0@example.com
+for i in {1..7}; do sign_in claude "u-$i" "acct$i@example.com" "Acct$i"; done
+# The timer's autoswitch, the panel and a command typed at a prompt all read, change and save the
+# registry. Without the lock around that, one writer's save drops another's edit.
+for round in 1 2 3; do
+  mapfile -t ids < <(registry claude '.accounts[1:][].id')
+  for i in "${!ids[@]}"; do
+    "$AGENT" account rename claude "${ids[i]}" "Round${round}x$i" >/dev/null 2>&1 &
+  done
+  wait
+  expected=$(printf 'Round%sx%s\n' "$round" 0 "$round" 1 "$round" 2 "$round" 3 "$round" 4 "$round" 5 "$round" 6 | paste -sd,)
+  [[ $(registry claude '[.accounts[1:][].label] | sort | join(",")') == "$expected" ]] \
+    || fail "round $round: seven renames at once kept only: $(registry claude '[.accounts[].label] | join(",")')"
+done
+ok
+cleanup_sandbox
+
 begin "every account command is routed, documented and answers --help"
 setup
 json=$("$AGENT" commands --json --all)
