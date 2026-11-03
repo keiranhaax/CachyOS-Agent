@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Adapted from Omarchy bin/omarchy-agent-account-state (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
 # cachyos-agent:summary=Read and change the registry of Claude, Codex, and Grok subscription accounts
-# cachyos-agent:args=<registry|home|homes|list|refresh|begin|register|recover|use|rename|remove|mode|autoswitch|offer> [provider] [args...]
+# cachyos-agent:args=<registry|home|homes|list|refresh|begin|register|recover|accountid|reauth-check|use|rename|remove|mode|autoswitch|offer> [provider] [args...]
 # cachyos-agent:hidden=true
 """The account registry behind `cachyos-agent account`.
 
@@ -529,6 +529,35 @@ def rename(provider: str, target: str, label: str) -> dict[str, Any]:
     return dict(account)
 
 
+# The id of the account a home is signed in as, or "" for nobody. `add
+# --reauth` reads it before a login to know who the account was.
+def account_id_of(provider: str, target: str) -> str:
+  account = find(load(provider), target)
+  if not account:
+    raise AccountError(f"No {PROVIDERS[provider]['name']} account named {target}")
+  return identity(provider, account_home(provider, account))["accountId"]
+
+
+# Whether the login now in an account's home may stand as that account signed
+# in again: it has to be the account it was (`before`, when it was anyone) and
+# not one that is already added under another name. A private window still
+# signed in to someone else writes that login over this one, and the next
+# refresh would then record two entries for one account.
+def check_reauth(provider: str, target: str, before: str) -> None:
+  registry = load(provider)
+  account = find(registry, target)
+  if not account:
+    raise AccountError(f"No {PROVIDERS[provider]['name']} account named {target}")
+  now = identity(provider, account_home(provider, account))
+  if not now["accountId"]:
+    raise AccountError("The login didn't finish, so nothing was signed in.")
+  for other in registry["accounts"]:
+    if other["id"] != account["id"] and identity(provider, account_home(provider, other))["accountId"] == now["accountId"]:
+      raise AccountError(f"That's {other['label']}" + (f" ({now['email']})" if now["email"] else "") + f", not {account['label']}.")
+  if before and now["accountId"] != before:
+    raise AccountError(f"That's {now['email'] or 'a different account'}, not {account['label']}.")
+
+
 # Save who each home is signed in as now. A login run in a home, through the
 # panel or the CLI, changes it, and the usage records take their names and
 # emails from here.
@@ -928,6 +957,16 @@ def main(argv: list[str]) -> int:
           refresh(provider)
     elif command == "begin":
       print(begin(provider_arg(args), args[1] if len(args) > 1 else "", int(args[2]) if len(args) > 2 else 0))
+    elif command == "accountid":
+      provider = provider_arg(args)
+      if len(args) < 2:
+        raise AccountError("accountid <provider> <account>")
+      print(account_id_of(provider, args[1]))
+    elif command == "reauth-check":
+      provider = provider_arg(args)
+      if len(args) < 2:
+        raise AccountError("reauth-check <provider> <account> [account-id-before]")
+      check_reauth(provider, args[1], args[2] if len(args) > 2 else "")
     elif command == "recover":
       print(json.dumps(recover(provider_arg(args))))
     elif command == "register":

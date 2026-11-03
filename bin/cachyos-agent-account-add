@@ -24,7 +24,8 @@ agent, and the label asks for itself when you leave it out in a terminal.
 
 --reauth <account> signs an account that is already here in again, in its own
 home, for when its sign-in has lapsed. Name "primary" for the login in
-~/.claude, ~/.codex or ~/.grok.
+~/.claude, ~/.codex or ~/.grok. A login that turns out to be another account's
+is refused, and an added account's earlier sign-in is put back.
 EOF
 }
 
@@ -69,9 +70,13 @@ fi
 # Cancelling stops the CLI's login too, and leaves no half-made home behind.
 home=''
 browser=''
+snapshot=''
 cleanup() {
   if [[ -n $browser ]]; then
     rm -f -- "$browser"
+  fi
+  if [[ -n $snapshot ]]; then
+    rm -rf -- "$snapshot"
   fi
   if [[ -n $home && -d $home && $home == */.pending/* ]]; then
     rm -rf -- "$home"
@@ -182,9 +187,14 @@ EOF
 
 # Signing an account that is already here in again, where it lives: the
 # primary home through the normal browser, an added one through a private
-# window. Its home is never recreated or removed.
+# window. Its home is never recreated or removed. The login has to be the
+# account's own: a private window still signed in to someone else would write
+# that login over this one. An added home's own files are copied aside first
+# and put back when the login is refused. The primary's login also lives in
+# ~/.claude.json and beside the history the CLI keeps in ~/.claude, so that
+# one is left as the login wrote it and the refusal says so.
 reauthenticate() {
-  local account_home
+  local account_home refusal before=''
   if [[ $reauth == primary ]]; then
     account_home=$HOME/.$provider
   else
@@ -193,11 +203,25 @@ reauthenticate() {
   [[ -n $account_home ]] || ca_die "no $ACCT_NAME account named $reauth"
 
   if [[ $account_home == "$HOME/.$provider" ]]; then
+    # Nothing can be put back here, so only an account that is already added
+    # is refused; the login may be a new one a person chose on purpose.
     echo "Sign in to $ACCT_NAME again in the browser window that opens."
     login || ca_die "signing in to $ACCT_NAME did not finish"
   else
+    before=$(cachyos-agent-account-state accountid "$provider" "$reauth")
+    snapshot=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/cachyos-agent-reauth.XXXXXX")
+    find "$account_home" -maxdepth 1 -type f -exec cp -p -- {} "$snapshot" \;
     private_login "$account_home" "the account you're signing in again" ||
       ca_die "signing in to $ACCT_NAME did not finish"
+  fi
+
+  if ! refusal=$(cachyos-agent-account-state reauth-check "$provider" "$reauth" "$before" 2>&1); then
+    if [[ -n $snapshot ]]; then
+      find "$account_home" -maxdepth 1 -type f -delete
+      cp -a -- "$snapshot"/. "$account_home"/
+      ca_die "$refusal Its earlier sign-in is back as it was. Close any private window that is signed in, and try again."
+    fi
+    ca_die "$refusal $ACCT_NAME is now signed in as the account you just used; sign in again as the one you meant."
   fi
   acct_usage_refresh --force "$provider"
   printf '\nSigned in to %s again.\n' "$ACCT_NAME"

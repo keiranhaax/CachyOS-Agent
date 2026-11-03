@@ -245,6 +245,33 @@ if out=$("$AGENT" account add --reauth nobody claude 2>&1); then fail "an unknow
 ok
 cleanup_sandbox
 
+begin "--reauth refuses a login that is not the account's own and gives its sign-in back"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+work=$STATE/accounts/claude/work
+creds=$(cat "$work/.credentials.json" "$work/.claude.json")
+: >"$SANDBOX/calls/cachyos-agent-usage-update"
+# the private window is still signed in as Main
+if out=$(FIX_ID=u-main FIX_EMAIL=main@example.com "$AGENT" account add --reauth work claude 2>&1); then fail "Main's login was accepted as Work's: $out"; fi
+[[ $out == *"That's Main (main@example.com), not Work."* && $out != *"Signed in to Claude again"* ]] || fail "no refusal naming Main: $out"
+[[ $creds == "$(cat "$work/.credentials.json" "$work/.claude.json")" && -L $work/settings.json ]] || fail "Work's own sign-in was not put back"
+"$AGENT" account state refresh
+[[ $(registry claude '[.accounts[] | .accountId] | join(",")') == u-main,u-work && $(registry claude '.accounts[1].email') == work@example.com ]] || fail "the registry holds one account twice: $(registry claude .accounts)"
+# a stranger is no better than Main
+if out=$(FIX_ID=u-other FIX_EMAIL=other@example.com "$AGENT" account add --reauth work claude 2>&1); then fail "a third account was accepted as Work: $out"; fi
+[[ $out == *"That's other@example.com, not Work."* ]] || fail "no refusal naming the stranger: $out"
+[[ $creds == "$(cat "$work/.credentials.json" "$work/.claude.json")" ]] || fail "Work's own sign-in was not put back after the stranger"
+# Main cannot take Work's login either; its login lives in the CLI's own home
+# and is not put back, so the refusal has to say what is there now
+if out=$(FIX_ID=u-work FIX_EMAIL=work@example.com "$AGENT" account add --reauth main claude 2>&1); then fail "Work's login was accepted as Main's: $out"; fi
+[[ $out == *"That's Work (work@example.com), not Main."* ]] || fail "no refusal naming Work: $out"
+sleep 0.3
+[[ ! -s $SANDBOX/calls/cachyos-agent-usage-update ]] || fail "the usage records were refreshed for a refused sign-in: $(<"$SANDBOX/calls/cachyos-agent-usage-update")"
+[[ -z $(ls -A "$XDG_RUNTIME_DIR") ]] || fail "a snapshot or script was left behind: $(ls -A "$XDG_RUNTIME_DIR")"
+ok
+cleanup_sandbox
+
 begin "a completed sign-in that was interrupted is registered instead of asking again"
 setup
 sign_in claude u-main main@example.com
