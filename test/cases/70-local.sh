@@ -588,21 +588,23 @@ expect_no_calls sudo
 ok
 cleanup_sandbox
 
-begin "answering y installs the package with sudo, starts the service, then sets the model up"
-make_sandbox
-make_tree
-set_machine 8188 32
-fake_service
-install_ollama
-PATH=$NARROW answer y local use best
-((RC == 0)) || fail "use best exited $RC: $OUT"
-expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl enable --now ollama.service"
-[[ $(calls ollama) == "list"$'\n'"list"$'\n'"list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
-  || fail "ollama calls were: $(calls ollama)"
-[[ $(<"$(state_dir)/active") == tiny ]] || fail "active is not tiny"
-[[ $OUT != *--noconfirm* ]] || fail "the install ran with --noconfirm"
+begin "answering y, yes or YES installs the package with sudo, starts the service, then sets the model up"
+for reply in y yes YES; do
+  make_sandbox
+  make_tree
+  set_machine 8188 32
+  fake_service
+  install_ollama
+  PATH=$NARROW answer "$reply" local use best
+  ((RC == 0)) || fail "reply '$reply': use best exited $RC: $OUT"
+  expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl enable --now ollama.service"
+  [[ $(calls ollama) == "list"$'\n'"list"$'\n'"list"$'\n'"pull tiny:1b"$'\n'"create tiny -f "* ]] \
+    || fail "reply '$reply': ollama calls were: $(calls ollama)"
+  [[ $(<"$(state_dir)/active") == tiny ]] || fail "reply '$reply': active is not tiny"
+  [[ $OUT != *--noconfirm* ]] || fail "the install ran with --noconfirm"
+  cleanup_sandbox
+done
 ok
-cleanup_sandbox
 
 begin "an ollama without the GPU runner is CPU-only: use offers the GPU package and goes on if declined"
 make_sandbox
@@ -794,6 +796,32 @@ run local use tiny
 expect_in "did not answer after 30 seconds; see: journalctl -u ollama.service"
 [[ $(calls ollama) != *pull* ]] || fail "pulled without a server"
 [[ ! -e $(state_dir)/active ]] || fail "active was written"
+mapfile -t sleeps < <(calls sleep)
+((${#sleeps[@]} == 30)) || fail "waited ${#sleeps[@]} times, not 30"
+[[ ${sleeps[0]} == 1 && ${sleeps[29]} == 1 ]] || fail "the waits were not one second each: ${sleeps[*]}"
+ok
+cleanup_sandbox
+
+begin "use goes on as soon as a server that comes up late answers"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+# list fails until it has been asked four times: the check before systemctl and
+# three polls, so the fifth call answers.
+# shellcheck disable=SC2016 # the stub body is a script, not a string to expand here
+stub ollama '
+state=${self%/stubs/*}
+case $1 in
+  list) n=0; if [[ -f $state/polls ]]; then n=$(<"$state/polls"); fi; echo $((n + 1)) >"$state/polls"; ((n >= 4)) || exit 1 ;;
+  create) cp "$4" "$state/modelfile" ;;
+esac
+exit 0'
+run local use tiny
+((RC == 0)) || fail "use exited $RC: $OUT"
+mapfile -t sleeps < <(calls sleep)
+((${#sleeps[@]} == 3)) || fail "waited ${#sleeps[@]} times, not 3"
+[[ $(<"$(state_dir)/active") == tiny ]] || fail "active is not tiny"
 ok
 cleanup_sandbox
 
@@ -837,6 +865,30 @@ expect_calls sudo "systemctl stop ollama.service"
 run local stop
 expect_in "ollama.service is not running"
 expect_calls sudo "systemctl stop ollama.service"
+ok
+cleanup_sandbox
+
+begin "start and stop without sudo or systemctl say what is missing and leave the service alone"
+make_sandbox
+make_tree
+fake_service
+narrow_path
+rm -- "$SANDBOX/stubs/sudo"
+: >"$SANDBOX/running"
+PATH=$NARROW run local stop
+((RC == 1)) || fail "stop without sudo exited $RC: $OUT"
+expect_in "sudo is needed to stop ollama.service"
+[[ -e $SANDBOX/running ]] || fail "the service was stopped"
+rm -f -- "$SANDBOX/running"
+stub ollama 'exit 1'
+PATH=$NARROW run local start
+((RC == 1)) || fail "start without sudo exited $RC: $OUT"
+expect_in "sudo and systemctl are needed to start ollama.service"
+stub sudo 'exec "$@"'
+rm -- "$SANDBOX/stubs/systemctl"
+PATH=$NARROW run local stop
+((RC == 1)) || fail "stop without systemctl exited $RC: $OUT"
+expect_in "systemctl is needed to stop ollama.service"
 ok
 cleanup_sandbox
 
