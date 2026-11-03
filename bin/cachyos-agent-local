@@ -232,26 +232,51 @@ wait_for_server() {
   ca_die "$SERVICE did not answer after 30 seconds; see: journalctl -u $SERVICE"
 }
 
-# Ask before installing, then let pacman ask its own questions. The CUDA and
-# ROCm builds of Ollama are separate packages on top of ollama, so the GPU
-# decides which one to install.
-ensure_ollama() {
-  local pkg=ollama answer=''
-  if ca_cmd_present ollama; then return 0; fi
+# gpu_package: the Arch package that carries the Ollama build for this GPU. The
+# plain ollama package is CPU-only, its PKGBUILD deletes the CUDA, ROCm and
+# Vulkan runners that ollama-cuda and ollama-rocm bring back, so the GPU
+# decides what has to be installed.
+gpu_package() {
   case $GPU_VENDOR in
-    nvidia) pkg=ollama-cuda ;;
-    amd) pkg=ollama-rocm ;;
+    nvidia) echo ollama-cuda ;;
+    amd) echo ollama-rocm ;;
+    *) echo ollama ;;
   esac
-  ca_cmd_present sudo pacman || ca_die "Ollama is not installed and sudo or pacman is missing; install $pkg yourself and run this again"
-  printf 'Ollama is not installed. Install %s with: sudo pacman -S --needed %s\n' "$pkg" "$pkg" >&2
+}
+
+# install_package <package>: ask first, then let pacman ask its own questions.
+# Fails when the answer is not yes, or sudo or pacman is missing.
+install_package() {
+  local answer=''
+  if ! ca_cmd_present sudo pacman; then
+    printf 'sudo or pacman is missing, so %s cannot be installed from here.\n' "$1" >&2
+    return 1
+  fi
+  printf 'Install %s with: sudo pacman -S --needed %s\n' "$1" "$1" >&2
   printf 'Install it now? [y/N] ' >&2
   read -r answer || true
   case $answer in
-    [yY] | [yY][eE][sS]) ;;
-    *) ca_die "Ollama is required; install it with 'sudo pacman -S --needed $pkg' and run this again" ;;
+    [yY] | [yY][eE][sS]) sudo pacman -S --needed "$1" ;;
+    *) return 1 ;;
   esac
-  sudo pacman -S --needed "$pkg"
-  ca_cmd_present ollama || ca_die "ollama is still not on PATH after installing $pkg"
+}
+
+# ensure_ollama: an Ollama that can use this machine's GPU. Without Ollama the
+# install is required. An ollama with no GPU package is the silent trap: it
+# serves every model from the CPU while `list` says gpu, so the install is
+# offered again, but a no is respected (an Ollama installed by other means
+# carries its own runners, which pacman cannot see).
+ensure_ollama() {
+  local pkg
+  pkg=$(gpu_package)
+  if ! ca_cmd_present ollama; then
+    printf 'Ollama is not installed.\n' >&2
+    install_package "$pkg" || ca_die "Ollama is required; install it with 'sudo pacman -S --needed $pkg' and run this again"
+    ca_cmd_present ollama || ca_die "ollama is still not on PATH after installing $pkg"
+  elif [[ $pkg != ollama ]] && ca_cmd_present pacman && ! pacman -Q "$pkg" >/dev/null 2>&1; then
+    printf 'Ollama is installed without GPU support: the ollama package alone is CPU-only.\n' >&2
+    install_package "$pkg" || printf 'Continuing without it: models will run on the CPU, slowly.\n' >&2
+  fi
 }
 
 # start_service <systemctl verb...>: make sure the server answers, asking the

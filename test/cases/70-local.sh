@@ -60,7 +60,8 @@ add_amd_card() {
 # fail, create-fails makes a create fail, and create-hangs makes a create record
 # create-started and wait on the hang fifo for a signal. `systemctl enable|start`
 # begins the service, stop ends it, and the stubbed pacman makes an ollama
-# appear, as installing the package would.
+# appear, as installing the package would. `pacman -Q <pkg>` succeeds unless
+# not-installed-<pkg> exists, and installing <pkg> removes that file.
 # Without install_ollama the stubbed ollama is present from the start.
 # shellcheck disable=SC2016 # the stub bodies are scripts, not strings to expand here
 fake_service() {
@@ -89,22 +90,31 @@ case $1 in
 esac
 exit 0'
   stub sudo 'exec "$@"'
-  stub pacman 'state=${self%/stubs/*}; if [[ -x $state/pkg/ollama ]]; then cp "$state/pkg/ollama" "$state/stubs/ollama"; fi'
+  stub pacman '
+state=${self%/stubs/*}
+if [[ $1 == -Q ]]; then [[ ! -e $state/not-installed-$2 ]]; exit; fi
+rm -f "$state/not-installed-${!#}"
+if [[ -x $state/pkg/ollama ]]; then cp "$state/pkg/ollama" "$state/stubs/ollama"; fi'
   stub sleep
 }
 
-# install_ollama: take the stubbed ollama off PATH until the stubbed pacman
-# installs it, and narrow PATH to what the command really needs so an ollama on
-# the machine running the tests cannot answer. Sets NARROW for use as
-# PATH=$NARROW run ...
-install_ollama() {
+# narrow_path: narrow PATH to what the command really needs plus the stubs, so
+# a tool on the machine running the tests (an ollama, a sudo, a pacman) cannot
+# answer. Sets NARROW for use as PATH=$NARROW run ...
+narrow_path() {
   local tool
-  mv "$SANDBOX/stubs/ollama" "$SANDBOX/pkg/ollama"
   mkdir -p "$SANDBOX/real"
   for tool in dirname readlink mkdir mktemp mv cat rm cp; do
     ln -sf "$(type -P "$tool")" "$SANDBOX/real/$tool"
   done
   NARROW=$SANDBOX/stubs:$SANDBOX/real
+}
+
+# install_ollama: take the stubbed ollama off PATH until the stubbed pacman
+# installs it, and narrow PATH as narrow_path does.
+install_ollama() {
+  mv "$SANDBOX/stubs/ollama" "$SANDBOX/pkg/ollama"
+  narrow_path
 }
 
 # run <args...>: the dispatcher of the private tree with stdin closed. Never
@@ -576,6 +586,79 @@ expect_calls sudo "pacman -S --needed ollama-cuda" "systemctl enable --now ollam
   || fail "ollama calls were: $(calls ollama)"
 [[ $(<"$(state_dir)/active") == tiny ]] || fail "active is not tiny"
 [[ $OUT != *--noconfirm* ]] || fail "the install ran with --noconfirm"
+ok
+cleanup_sandbox
+
+begin "an ollama without the GPU runner is CPU-only: use offers the GPU package and goes on if declined"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+: >"$SANDBOX/not-installed-ollama-cuda"
+for reply in n N no '' maybe; do
+  answer "$reply" local use best
+  ((RC == 0)) || fail "reply '$reply' exited $RC: $OUT"
+  expect_in "Install ollama-cuda with: sudo pacman -S --needed ollama-cuda"
+  expect_in "Continuing without it: models will run on the CPU, slowly."
+  [[ $(<"$(state_dir)/active") == tiny ]] || fail "reply '$reply': active is not tiny"
+done
+expect_no_calls sudo
+[[ $(calls pacman) == "$(printf '%s\n' '-Q ollama-cuda' '-Q ollama-cuda' '-Q ollama-cuda' '-Q ollama-cuda' '-Q ollama-cuda')" ]] \
+  || fail "pacman calls were: $(calls pacman)"
+answer y local use best
+((RC == 0)) || fail "reply y exited $RC: $OUT"
+expect_calls sudo "pacman -S --needed ollama-cuda"
+answer n local use best
+[[ $OUT != *"Install ollama-cuda"* ]] || fail "asked again after installing the package: $OUT"
+expect_calls sudo "pacman -S --needed ollama-cuda"
+ok
+cleanup_sandbox
+
+begin "the GPU package to ask for follows the vendor, and a machine without a GPU asks for nothing"
+make_sandbox
+make_tree
+fake_service
+: >"$SANDBOX/running"
+: >"$SANDBOX/not-installed-ollama-rocm"
+set_machine none 32
+add_amd_card 0 17179869184
+answer n local use best
+expect_in "Install ollama-rocm with: sudo pacman -S --needed ollama-rocm"
+expect_calls pacman "-Q ollama-rocm"
+rm -rf -- "$SANDBOX/drm" "$SANDBOX/calls/pacman"
+answer n local use best
+((RC == 0)) || fail "use on a machine without a GPU exited $RC: $OUT"
+[[ $OUT != *Install* ]] || fail "asked to install something on a machine without a GPU: $OUT"
+expect_no_calls pacman
+expect_no_calls sudo
+ok
+cleanup_sandbox
+
+begin "without sudo or pacman an ollama that lacks the GPU runner is used as it is, and a missing ollama is refused"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+: >"$SANDBOX/not-installed-ollama-cuda"
+narrow_path
+rm -- "$SANDBOX/stubs/sudo"
+PATH=$NARROW answer y local use best
+((RC == 0)) || fail "use without sudo exited $RC: $OUT"
+expect_in "sudo or pacman is missing, so ollama-cuda cannot be installed from here"
+expect_in "Continuing without it"
+rm -- "$SANDBOX/stubs/pacman"
+rm -f -- "$SANDBOX/calls/pacman"
+PATH=$NARROW answer y local use best
+((RC == 0)) || fail "use without pacman exited $RC: $OUT"
+[[ $OUT != *Install* && $OUT != *Continuing* ]] || fail "without pacman nothing can be checked or installed: $OUT"
+expect_no_calls pacman
+mv -- "$SANDBOX/stubs/ollama" "$SANDBOX/pkg/ollama"
+PATH=$NARROW answer y local use best
+((RC == 1)) || fail "use without ollama and without sudo exited $RC: $OUT"
+expect_in "sudo or pacman is missing, so ollama-cuda cannot be installed from here"
+expect_in "Ollama is required; install it with 'sudo pacman -S --needed ollama-cuda'"
 ok
 cleanup_sandbox
 
