@@ -288,7 +288,7 @@ firefox_toast=$(grep -lx 'Process crashed: firefox' "$SANDBOX"/toast.*)
   || fail "the toast was sent with the wrong arguments: $(<"$firefox_toast")"
 [[ $(files_joined "$SANDBOX/diagnosis.*") == '1001|firefox|/usr/lib/firefox/firefox|SIGSEGV' ]] \
   || fail "the click did not become exactly one diagnosis: $(files_joined "$SANDBOX/diagnosis.*")"
-[[ $(calls_text systemd-run) == $'--user\n--scope\n--quiet\n--collect\n--description=Diagnose crash of firefox\n--\ncachyos-agent-crash\n1001\nfirefox\n/usr/lib/firefox/firefox\nSIGSEGV' ]] \
+[[ $(calls_text systemd-run) == $'--user\n--scope\n--quiet\n--description=Diagnose crash of firefox\n--\ncachyos-agent-crash\n1001\nfirefox\n/usr/lib/firefox/firefox\nSIGSEGV' ]] \
   || fail "the diagnosis does not run in a scope of its own: $(calls_text systemd-run)"
 ok
 cleanup_sandbox

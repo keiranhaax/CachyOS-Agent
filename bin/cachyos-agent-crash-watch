@@ -74,8 +74,11 @@ announce() {
   [[ $action == diagnose ]] || return 0
   # A scope of its own, because the agent's terminal must outlive this service:
   # stopping it (cachyos-agent crash capture off, which the diagnosis itself may
-  # suggest) would otherwise close the terminal it is running in.
-  systemd-run --user --scope --quiet --collect --description="Diagnose crash of $name" -- \
+  # suggest) would otherwise close the terminal it is running in. A scope, not a
+  # transient service: it runs the command as a child of this background job, in
+  # this environment, and ends when the last process in it does, so a terminal
+  # that forks and lets its first process exit is not cut down with it.
+  systemd-run --user --scope --quiet --description="Diagnose crash of $name" -- \
     cachyos-agent-crash "$pid" "$comm" "$exe" "$signal"
 }
 
