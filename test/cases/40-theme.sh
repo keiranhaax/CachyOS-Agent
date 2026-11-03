@@ -535,6 +535,29 @@ done
 ok
 cleanup_sandbox
 
+begin "sync --activate finds a Hermes that is in ~/.local/bin and not on PATH, and says so when there is none"
+sync_env
+mkdir -p "$HOME/.hermes" "$HOME/.local/bin"
+: >"$HOME/.hermes/config.yaml"
+rm -- "$SANDBOX/stubs/hermes"
+# The vendor install: not on PATH, as in a desktop session that does not read the shell's rc files.
+# The PATH is narrowed because this machine's own may reach a real Hermes.
+cat >"$HOME/.local/bin/hermes" <<EOF
+#!/bin/bash
+printf '%s\\n' "\$@" >"$SANDBOX/hermes-args"
+EOF
+chmod +x "$HOME/.local/bin/hermes"
+narrow=$SANDBOX/stubs:/usr/bin:/bin
+PATH=$narrow "$SYNC" --activate --only hermes >/dev/null || fail "a Hermes in ~/.local/bin was not used"
+[[ $(<"$SANDBOX/hermes-args") == $'skin\nuse\ncachyos' ]] || fail "hermes was not called with 'skin use cachyos': $(<"$SANDBOX/hermes-args")"
+rm -- "$HOME/.local/bin/hermes"
+status=0
+PATH=$narrow "$SYNC" --activate --only hermes >/dev/null 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "a missing hermes should fail the sync, got $status"
+grep -q "hermes is not on PATH or in ~/.local/bin" "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+ok
+cleanup_sandbox
+
 begin "sync --activate reports a Hermes that refuses the skin, after publishing to the others"
 sync_env
 make_agents

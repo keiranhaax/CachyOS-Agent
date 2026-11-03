@@ -177,7 +177,7 @@ present() {
 # was asked for a skin in use and cannot deliver it, which fails like a missing
 # hermes command does.
 sync_hermes() {
-  local home=${HERMES_HOME:-$HOME/.hermes} profile status=0
+  local home=${HERMES_HOME:-$HOME/.hermes} profile binary status=0
   if [[ ! -f $home/config.yaml ]]; then
     if ((ACTIVATE == 1)); then
       echo "hermes: cannot activate, $home/config.yaml not found; launch Hermes once first" >&2
@@ -194,11 +194,12 @@ sync_hermes() {
   ((ACTIVATE == 1)) || return "$status"
   # Hermes' own writer: it updates the active profile's config and touches the
   # skin so a running gateway repaints.
-  if ! ca_cmd_present hermes; then
-    echo "hermes: cannot activate, hermes is not on PATH" >&2
+  # Found as the launcher finds it: on PATH, or where Hermes' own installer puts it.
+  binary=$(ca_agent_binary hermes) || {
+    echo "hermes: cannot activate, hermes is not on PATH or in ~/.local/bin" >&2
     return 1
-  fi
-  timeout 30 hermes skin use "$THEME_NAME" || {
+  }
+  timeout 30 "$binary" skin use "$THEME_NAME" || {
     echo "hermes: 'hermes skin use $THEME_NAME' failed" >&2
     return 1
   }
