@@ -350,8 +350,17 @@ contains "$report" "Claude Code  Max 5x" "the report does not name the agent and
 [[ $report =~ Session\ \(5-hour\)\ +42%\ +resets\ in\ 3h ]] || fail "the report does not show the limit window: $report"
 jq -e 'type == "array" and length == 1 and .[0].id == "claude" and .[0].limits[0].percent == 0.42' <<<"$("$AGENT" usage --json)" >/dev/null \
   || fail "usage --json is not the array of records"
-jq -e 'type == "array" and length == 1' <<<"$("$AGENT" usage --json claude)" >/dev/null || fail "usage --json claude did not filter"
-expect "$("$AGENT" usage -- claude)" "$report" "usage -- claude differs from the report"
+
+# A filter has something to leave out only when a second agent has a record.
+jq -nc '{schemaVersion: 1, id: "codex", name: "Codex", ready: true, tierLabel: "plus", updatedAt: (now | floor | todate),
+         limits: [{label: "Weekly", percent: 0.5, resetsAt: (now + 86400 | floor | todate)}]}' >"$STATE/usage/codex.json"
+everything=$("$AGENT" usage)
+contains "$everything" "Claude Code" "the report with two records lacks Claude Code"
+contains "$everything" "Codex" "the report with two records lacks Codex"
+expect "$("$AGENT" usage -- claude)" "$report" "usage -- claude is not the report of Claude Code alone"
+jq -e 'map(.id) == ["claude", "codex"]' <<<"$("$AGENT" usage --json)" >/dev/null || fail "usage --json does not list both records"
+jq -e 'map(.id) == ["claude"]' <<<"$("$AGENT" usage --json claude)" >/dev/null || fail "usage --json claude did not filter"
+jq -e 'map(.id) == ["codex"]' <<<"$("$AGENT" usage --json codex)" >/dev/null || fail "usage --json codex did not filter"
 ok
 cleanup_sandbox
 
