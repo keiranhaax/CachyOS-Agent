@@ -1,0 +1,23 @@
+[Unit]
+Description=Announce process crashes and offer an AI diagnosis
+# Needs the session bus to notify and a display for the diagnosis terminal. Both
+# are up only after graphical-session.target.
+After=graphical-session.target
+PartOf=graphical-session.target
+# Plasma puts WAYLAND_DISPLAY (Wayland) or DISPLAY (X11) into the user manager's
+# environment. The leading | makes each a triggering condition, so either one
+# is enough to start the unit; plain conditions would both have to hold.
+ConditionEnvironment=|WAYLAND_DISPLAY
+ConditionEnvironment=|DISPLAY
+# Without libnotify the watcher exits at once, and Restart=always would then
+# retry every few seconds for as long as the session lasts.
+ConditionFileIsExecutable=/usr/bin/notify-send
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cachyos-agent-crash-watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
