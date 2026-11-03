@@ -430,10 +430,12 @@ cleanup_sandbox
 begin "sync --activate sets the theme in OpenCode 2's cli.json and keeps its mode and other settings"
 sync_env
 mkdir -p "$XDG_CONFIG_HOME/opencode"
+# shellcheck disable=SC2016 # "$schema" is the JSON key, not a variable
 printf '{"$schema":"https://opencode.ai/v2/cli.json","theme":{"name":"tokyonight","mode":"dark"},"animations":false}\n' >"$XDG_CONFIG_HOME/opencode/cli.json"
 # A tui.json OpenCode 2 has already migrated is no longer read, so it stays as it is.
 printf '{"theme":"nord"}\n' >"$XDG_CONFIG_HOME/opencode/tui.json"
 "$SYNC" --activate --only opencode >"$SANDBOX/out"
+# shellcheck disable=SC2016 # "$schema" is the JSON key, not a variable
 [[ $(jq -c . "$XDG_CONFIG_HOME/opencode/cli.json") == '{"$schema":"https://opencode.ai/v2/cli.json","theme":{"name":"cachyos","mode":"dark"},"animations":false}' ]] \
   || fail "cli.json changed more than the theme name: $(<"$XDG_CONFIG_HOME/opencode/cli.json")"
 [[ $(<"$XDG_CONFIG_HOME/opencode/tui.json") == '{"theme":"nord"}' ]] || fail "tui.json was edited although cli.json exists"

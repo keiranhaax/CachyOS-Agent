@@ -108,8 +108,11 @@ auth='{"google-antigravity": {"type": "oauth", "access": "tok", "expires": "2099
   "fireworks": {"type": "api_key", "key": "fw-FAKE"}, "synthetic": {"type": "api_key", "key": "syn-FAKE"}}'
 # The sign-in sits in only one of the two places: the dir PI_CODING_AGENT_DIR names, or the
 # default one a value of only blanks falls back to, as pi does.
+# The leading ~ stays in the value on purpose: expanding it is what the collectors are tested for.
+# shellcheck disable=SC2088
 for dir in '~/pi-home' '   '; do
   rm -f "$HOME/pi-home/auth.json" "$HOME/.pi/agent/auth.json"
+  # shellcheck disable=SC2088
   if [[ $dir == '~/pi-home' ]]; then printf '%s\n' "$auth" >"$HOME/pi-home/auth.json"; else printf '%s\n' "$auth" >"$HOME/.pi/agent/auth.json"; fi
   for agent in agy fireworks synthetic; do
     record=$(env -i PATH="$SANDBOX/empty" HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \

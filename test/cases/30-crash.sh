@@ -379,8 +379,8 @@ printf 'Process crashed' >"$SANDBOX/block-on"
 echo 5 >"$SANDBOX/server"
 run_watcher
 wait_for 1 "$SANDBOX/toast.*"
-toasts=("$SANDBOX"/toast.*)
-waiter=${toasts[0]##*.}
+toast_files=("$SANDBOX"/toast.*)
+waiter=${toast_files[0]##*.}
 # It checks on the server every few seconds: while the same one runs, the toast stays.
 "$REAL_SLEEP" 6
 kill -0 "$waiter" 2>/dev/null || fail "a toast was closed although its notification server never changed"
