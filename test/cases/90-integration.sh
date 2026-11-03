@@ -21,12 +21,12 @@ AGENT=$REPO_ROOT/bin/cachyos-agent
 
 # setup: a sandbox whose PATH is its stubs, then this checkout's bin (so the
 # siblings that run are these, never an installed package's), then the system.
-# Everything that could carry the real user's accounts, agents or settings into
-# a chain is cleared first.
+# make_sandbox clears what could carry the real user's accounts, agents or
+# settings into a chain, bar the one name below.
 setup() {
   make_sandbox
   PATH=$SANDBOX/stubs:$REPO_ROOT/bin:$BASE_PATH
-  unset "${!CACHYOS_AGENT_@}" INVOCATION_ID BROWSER PI_CODING_AGENT_DIR OPENCODE_CONFIG_CONTENT HERMES_SESSION_SOURCE
+  unset HERMES_SESSION_SOURCE # the launcher clears it for hermes, and make_sandbox leaves it
   STATE=$XDG_STATE_HOME/cachyos-agent
   CONFIG=$XDG_CONFIG_HOME/cachyos-agent
   # A terminal window: it runs the command it is given after -e, as the real one

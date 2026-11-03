@@ -61,9 +61,6 @@ fi'
 setup() {
   make_sandbox
   export SANDBOX
-  # A case run from a terminal that systemd started would otherwise look like
-  # it runs inside a unit, which changes how an offer is detached.
-  unset BROWSER INVOCATION_ID
   STATE=$XDG_STATE_HOME/cachyos-agent
   : >"$SANDBOX/logins"
   stub cachyos-agent-usage-update
