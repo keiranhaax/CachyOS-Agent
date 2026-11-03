@@ -1,15 +1,19 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
-# records.js, the JavaScript that shapes `cachyos-agent usage --json` for the
-# Plasma widget in plasmoid/org.cachyos.agent. There is no desktop here, so it
-# runs under qml6 with the offscreen platform, through test/plasmoid/records.qml.
-# A check whose tool is missing is reported UNVERIFIED and does not fail the case.
+# The Plasma widget in plasmoid/org.cachyos.agent: its package files, the QML
+# it is written in, and the JavaScript that shapes usage records for it. There is
+# no desktop here, so the JavaScript runs under qml6 with the offscreen platform,
+# through test/plasmoid/records.qml. A check whose tool or Qt module is missing is
+# reported UNVERIFIED and does not fail the case.
 # The jq programs are single-quoted so that their $ reaches jq as written.
 # shellcheck disable=SC2016
 # shellcheck source=../lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 
+PKG=$REPO_ROOT/plasmoid/org.cachyos.agent
 HARNESS=$REPO_ROOT/test/plasmoid
+QML_DIR=/usr/lib/qt6/qml
+QML_FILES=("$PKG"/contents/ui/*.qml "$PKG"/contents/config/config.qml)
 
 unverified() {
   printf 'UNVERIFIED %s: %s\n' "$1" "$2"
@@ -112,6 +116,103 @@ records_json() {
 ]
 EOF
 }
+
+# ---- package files -------------------------------------------------------------
+
+begin "metadata.json is a Plasma 6 applet package for org.cachyos.agent"
+make_sandbox
+meta=$(<"$PKG/metadata.json")
+check "$meta" '.KPackageStructure == "Plasma/Applet" and .["X-Plasma-API-Minimum-Version"] == "6.0"' "wrong package structure or API version"
+check "$meta" '.KPlugin | .Id == "org.cachyos.agent" and .Name == "CachyOS Agents" and .Category == "System Information"
+               and .License == "GPL-3.0-only" and (.Description | length > 0) and (.Icon | length > 0)
+               and (.Authors | length > 0) and all(.Authors[]; (.Name | length > 0) and (.Email | length > 0))' "missing or wrong KPlugin keys"
+[[ $(ls "$REPO_ROOT/plasmoid") == org.cachyos.agent ]] || fail "plasmoid/ must hold only the package, named by its Id, or the PKGBUILD installs strays"
+[[ -f $PKG/contents/ui/main.qml ]] || fail "Plasma starts contents/ui/main.qml and it is missing"
+ok
+cleanup_sandbox
+
+begin "every icon the widget names is in the Breeze theme"
+make_sandbox
+if [[ -d /usr/share/icons/breeze ]]; then
+  icons=$(
+    jq -r '.KPlugin.Icon' "$PKG/metadata.json"
+    grep -hoE '(icon\.name|icon|source): "[a-z][a-z0-9-]*"' "${QML_FILES[@]}" | sed -E 's/.*"(.*)"/\1/'
+  )
+  [[ -n $icons ]] || fail "found no icon names to check"
+  while IFS= read -r icon; do
+    [[ -n $(find /usr/share/icons/breeze -name "$icon.svg" -print -quit) ]] || fail "icon $icon is not in the Breeze theme"
+  done <<<"$icons"
+else
+  unverified "icons" "/usr/share/icons/breeze is not installed"
+fi
+ok
+cleanup_sandbox
+
+begin "the refresh interval has a default and a settings page that edits it"
+make_sandbox
+python3 -I - "$PKG/contents/config/main.xml" <<'PY' || fail "main.xml does not define refreshIntervalSec as an Int defaulting to 900"
+import sys
+import xml.etree.ElementTree as ET
+
+ns = {"k": "http://www.kde.org/standards/kcfg/1.0"}
+entry = ET.parse(sys.argv[1]).getroot().find(".//k:entry[@name='refreshIntervalSec']", ns)
+assert entry is not None and entry.get("type") == "Int"
+assert entry.findtext("k:default", namespaces=ns) == "900"
+PY
+grep -q 'cfg_refreshIntervalSec' "$PKG/contents/ui/configGeneral.qml" || fail "the settings page does not bind cfg_refreshIntervalSec"
+grep -q 'source: "configGeneral.qml"' "$PKG/contents/config/config.qml" || fail "config.qml does not offer the settings page"
+grep -q 'Plasmoid.configuration.refreshIntervalSec' "$PKG/contents/ui/main.qml" || fail "main.qml does not read the setting"
+ok
+cleanup_sandbox
+
+# ---- QML sources ---------------------------------------------------------------
+
+begin "every QML import names an installed module or an existing file"
+make_sandbox
+for file in "${QML_FILES[@]}"; do
+  while IFS= read -r line; do
+    if [[ $line =~ ^import[[:space:]]+\"([^\"]+)\" ]]; then
+      [[ -f $(dirname "$file")/${BASH_REMATCH[1]} ]] || fail "${file##*/} imports ${BASH_REMATCH[1]}, which does not exist"
+    elif [[ $line =~ ^import[[:space:]]+([A-Za-z0-9_.]+) ]]; then
+      module=${BASH_REMATCH[1]}
+      if [[ -d $QML_DIR ]]; then
+        [[ -f $QML_DIR/${module//.//}/qmldir ]] || fail "${file##*/} imports $module, which is not under $QML_DIR"
+      fi
+    fi
+  done < <(grep -E '^import ' "$file")
+done
+[[ -d $QML_DIR ]] || unverified "QML module imports" "$QML_DIR is not installed"
+ok
+cleanup_sandbox
+
+begin "every label, heading and text item shows plain text"
+make_sandbox
+# Agent names and help texts come from files on disk, so none may be read as markup.
+for file in "${QML_FILES[@]}"; do
+  missing=$(awk '
+    function braces(s,   opened, closed) { opened = gsub(/[{]/, "&", s); closed = gsub(/[}]/, "&", s); return opened - closed }
+    inside == 0 && /(Label|Heading|Text)[[:space:]]*\{[[:space:]]*$/ { inside = 1; depth = 0; plain = 0; start = FNR }
+    inside == 1 {
+      if ($0 ~ /textFormat: Text\.PlainText/) plain = 1
+      depth += braces($0)
+      if (depth <= 0) { if (!plain) print "line " start; inside = 0 }
+    }' "$file")
+  [[ -z $missing ]] || fail "${file##*/}: text without textFormat: Text.PlainText at $missing"
+done
+grep -q 'toolTipTextFormat: Text.PlainText' "$PKG/contents/ui/main.qml" || fail "the tooltip is not plain text"
+ok
+cleanup_sandbox
+
+begin "qmllint accepts the QML"
+make_sandbox
+qmllint=$(command -v qmllint || ls /usr/lib/qt6/bin/qmllint 2>/dev/null || true)
+if [[ -n $qmllint && -d $QML_DIR/org/kde/plasma/plasmoid ]]; then
+  "$qmllint" --max-warnings 0 "${QML_FILES[@]}" >"$SANDBOX/lint.log" 2>&1 || fail "qmllint: $(head -c 800 "$SANDBOX/lint.log")"
+else
+  unverified "QML lint" "qmllint or the Plasma QML modules are not installed"
+fi
+ok
+cleanup_sandbox
 
 # ---- records.js ----------------------------------------------------------------
 
