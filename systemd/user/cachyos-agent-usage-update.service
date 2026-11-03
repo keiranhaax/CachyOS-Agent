@@ -3,6 +3,11 @@ Description=Refresh the AI agent usage records
 
 [Service]
 Type=oneshot
+# This runs in the systemd user manager's environment, not your shell's: a key
+# exported only in config.fish or .bashrc is missing here, and the record it
+# would have produced is replaced by one that says the agent is not in use. Put
+# keys in ~/.config/environment.d/*.conf, or in ~/.config/cachyos-agent/<agent>.json
+# for the collectors that read it.
 ExecStart=/usr/bin/cachyos-agent-usage-update
 # The collectors probe several services; none of that should compete with the desktop.
 Nice=10

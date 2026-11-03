@@ -27,6 +27,13 @@ status  print whether it is enabled and active (the default)
 
 Run from a Git checkout, `on` writes the units into ~/.config/systemd/user
 with ExecStart pointing at the checkout; `off` removes them again.
+
+The timer runs under the systemd user manager, which does not see what your
+shell exports: a key set only in config.fish or .bashrc is missing there, and
+the timer would replace the record `usage update` wrote from your shell with
+one that says the agent is not in use. Keep the keys where both can read them:
+~/.config/environment.d/*.conf (NAME=value lines, read at login), or, for the
+collectors that support it, ~/.config/cachyos-agent/<agent>.json.
 EOF
 }
 
@@ -116,6 +123,7 @@ schedule_on() {
     retire_checkout_units
   fi
   systemctl --user enable --now "$TIMER"
+  echo "Note: the timer does not see what your shell exports (config.fish, .bashrc). Put API keys in ~/.config/environment.d/*.conf; see: cachyos-agent usage schedule --help"
 }
 
 schedule_off() {

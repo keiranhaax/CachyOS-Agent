@@ -33,6 +33,13 @@ Run the collectors and write one record per agent to
 $XDG_STATE_HOME/cachyos-agent/usage/. With agent names, run only those;
 --except leaves one out and can be repeated. --force reuses nothing from earlier
 runs, --limits-only asks only for fresh limits and reuses recent local scans.
+
+The collectors read API keys from the environment first. Run from your shell
+this sees what the shell exports; run by the timer (`cachyos-agent usage
+schedule`) it sees only the systemd user manager's environment, so a key set
+only in config.fish or .bashrc is missing there. Keep keys in
+~/.config/environment.d/*.conf, or in ~/.config/cachyos-agent/<agent>.json for
+the collectors that read it.
 EOF
 }
 
