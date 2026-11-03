@@ -38,7 +38,8 @@ printed as it starts, in the new window (to stderr with --inline).
   --inline              run in this terminal instead of opening a window
   --pick                with no default agent, list the choices
   --local               run a local Ollama model: the one chosen with
-                        cachyos-agent local use (pi, or OpenCode without pi)
+                        cachyos-agent local use, in the default agent when that
+                        is pi or OpenCode, else in pi, else in OpenCode
   --local-model <name>  use this Ollama model instead of the chosen one
   --agent <id>          start this agent instead of the default
   --prompt <text>       give the agent a first message
@@ -149,8 +150,9 @@ with_prompt() {
 }
 
 # Agents launched from the shortcut or menu run unattended, so each one starts
-# with its own spelling of "don't stop to ask". Pi and Ori have none to skip.
-# auto holds those flags, and is what the launcher announces.
+# with its own spelling of "don't stop to ask". Pi, Ori, MiniMax Code and
+# Freebuff have none to skip. auto holds those flags, and is what the
+# launcher announces.
 build_command() {
   case $agent in
     opencode)
