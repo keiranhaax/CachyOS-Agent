@@ -417,6 +417,50 @@ update "$CK"
 ok
 cleanup_sandbox
 
+# package_fixture: $PK, the smallest tree `skills update` accepts that is not a Git checkout,
+# as a pacman install of the package is (the scripts only record that they ran).
+package_fixture() {
+  PK=$SANDBOX/usr-share
+  mkdir -p "$PK/agents/skills/cachyos" "$PK/bin"
+  printf -- '---\nname: cachyos\ndescription: t\n---\n# body\n' >"$PK/agents/skills/cachyos/SKILL.md"
+  for tool in provision check-upstreams; do
+    printf '#!/bin/bash\necho "%s $*" >>"%s/ran"\n' "$tool" "$SANDBOX" >"$PK/bin/cachyos-agent-skills-$tool"
+    chmod +x "$PK/bin/cachyos-agent-skills-$tool"
+  done
+}
+
+begin "update on a package-owned tree leaves the update to pacman and refreshes the links"
+make_sandbox
+package_fixture
+stub pacman # `pacman -Qo` succeeds: a package owns the skill file
+update "$PK"
+[[ $status -eq 0 && $out == *"source is package-owned; use pacman -Syu to obtain package updates"* ]] || fail "a package-owned tree ($status): $out"
+[[ $(<"$SANDBOX/calls/pacman") == $'-Qo\n'"$PK/agents/skills/cachyos/SKILL.md" ]] || fail "pacman was asked about something else: $(<"$SANDBOX/calls/pacman")"
+[[ $(<"$SANDBOX/ran") == "provision $PK/agents/skills"$'\n'"check-upstreams $PK" ]] || fail "the links were not refreshed and the upstreams checked: $(<"$SANDBOX/ran")"
+ok
+cleanup_sandbox
+
+begin "update refuses a tree that is neither a Git checkout nor owned by a package, and runs nothing"
+make_sandbox
+package_fixture
+stub pacman 'exit 1' # `pacman -Qo` finds no owner
+update "$PK"
+[[ $status -eq 1 && $out == *"refuse: source is neither a Git checkout nor a pacman-owned installation"* ]] || fail "a stray copy ($status): $out"
+[[ ! -e $SANDBOX/ran ]] || fail "the provisioner or the checker ran for a refused update: $(<"$SANDBOX/ran")"
+ok
+cleanup_sandbox
+
+begin "update stops when the updated source has no cachyos skill"
+make_sandbox
+package_fixture
+rm "$PK/agents/skills/cachyos/SKILL.md"
+stub pacman
+update "$PK"
+[[ $status -eq 1 && $out == *"updated source is missing agents/skills/cachyos/SKILL.md"* ]] || fail "a tree without the skill ($status): $out"
+[[ ! -e $SANDBOX/ran ]] || fail "links were refreshed from a tree without the skill: $(<"$SANDBOX/ran")"
+ok
+cleanup_sandbox
+
 begin "update refuses a branch with no upstream"
 make_sandbox
 update_fixture
