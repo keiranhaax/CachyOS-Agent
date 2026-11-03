@@ -723,7 +723,7 @@ def run_local_scans():
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("--force", action="store_true", help="rescan sessions, ignoring caches")
-  parser.add_argument("--limits-only", action="store_true", help="reuse any recent scan; kept for CLI compatibility with the panel refresh")
+  parser.add_argument("--limits-only", action="store_true", help="reuse any recent scan (the near-limit refresh)")
   args = parser.parse_args()
 
   max_age = scan_max_age(args.force, args.limits_only)

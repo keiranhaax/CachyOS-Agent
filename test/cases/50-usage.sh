@@ -57,6 +57,30 @@ done
 ok
 cleanup_sandbox
 
+begin "no collector imports a name it never uses or cites the panel's refreshLimits() call"
+make_sandbox
+unused=$(python3 -I - "$REPO_ROOT"/bin/cachyos-agent-usage-* <<'PY'
+import ast, sys
+for path in sys.argv[1:]:
+  source = open(path).read()
+  if not source.startswith("#!/usr/bin/python"):
+    continue
+  tree = ast.parse(source)
+  used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+  for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom) and node.module != "__future__":
+      for alias in node.names:
+        if (alias.asname or alias.name) not in used:
+          print(f"{path.rsplit('/', 1)[-1]}: {alias.name}")
+PY
+)
+[[ -z $unused ]] || fail "imported and never used: $unused"
+if grep -n 'refreshLimits' "$REPO_ROOT"/lib/collectors.py "$REPO_ROOT"/bin/cachyos-agent-usage-*; then
+  fail "a comment still cites the removed panel's refreshLimits() call"
+fi
+ok
+cleanup_sandbox
+
 # ---- collectors on a machine that does not use the agents -------------------------
 
 begin "every collector prints the unused record on an empty machine"

@@ -13,10 +13,10 @@ generic pay-as-you-go key gets "no coding plan" and the record shows local
 stats alone, which is no trouble.
 
 Local stats come from pi/omp sessions and from opencode's message database
-(both of its stores) that ran through a Z.ai or Zhipu provider (the `glm-*` models). Both the local scan and the network probe are cached: the
-panel fires `--limits-only` on every open, so a repeated open must reuse a
-recent scan and must not re-probe Z.ai more than once every few seconds. The
-agents panel only ever reads the JSON this prints.
+(both of its stores) that ran through a Z.ai or Zhipu provider (the `glm-*` models). Both the local scan and the network probe are cached: runs overlap
+(the timer and a manual `usage update`), so a repeated run must reuse a recent
+scan and must not re-probe Z.ai more than once every few seconds. The Plasma
+widget and `cachyos-agent usage` only ever read the JSON this prints.
 """
 
 from __future__ import annotations
@@ -289,11 +289,11 @@ def limits_cache_paths(api_key: str, platform: str) -> tuple[Path, Path]:
 def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
   """Fresh limits when a probe is due, else the last known ones.
 
-  Reuses a recent probe so repeated panel opens do not spam the endpoint,
+  Reuses a recent probe so repeated runs do not spam the endpoint,
   and keeps the last known limits as the answer of record when a later probe
   fails. `live` says whether the limits are this check's (or a probe recent
   enough to stand in for one), and `fetchedAtMs` when they were measured, so
-  the panel can tell kept limits from fresh ones.
+  the report can tell kept limits from fresh ones.
   """
   result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "retryAdvised": False, "live": False, "fetchedAtMs": 0}
   # Keyed by who the numbers belong to: another key, or the same key on the

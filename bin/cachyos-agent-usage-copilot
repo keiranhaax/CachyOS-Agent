@@ -881,10 +881,10 @@ def allowance_limits(
 
 def main() -> int:
   parser = argparse.ArgumentParser()
-  # --force rescans everything and rewrites the cache. --limits-only is kept
-  # for CLI compatibility with the panel's refreshLimits() call: only the
-  # limits probe must be fresh, so it may reuse a scan for far longer than a
-  # normal run, whose short window exists purely to dedup concurrent
+  # --force rescans everything and rewrites the cache. --limits-only is the
+  # near-limit refresh (`usage update` passes it after an account switch):
+  # only the limits probe must be fresh, so it may reuse a scan for far longer
+  # than a normal run, whose short window exists purely to dedup concurrent
   # collector runs.
   parser.add_argument("--force", action="store_true")
   parser.add_argument("--limits-only", action="store_true")

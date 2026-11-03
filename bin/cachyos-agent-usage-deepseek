@@ -430,7 +430,7 @@ def collect(api_base_url: str, max_age: float, force: bool) -> dict[str, Any]:
 def main() -> int:
   parser = argparse.ArgumentParser(description="Print the DeepSeek usage record as JSON")
   # --force rescans everything and asks DeepSeek past the reuse window.
-  # --limits-only (the panel's quick refresh) may reuse a scan for 15
+  # --limits-only (the near-limit refresh) may reuse a scan for 15
   # minutes, but asks for the balance like a normal run.
   parser.add_argument("--force", action="store_true")
   parser.add_argument("--limits-only", action="store_true")

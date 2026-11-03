@@ -40,7 +40,6 @@ from collectors import (  # noqa: E402
   LimitsCache,
   Stats,
   base_record as shared_base_record,
-  cache_root,  # noqa: F401 - the tests find the cached answers through it
   config_home,
   data_home,
   emit,
@@ -555,7 +554,7 @@ def scan(api_base_url: str, auth_path: Path, force: bool = False, limits_only: b
   balance_part = cached_part(balance_cache, account_id)
 
   # The usage rows are this record's stats, so they are reused like a local
-  # scan: briefly on a normal run, for 15 minutes on the panel's near-limit
+  # scan: briefly on a normal run, for 15 minutes on the near-limit
   # refresh. That refresh is about the balance, which comes from separate
   # calls, so it is probed like a normal run. --force reuses nothing.
   usage_fresh = usage_part is not None and usage_cache.fresh(force, scan_max_age(force, limits_only), allow_empty=True)

@@ -46,7 +46,6 @@ from collectors import (  # noqa: E402
   Stats,
   age_below,
   base_record as shared_base_record,
-  cache_root,  # noqa: F401 - the tests find the cached answers through it
   cached_scan,
   config_home,
   data_home,
