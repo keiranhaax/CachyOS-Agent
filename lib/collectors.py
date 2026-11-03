@@ -1553,6 +1553,14 @@ def url_host(url: Any) -> str:
     return ""
 
 
+def url_origin(url: Any) -> str:
+  """`//host` for a URL, or "" when it names none: the part of a base URL that
+  endpoint_owner() and self_hosted() read, without the userinfo, path and
+  query a gateway URL can carry a key in."""
+  host = url_host(url)
+  return f"//[{host}]" if ":" in host else f"//{host}" if host else ""
+
+
 def self_hosted(url: Any) -> bool:
   """Whether a base URL points at hardware the user controls: this machine,
   a private or link-local address, or a LAN name."""
@@ -2912,12 +2920,14 @@ def codex_provider_urls() -> dict[str, str]:
   custom provider that leaves config.toml would take its history with it.
   Each run remembers the endpoints the config names, per Codex home, and a
   provider the config no longer has keeps the last one it had. The current
-  config always wins. A provider only ever given on the command line (`-c
-  model_providers...`) or in a project's .codex/config.toml is never seen
-  here: local.json names those for the local collector. The built-in
-  provider's openai_base_url is never remembered: once the config drops it,
-  Codex is back on OpenAI's API, as Claude Code is once ANTHROPIC_BASE_URL
-  goes.
+  config always wins. Only the host is remembered (url_origin()): it is all
+  the routing reads, and a base_url can carry a key in its userinfo or query,
+  which this world-readable file must not hold. A provider only ever given
+  on the command line (`-c model_providers...`) or in a project's
+  .codex/config.toml is never seen here: local.json names those for the
+  local collector. The built-in provider's openai_base_url is never
+  remembered: once the config drops it, Codex is back on OpenAI's API, as
+  Claude Code is once ANTHROPIC_BASE_URL goes.
   """
   path = codex_providers_path()
   homes = read_json(path).get("homes")
@@ -2926,7 +2936,7 @@ def codex_provider_urls() -> dict[str, str]:
   known = homes.get(key)
   known = {str(pid): url for pid, url in known.items() if isinstance(url, str) and url and not codex_native_key(pid)} if isinstance(known, dict) else {}
   urls = {**known, **codex_config_urls()}
-  remembered = {pid: url for pid, url in urls.items() if url and not codex_native_key(pid)}
+  remembered = {pid: origin for pid, url in urls.items() if (origin := url_origin(url)) and not codex_native_key(pid)}
   if remembered != known:
     try:
       path.parent.mkdir(parents=True, exist_ok=True)

@@ -129,6 +129,29 @@ done
 ok
 cleanup_sandbox
 
+begin "the Codex provider memory keeps a host to classify by and never a credential"
+make_sandbox
+mkdir -p "$SANDBOX/empty" "$HOME/.codex"
+remembered=$XDG_STATE_HOME/cachyos-agent/local-codex-providers.json
+printf '%s\n' '[model_providers.gw]' \
+  'base_url = "https://alice:s3cr3tpass@gateway.example.com/v1?key=sk-LIVE-ABC123"' \
+  '[model_providers.lan]' 'base_url = "http://[fd00::5]:8080/v1"' >"$HOME/.codex/config.toml"
+collect codex --force >/dev/null 2>"$SANDBOX/err" || fail "codex exited nonzero: $(head -c 300 "$SANDBOX/err")"
+[[ -f $remembered ]] || fail "no provider memory was written"
+if grep -qE 's3cr3tpass|alice|sk-LIVE|/v1' "$remembered"; then fail "the memory holds URL parts that can be a credential: $(<"$remembered")"; fi
+# The host is what routing reads, so it must survive, for a name and for an IPv6 address.
+grep -q 'gateway.example.com' "$remembered" || fail "the provider's host was not remembered: $(<"$remembered")"
+grep -q 'fd00::5' "$remembered" || fail "an IPv6 host was not remembered: $(<"$remembered")"
+# A provider the config drops keeps its host, and a memory written with the whole URL by an
+# earlier version is rewritten without it.
+printf '%s\n' '{"homes":{"'"$HOME/.codex"'":{"old":"https://bob:hunter2@old.example.com/v1?token=abc"}}}' >"$remembered"
+: >"$HOME/.codex/config.toml"
+collect codex --force >/dev/null 2>"$SANDBOX/err" || fail "codex exited nonzero: $(head -c 300 "$SANDBOX/err")"
+if grep -qE 'hunter2|bob|token=' "$remembered"; then fail "an old memory kept its credential: $(<"$remembered")"; fi
+grep -q 'old.example.com' "$remembered" || fail "a provider the config dropped lost its host: $(<"$remembered")"
+ok
+cleanup_sandbox
+
 begin "a collector run through a symlink finds the shared module and its sibling collectors"
 make_sandbox
 mkdir "$SANDBOX/empty" "$SANDBOX/link"
