@@ -43,6 +43,7 @@ from collectors import (  # noqa: E402
   emit,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   routed_match,
@@ -120,11 +121,6 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 def read_config() -> dict[str, Any]:
   return read_json(config_home() / "cachyos-agent" / "zai.json")
-
-
-def pi_agent_dir() -> Path:
-  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
-  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def auth_json_key(path: Path, provider: str) -> str:

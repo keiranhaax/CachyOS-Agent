@@ -41,6 +41,7 @@ from collectors import (  # noqa: E402
   number,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   scan_max_age,
   scan_opencode,
@@ -151,11 +152,6 @@ def read_auth_key(path):
     if isinstance(entry, str) and entry.strip() and not entry.strip().startswith(("!", "$")):
       return entry.strip()
   return ""
-
-
-def pi_agent_dir():
-  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
-  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def read_store_credentials(db):

@@ -87,6 +87,18 @@ fi
 ok
 cleanup_sandbox
 
+begin "the collectors read pi's agent dir the way pi does, with a leading ~ expanded"
+make_sandbox
+mkdir -p "$SANDBOX/empty" "$HOME/pi-home"
+printf '%s\n' '{"google-antigravity": {"type": "oauth", "access": "tok", "expires": "2099-01-01T00:00:00Z", "email": "a@example.test"}}' \
+  >"$HOME/pi-home/auth.json"
+record=$(env -i PATH="$SANDBOX/empty" HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+  XDG_CACHE_HOME="$XDG_CACHE_HOME" HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+  PI_CODING_AGENT_DIR='~/pi-home' "$REPO_ROOT/bin/cachyos-agent-usage-agy" --force)
+is_json "$record" '.ready == true' || fail "agy did not find pi's sign-in under ~/pi-home: $record"
+ok
+cleanup_sandbox
+
 # ---- collectors on a machine that does not use the agents -------------------------
 
 begin "every collector prints the unused record on an empty machine"

@@ -60,6 +60,7 @@ from collectors import (  # noqa: E402
   open_json,
   open_limits,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   routed_match,
@@ -103,12 +104,6 @@ def read_opencode_key(path: Path) -> str:
   if not isinstance(entry, dict):
     return ""
   return str(entry.get("key") or "").strip()
-
-
-def pi_agent_dir() -> Path:
-  # PI_CODING_AGENT_DIR moves pi's agent dir, as pi itself reads it.
-  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
-  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def read_pi_key(path: Path) -> str:

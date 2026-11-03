@@ -40,6 +40,7 @@ from collectors import (  # noqa: E402
   emit,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   routed_match,
@@ -134,11 +135,6 @@ def config_base_url(config: dict[str, Any]) -> str:
     if region in ("cn", "global"):
       return CN_BASE_URL if region == "cn" else DEFAULT_BASE_URL
   return DEFAULT_BASE_URL
-
-
-def pi_agent_dir() -> Path:
-  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
-  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def saved_key(path: Path, providers: tuple[str, ...]) -> tuple[str, str]:

@@ -46,6 +46,7 @@ from collectors import (  # noqa: E402
   obj,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   routed_match,
@@ -151,11 +152,6 @@ def read_key_from_dict(parsed: Any, provider: str) -> str:
   # Only a literal key is taken: a pi `$VAR` or `!command` entry is resolved
   # by pi alone, and sent as it stands it would read as a refused key.
   return "" if key.startswith(("!", "$")) else key
-
-
-def pi_agent_dir() -> Path:
-  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
-  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def read_json_key(path: Path, provider: str) -> str:

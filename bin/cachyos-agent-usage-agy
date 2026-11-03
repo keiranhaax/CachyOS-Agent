@@ -51,6 +51,7 @@ from collectors import (  # noqa: E402
   number,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   scan_max_age,
@@ -177,10 +178,6 @@ def omp_logins():
     if entry:
       logins.append(entry)
   return logins
-
-
-def pi_agent_dir():
-  return Path(os.environ.get("PI_CODING_AGENT_DIR") or (Path.home() / ".pi" / "agent"))
 
 
 def pi_logins():

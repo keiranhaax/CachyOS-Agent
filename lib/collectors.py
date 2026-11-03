@@ -697,6 +697,13 @@ class UsageRow(NamedTuple):
 Accept = Callable[[str, str, dict], bool]
 
 
+def pi_agent_dir() -> Path:
+  """pi's agent tree: PI_CODING_AGENT_DIR as pi itself reads it (a leading ~
+  expands), else ~/.pi/agent. The one place that decides it."""
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
+
+
 def pi_session_roots() -> list[Path]:
   """pi's and omp's session trees, each profile's too.
 

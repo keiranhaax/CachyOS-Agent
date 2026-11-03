@@ -42,6 +42,7 @@ from collectors import (  # noqa: E402
   limits_cache_path as shared_limits_cache_path,
   open_json,
   opencode_db,
+  pi_agent_dir,
   pi_session_roots,
   read_json,
   routed_match,
@@ -75,11 +76,6 @@ def config_dir() -> Path:
 
 def read_config() -> dict[str, Any]:
   return read_json(config_dir() / "ollama.json")
-
-
-def pi_agent_dir() -> Path:
-  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
-  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def api_key() -> str:
