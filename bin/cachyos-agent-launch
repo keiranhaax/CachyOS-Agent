@@ -45,13 +45,14 @@ printed to stderr as it starts.
 EOF2
 }
 
-# A shortcut or panel button has no terminal to print to, so a refusal there
-# has to be a notification. At a terminal, stderr is enough.
+# The reason is always printed in full, for the person at a terminal and for a
+# script or agent shell reading stderr. A shortcut or panel button has no one
+# reading stderr, so without a terminal the same words are also a notification.
+# ca_notify's own stderr fallback is silenced: the line is already printed.
 refuse() {
-  if [[ -t 2 ]]; then
-    printf '%s\n' "$2" >&2
-  else
-    ca_notify -u critical -- "$1" "$2"
+  printf '%s: %s\n' "$1" "$2" >&2
+  if [[ ! -t 2 ]]; then
+    ca_notify -u critical -- "$1" "$2" 2>/dev/null
   fi
   exit 1
 }

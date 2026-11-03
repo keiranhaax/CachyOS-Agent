@@ -39,6 +39,21 @@ run() {
   ERR=$(<"$errfile")
 }
 
+# tty_run <command...>: like run, but stdout and stderr are a terminal, as they
+# are for a person typing the command. Sets OUT (stderr included, carriage
+# returns removed) and RC. PTY_OK is false where script cannot provide a
+# terminal, and a test that needs one skips.
+PTY_OK=true
+if ! SHELL=/bin/bash script -qec 'test -t 1 -a -t 2' /dev/null </dev/null >/dev/null 2>&1; then
+  PTY_OK=false
+fi
+tty_run() {
+  local cmd
+  cmd=$(printf '%q ' "$@")
+  OUT=$(SHELL=/bin/bash script -qec "$cmd" /dev/null </dev/null) && RC=0 || RC=$?
+  OUT=${OUT//$'\r'/}
+}
+
 # last_call <stub>: the arguments of the stub's last call joined by '|', or
 # <never called>.
 last_call() {
@@ -138,8 +153,13 @@ cleanup_sandbox
 
 begin "default: openclaw is not an agent here"
 setup
+stub_agents cachyos-agent-launch
 run "$CA" default openclaw
 expect "$RC" 1 "exit status"
+contains "$ERR" "Usage: cachyos-agent default" "usage on stderr"
+lacks "$ERR" "openclaw" "not listed as a choice"
+[[ ! -e $XDG_CONFIG_HOME/cachyos-agent/default-agent ]] || fail "wrote a default for openclaw"
+expect "$(call_count cachyos-agent-launch)" 0 "launch must not run"
 ok
 cleanup_sandbox
 
@@ -323,13 +343,46 @@ begin "launch refuses an unknown default and stray arguments"
 setup
 CACHYOS_AGENT_DEFAULT=bogus run "$CA" launch --inline
 expect "$RC" 1 "unknown default"
+contains "$ERR" "Unsupported agent: bogus" "names the bad default"
+mkdir -p "$XDG_CONFIG_HOME/cachyos-agent"
+echo bogus-saved >"$XDG_CONFIG_HOME/cachyos-agent/default-agent"
+run "$CA" launch --inline
+expect "$RC" 1 "unknown saved default"
+contains "$ERR" "Unsupported agent: bogus-saved" "names the bad saved default"
 run "$CA" launch --inline "do things"
 expect "$RC" 1 "stray argument"
 contains "$ERR" 'cachyos-agent prompt "do things"' "points to prompt"
 ok
 cleanup_sandbox
 
-begin "launch notifies instead of printing when it has no terminal and a bus"
+# run swaps stderr for a file, so the tests above never reach the branch of a
+# refusal that a person at a terminal gets. These run on a terminal.
+begin "at a terminal a refusal says what is wrong and what to do"
+setup
+if ! $PTY_OK; then
+  skip "script cannot give this process a terminal"
+else
+  stub claude
+  CACHYOS_AGENT_DEFAULT=claude tty_run "$CA" launch --inline --agent nonsense
+  expect "$RC" 1 "unknown agent"
+  contains "$OUT" "Unsupported agent: nonsense" "unknown agent: the problem"
+  contains "$OUT" "Agents: pi omp opencode" "unknown agent: the choices"
+  CACHYOS_AGENT_DEFAULT=claude tty_run "$CA" launch --inline --agent codex
+  expect "$RC" 1 "missing agent"
+  contains "$OUT" "Codex is not installed" "missing agent: the problem"
+  contains "$OUT" "cachyos-agent install codex" "missing agent: the way out"
+  CACHYOS_AGENT_DEFAULT=bogus tty_run "$CA" launch --inline
+  contains "$OUT" "Unsupported agent: bogus" "bad default"
+  tty_run "$CA" launch --pick
+  expect "$RC" 1 "no default"
+  contains "$OUT" "No default agent" "no default: the problem"
+  contains "$OUT" "cachyos-agent default <name>" "no default: the way out"
+  contains "$OUT" "Agents: pi omp opencode" "--pick lists the agents"
+  ok
+fi
+cleanup_sandbox
+
+begin "launch prints the refusal and also notifies when it has no terminal and a bus"
 setup
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
 stub notify-send
@@ -337,6 +390,17 @@ run "$CA" launch --pick
 expect "$RC" 1 "exit status"
 contains "$(last_call notify-send)" "No default agent" "notification summary"
 contains "$(last_call notify-send)" "cachyos-agent default <name>" "notification body"
+contains "$ERR" "No default agent" "stderr summary, for a script or an agent shell"
+contains "$ERR" "cachyos-agent default <name>" "stderr hint"
+contains "$ERR" "Agents: pi omp opencode" "--pick lists the agents on stderr"
+ok
+cleanup_sandbox
+
+begin "launch prints a refusal once when there is no bus to notify"
+setup
+run "$CA" launch --pick
+expect "$RC" 1 "exit status"
+expect "$(grep -c 'No default agent' <<<"$ERR")" 1 "the summary appears once"
 ok
 cleanup_sandbox
 
