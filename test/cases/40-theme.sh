@@ -431,6 +431,19 @@ grep -q "'hermes skin use cachyos' failed" "$SANDBOX/err" || fail "no explanatio
 ok
 cleanup_sandbox
 
+begin "sync reports a Hermes profile that cannot take the skin but still serves the others"
+sync_env
+make_agents
+mkdir -p "$HOME/.hermes/profiles/work/skins/cachyos.yaml" # a directory where the skin belongs
+status=0
+"$SYNC" >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "a profile that could not be written should fail the sync, got $status"
+grep -q 'cachyos.yaml is a directory' "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+[[ -s $HOME/.hermes/skins/cachyos.yaml && -s $HOME/.hermes/profiles/team/skins/cachyos.yaml && -s $HOME/.claude/themes/cachyos.json ]] \
+  || fail "one profile stopped the others"
+ok
+cleanup_sandbox
+
 begin "sync --only limits the work, and an unknown target exits 2 before any work"
 sync_env
 make_agents
@@ -483,6 +496,17 @@ grep -q 'does not parse' "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/er
 sed -i 's/"base": {{ theme_type }},/"base": "{{ no_such_color }}",/' "$TREE/data/themed/claude.json.tpl"
 if "$TREE/bin/cachyos-agent-theme-sync" --only claude >/dev/null 2>"$SANDBOX/err"; then fail "an unknown palette key was accepted"; fi
 grep -q 'unknown palette key "no_such_color"' "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+ok
+cleanup_sandbox
+
+begin "sync works from a packaged layout: real files under the data root, symlinks in a bin directory"
+sync_env
+make_agents
+make_tree "$SANDBOX/usr/share/cachyos-agent"
+mkdir -p "$SANDBOX/usr/bin"
+for command in "$TREE"/bin/*; do ln -s "$command" "$SANDBOX/usr/bin/${command##*/}"; done
+PATH=$SANDBOX/usr/bin:$PATH "$SANDBOX/usr/bin/cachyos-agent" theme sync --activate >/dev/null
+[[ $(jq -r .theme "$HOME/.claude/settings.json") == custom:cachyos && -s $HOME/.hermes/skins/cachyos.yaml ]] || fail "the symlinked command did not find its data root"
 ok
 cleanup_sandbox
 

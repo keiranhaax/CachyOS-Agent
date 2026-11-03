@@ -34,7 +34,9 @@ stays. --activate creates the directories and makes cachyos the agent's theme.
   hermes    $HERMES_HOME/skins and every profile's skins/ (needs a config.yaml,
             i.e. Hermes has run); --activate runs: hermes skin use cachyos
   claude    $CLAUDE_CONFIG_DIR/themes/cachyos.json; --activate sets theme to
-            custom:cachyos in settings.json. Running sessions reload the file.
+            custom:cachyos in settings.json. Running sessions reload the file,
+            except that a themes/ folder created after Claude Code started
+            needs one restart.
   pi        ~/.pi/agent/themes/cachyos.json; --activate sets theme in settings.json
   opencode  ~/.config/opencode/themes/cachyos.json; --activate sets theme in
             tui.json. A running OpenCode picks the colors up on restart.
@@ -164,7 +166,7 @@ present() {
 # provisioner creates $HERMES_HOME for every machine, so the directory alone
 # proves nothing.
 sync_hermes() {
-  local home=${HERMES_HOME:-$HOME/.hermes} profile
+  local home=${HERMES_HOME:-$HOME/.hermes} profile status=0
   if [[ ! -f $home/config.yaml ]]; then
     echo "hermes: skipped, $home/config.yaml not found; launch Hermes once first"
     return 0
@@ -172,9 +174,9 @@ sync_hermes() {
   publish hermes hermes.yaml "$home/skins/$THEME_NAME.yaml" || return 1
   for profile in "$home"/profiles/*/; do
     [[ -d $profile ]] || continue
-    publish hermes hermes.yaml "${profile%/}/skins/$THEME_NAME.yaml" || true
+    publish hermes hermes.yaml "${profile%/}/skins/$THEME_NAME.yaml" || status=1
   done
-  ((ACTIVATE == 1)) || return 0
+  ((ACTIVATE == 1)) || return "$status"
   # Hermes' own writer: it updates the active profile's config and touches the
   # skin so a running gateway repaints.
   if ! ca_cmd_present hermes; then
@@ -185,10 +187,12 @@ sync_hermes() {
     echo "hermes: 'hermes skin use $THEME_NAME' failed" >&2
     return 1
   }
+  return "$status"
 }
 
 # Claude Code watches ~/.claude/themes and reloads the file on change, so
-# running sessions retint without a restart.
+# running sessions retint without a restart (unless the folder itself did not
+# exist when the session started).
 sync_claude() {
   local dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
   present claude "$dir" || return 0
