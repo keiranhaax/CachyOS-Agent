@@ -425,7 +425,7 @@ python3 -I -X pycache_prefix=$(mktemp -d) -m py_compile $(grep -lE '^#!/usr/bin/
 namcap PKGBUILD
 ```
 
-`test/run-tests` runs every `test/cases/NN-<feature>.sh` in its own process: the dispatcher and shared helpers (`00`, `01`), the skills (`10`), the launcher (`20`), crash diagnosis (`30`), theme sync (`40`), usage (`50`), accounts (`60`), local models (`70`), the widget (`80`) and the documents (`85`). A case works in a sandbox home, with stubs for every external program, and never needs the network, root, a display or a real agent CLI. A case whose tool is missing (`kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and passes. See [`MAINTENANCE.md`](MAINTENANCE.md) for adding a command, the upstream review and the release checklist.
+`test/run-tests` runs every `test/cases/NN-<feature>.sh` in its own process: the dispatcher and shared helpers (`00`, `01`), the skills (`10`), the launcher (`20`), crash diagnosis (`30`), theme sync (`40`), usage (`50`), accounts (`60`), local models (`70`), the widget (`80`) and the documents (`85`). A case works in a sandbox home, with stubs for every external program, and never needs the network, root, a display or a real agent CLI. A case whose tool is missing (`git`, `kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and passes. See [`MAINTENANCE.md`](MAINTENANCE.md) for adding a command, the upstream review and the release checklist.
 
 <details>
 <summary>Repository layout</summary>

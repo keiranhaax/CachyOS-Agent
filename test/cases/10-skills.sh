@@ -356,7 +356,13 @@ cleanup_sandbox
 # ---- update and check-upstreams ----------------------------------------------
 
 # Both run against local Git repositories, which `git ls-remote` and `git fetch` read
-# by path, so nothing here needs a network.
+# by path, so nothing here needs a network. Without git there is nothing to run them
+# against, and the cases below are the last in this file.
+if ! command -v git >/dev/null; then
+  printf 'UNVERIFIED update and check-upstreams: git is not installed\n'
+  exit 0
+fi
+
 git_identity() {
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
   export GIT_CONFIG_NOSYSTEM=1

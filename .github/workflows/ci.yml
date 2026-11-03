@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
       - name: Install check tools
-        run: pacman -Syu --noconfirm shellcheck namcap jq python gawk kconfig desktop-file-utils fish nodejs
+        run: pacman -Syu --noconfirm git shellcheck namcap jq python gawk kconfig desktop-file-utils fish nodejs
 
       - name: Shellcheck the Bash scripts
         run: shellcheck -x $(grep -lE '^#!/bin/bash' bin/*) lib/*.sh test/run-tests test/lib.sh test/cases/*.sh

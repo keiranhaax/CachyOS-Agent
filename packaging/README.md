@@ -29,7 +29,7 @@ makepkg -Ccf
 namcap PKGBUILD cachyos-agent-[0-9]*.pkg.tar.zst
 ```
 
-`check()` runs the skill validator and `test/run-tests` on the tagged source. A case that needs a tool the build machine lacks (`kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and still passes. `namcap` reports no errors on the package. Its warnings are expected: the usage collectors import `collectors` from the `lib/` directory beside `bin/`, which `namcap` cannot see, and the widget's QML modules come with `plasma-desktop`, which is an optional dependency.
+`check()` runs the skill validator and `test/run-tests` on the tagged source. A case that needs a tool the build machine lacks (`git`, `kconfig`, `fish`, `node`, the Qt 6 and Plasma QML modules) prints `skip` or `UNVERIFIED` and still passes. `namcap` reports no errors on the package. Its warnings are expected: the usage collectors import `collectors` from the `lib/` directory beside `bin/`, which `namcap` cannot see, and the widget's QML modules come with `plasma-desktop`, which is an optional dependency.
 
 Install the inspected artifact with `sudo pacman -U ./cachyos-agent-[0-9]*.pkg.tar.zst`.
 
