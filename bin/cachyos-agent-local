@@ -38,6 +38,7 @@ declare -A R_INDEX=()
 RAM_GIB=0
 VRAM_GIB=0
 GPU_VENDOR=none
+MODELFILE='' # the temporary Modelfile create_model writes, for its EXIT trap
 
 usage() {
   cat <<'USAGE'
@@ -254,14 +255,15 @@ listing_has() {
 # of VRAM, and the OpenAI-compatible endpoint cannot ask for more per request,
 # so a context set on the model is the way an agent gets room to work. The
 # new model shares the download's files and adds almost nothing.
+# The Modelfile is removed by an EXIT trap, which bash also runs when Ctrl-C or
+# SIGTERM ends the script while `ollama create` is still working.
 create_model() {
-  local i=$1 modelfile status=0
+  local i=$1
   mkdir -p -- "${ACTIVE_FILE%/*}"
-  modelfile=$(mktemp -- "${ACTIVE_FILE%/*}/Modelfile.XXXXXX")
-  printf 'FROM %s\nPARAMETER num_ctx %d\n' "${R_MODEL[i]}" "${R_CTX[i]}" >"$modelfile"
-  ollama create "${R_ID[i]}" -f "$modelfile" || status=$?
-  rm -f -- "$modelfile"
-  return "$status"
+  MODELFILE=$(mktemp -- "${ACTIVE_FILE%/*}/Modelfile.XXXXXX")
+  trap 'rm -f -- "$MODELFILE"' EXIT
+  printf 'FROM %s\nPARAMETER num_ctx %d\n' "${R_MODEL[i]}" "${R_CTX[i]}" >"$MODELFILE"
+  ollama create "${R_ID[i]}" -f "$MODELFILE"
 }
 
 active_model() {

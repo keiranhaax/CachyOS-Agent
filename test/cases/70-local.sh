@@ -49,9 +49,11 @@ add_amd_card() {
 
 # fake_service: stubs for ollama, systemctl, sudo and pacman that share one
 # state: $SANDBOX/running exists while the service runs, installed holds what
-# `ollama list` prints, ps what `ollama ps` prints, and pull-fails makes a
-# pull or a create fail. `systemctl enable|start` begins the service, stop ends it, and the
-# stubbed pacman makes an ollama appear, as installing the package would.
+# `ollama list` prints, ps what `ollama ps` prints, pull-fails makes a pull
+# fail, create-fails makes a create fail, and create-hangs makes a create record
+# create-started and wait on the hang fifo for a signal. `systemctl enable|start`
+# begins the service, stop ends it, and the stubbed pacman makes an ollama
+# appear, as installing the package would.
 # Without install_ollama the stubbed ollama is present from the start.
 # shellcheck disable=SC2016 # the stub bodies are scripts, not strings to expand here
 fake_service() {
@@ -64,6 +66,7 @@ case $1 in
   pull) if [[ -e $state/pull-fails ]]; then echo "pull failed" >&2; exit 1; fi ;;
   create)
     if [[ -e $state/create-fails ]]; then echo "create failed" >&2; exit 1; fi
+    if [[ -e $state/create-hangs ]]; then : >"$state/create-started"; exec 3<>"$state/hang"; read -r -t 30 -u 3 _ || true; fi
     cp "$4" "$state/modelfile"; echo "$OLLAMA_HOST" >"$state/host" ;;
 esac
 exit 0'
@@ -165,7 +168,7 @@ while IFS=$'\t' read -r id model vram ram ctx note; do
   [[ $id =~ ^[a-z0-9][a-z0-9._-]*$ ]] || fail "bad id $id"
   [[ $model =~ ^[a-z0-9._/-]+:[A-Za-z0-9._-]+$ ]] || fail "$id: $model is not name:tag"
   [[ $vram =~ ^[1-9][0-9]*$ && $ram =~ ^[1-9][0-9]*$ ]] || fail "$id: limits are not positive numbers without a leading zero"
-  [[ $ctx =~ ^[1-9][0-9]*$ ]] && ((ctx >= 32768)) || fail "$id: context $ctx is too small for an agent"
+  if ! [[ $ctx =~ ^[1-9][0-9]*$ ]] || ((ctx < 32768)); then fail "$id: context $ctx is not a number an agent can use"; fi
   [[ -n $note ]] || fail "$id: no note"
 done <"$REPO_ROOT/data/local-models.tsv"
 ((rows >= 5)) || fail "only $rows recipes"
@@ -420,6 +423,37 @@ run local use tiny
 expect_in "create failed"
 [[ $(<"$(state_dir)/active") == mid ]] || fail "active changed to $(<"$(state_dir)/active")"
 compgen -G "$(state_dir)/Modelfile.*" >/dev/null && fail "a temporary Modelfile was left behind after a failed build"
+ok
+cleanup_sandbox
+
+begin "use leaves no temporary Modelfile behind when Ctrl-C or SIGTERM ends it during the build"
+make_sandbox
+make_tree
+set_machine 8188 32
+fake_service
+: >"$SANDBOX/running"
+: >"$SANDBOX/create-hangs"
+mkfifo "$SANDBOX/hang"
+mkdir -p "$(state_dir)"
+printf 'mid\n' >"$(state_dir)/active"
+set -m # a background job gets its own process group, as a command run from a terminal does
+for sig in INT TERM; do
+  rm -f -- "$SANDBOX/create-started"
+  "$TREE_AGENT" local use tiny >"$SANDBOX/out" 2>&1 </dev/null &
+  pid=$!
+  for _ in {1..100}; do
+    [[ -e $SANDBOX/create-started ]] && break
+    command -p sleep 0.1
+  done
+  [[ -e $SANDBOX/create-started ]] || fail "$sig: the build never started: $(<"$SANDBOX/out")"
+  compgen -G "$(state_dir)/Modelfile.*" >/dev/null || fail "$sig: no Modelfile while the build runs, so the test proves nothing"
+  kill -s "$sig" -- "-$pid"
+  wait "$pid" && rc=0 || rc=$?
+  ((rc != 0)) || fail "$sig: use exited 0 after it was interrupted"
+  compgen -G "$(state_dir)/Modelfile.*" >/dev/null && fail "$sig: a temporary Modelfile was left behind"
+  [[ $(<"$(state_dir)/active") == mid ]] || fail "$sig: active changed"
+done
+set +m
 ok
 cleanup_sandbox
 
