@@ -806,6 +806,24 @@ expect "$(last_call opencode)" "--auto|--standalone" "OpenCode started again"
 ok
 cleanup_sandbox
 
+begin "launch --local asks the OpenCode that will run which version it is"
+setup
+# Only ~/.local/bin has OpenCode, as in a desktop session without that
+# directory on PATH, and it is version 1, which rejects --standalone.
+mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/opencode" <<EOF2
+#!/bin/bash
+if [[ \${1-} == --version ]]; then echo 1.2.3; exit 0; fi
+{ for arg in "\$@"; do printf '%s\n' "\$arg"; done; printf '\n'; } >>"$SANDBOX/calls/opencode"
+EOF2
+chmod +x "$HOME/.local/bin/opencode"
+choose_local_model 'qwen3:8b'
+CACHYOS_AGENT_DEFAULT=opencode run "$CA" launch --inline --local
+expect "$RC" 0 "exit status"
+expect "$(last_call opencode)" "--auto" "OpenCode 1 from ~/.local/bin gets no --standalone"
+ok
+cleanup_sandbox
+
 begin "launch --local needs no default agent"
 setup
 stub pi

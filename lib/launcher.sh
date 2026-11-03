@@ -43,9 +43,22 @@ ca_agent_resolve() {
   esac
 }
 
-# ca_agent_present <id>: the agent's command is on PATH or is the user's own
-# install in ~/.local/bin, where several vendors' installers put it and which a
-# desktop session does not always have on PATH.
+# ca_agent_binary <id>: print what runs the agent, or fail when nothing does:
+# its name when it is on PATH, else the user's own install in ~/.local/bin by
+# path, where several vendors' installers put it and which a desktop session
+# does not always have on PATH. Every command that starts or asks an agent's
+# CLI goes through this, so they agree on which copy that is.
+ca_agent_binary() {
+  if ca_cmd_present "$1"; then
+    printf '%s\n' "$1"
+  elif [[ -f ${HOME:?}/.local/bin/$1 && -x $HOME/.local/bin/$1 ]]; then
+    printf '%s\n' "$HOME/.local/bin/$1"
+  else
+    return 1
+  fi
+}
+
+# ca_agent_present <id>: the agent's CLI is installed, on PATH or in ~/.local/bin.
 ca_agent_present() {
-  ca_cmd_present "$1" || [[ -f ${HOME:?}/.local/bin/$1 && -x $HOME/.local/bin/$1 ]]
+  ca_agent_binary "$1" >/dev/null
 }

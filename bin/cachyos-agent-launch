@@ -355,7 +355,9 @@ apply_local() {
       # OpenCode 2 attaches to a shared background service that never sees the
       # inline config, so it needs a private one of its own; OpenCode 1 has no
       # such flag and rejects it.
-      major=$(opencode --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)
+      # The copy that will run answers, which is the one in ~/.local/bin when
+      # PATH lacks OpenCode.
+      major=$("$(ca_agent_binary opencode)" --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)
       if [[ $major != 1 ]]; then
         command+=(--standalone)
       fi
@@ -391,13 +393,14 @@ hand_over_prompt() {
 # The user's own install in ~/.local/bin, which counts as installed, is run by
 # path when PATH does not reach it (a desktop session often lacks it).
 use_user_install() {
-  local user_install=$HOME/.local/bin/$agent i
-  if ca_cmd_present "$agent" || [[ ! -x $user_install ]]; then
+  local binary i
+  binary=$(ca_agent_binary "$agent")
+  if [[ $binary == "$agent" ]]; then
     return 0
   fi
   for i in "${!command[@]}"; do
     if [[ ${command[i]} == "$agent" ]]; then
-      command[i]=$user_install
+      command[i]=$binary
       break
     fi
   done
