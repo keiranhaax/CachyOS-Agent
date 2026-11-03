@@ -553,6 +553,61 @@ PATH=$SANDBOX/usr/bin:$PATH "$SANDBOX/usr/bin/cachyos-agent" theme sync --activa
 ok
 cleanup_sandbox
 
+# kdeglobals_writer: a palette command that reads the real one, then has Plasma
+# write kdeglobals as the sync is running: <how> is a shell snippet run once the
+# palette has been read, $1 counting the call from 1.
+kdeglobals_writer() {
+  stub cachyos-agent-theme-palette "$(
+    cat <<BODY
+dir=\${self%/stubs/*}
+n=\$(grep -c '^\$' "\$dir/calls/cachyos-agent-theme-palette")
+out=\$("\$CACHYOS_AGENT_BIN/cachyos-agent-theme-palette" "\$@")
+$1
+printf '%s\n' "\$out"
+BODY
+  )"
+}
+
+begin "sync goes again when kdeglobals is written while it runs, because the path unit cannot see that write"
+sync_env
+make_agents
+light_colors "$SANDBOX/light"
+# The first palette read is of the dark scheme; the light one lands just after it.
+# shellcheck disable=SC2016 # the snippet is expanded by the stub, not here
+kdeglobals_writer '((n == 1)) && cp "$dir/light" "$XDG_CONFIG_HOME/kdeglobals"'
+"$AGENT" theme sync >"$SANDBOX/out" 2>"$SANDBOX/err"
+[[ $(grep -c '^$' "$SANDBOX/calls/cachyos-agent-theme-palette") == 2 ]] || fail "the palette was read $(grep -c '^$' "$SANDBOX/calls/cachyos-agent-theme-palette") times, not twice"
+for file in "$THEME/claude.json" "$HOME/.claude/themes/cachyos.json"; do
+  [[ $(jq -r .base "$file") == light ]] || fail "$file still holds the scheme from before the write"
+done
+[[ $(jq -r '.vars.selectedBackground' "$HOME/.pi/agent/themes/cachyos.json") == '#d4edfa' ]] || fail "pi did not get the scheme that was written last"
+[[ ! -s $SANDBOX/err ]] || fail "a settled sync said something on stderr: $(<"$SANDBOX/err")"
+ok
+cleanup_sandbox
+
+begin "sync leaves a kdeglobals that never stops changing as a failure, after a bounded number of passes"
+sync_env
+make_agents
+# shellcheck disable=SC2016 # the snippet is expanded by the stub, not here
+kdeglobals_writer 'touch "$XDG_CONFIG_HOME/kdeglobals"'
+status=0
+"$SYNC" >"$SANDBOX/out" 2>"$SANDBOX/err" || status=$?
+((status == 1)) || fail "a kdeglobals that kept changing exited $status, not 1"
+grep -q 'kdeglobals kept changing' "$SANDBOX/err" || fail "no explanation: $(<"$SANDBOX/err")"
+[[ $(grep -c '^$' "$SANDBOX/calls/cachyos-agent-theme-palette") == 5 ]] || fail "expected five passes, got $(grep -c '^$' "$SANDBOX/calls/cachyos-agent-theme-palette")"
+[[ $(jq -r .base "$HOME/.claude/themes/cachyos.json") == dark ]] || fail "the last pass was not published"
+ok
+cleanup_sandbox
+
+begin "sync does not repeat itself when kdeglobals holds still"
+sync_env
+make_agents
+kdeglobals_writer ':'
+"$SYNC" >/dev/null
+[[ $(grep -c '^$' "$SANDBOX/calls/cachyos-agent-theme-palette") == 1 ]] || fail "a quiet kdeglobals took more than one pass"
+ok
+cleanup_sandbox
+
 begin "sync stops and publishes nothing when there is no palette"
 sync_env
 make_agents
@@ -617,6 +672,7 @@ grep -qx 'PathModified=%E/kdeglobals' "$path_unit" || fail "the path unit does n
 grep -qx 'WantedBy=default.target' "$path_unit" || fail "the path unit cannot be enabled"
 grep -qx 'Type=oneshot' "$service_unit" || fail "the service is not oneshot"
 grep -qx 'StartLimitIntervalSec=0' "$service_unit" || fail "a burst of kdeglobals writes could stop the watcher"
+grep -qx 'TimeoutStartSec=60' "$service_unit" || fail "a hung sync would leave the path unit unwatched for good"
 [[ $(grep '^ExecStart=' "$service_unit") == 'ExecStart=/usr/bin/cachyos-agent-theme-sync' ]] || fail "the service does not run the packaged command"
 [[ -x $REPO_ROOT/bin/cachyos-agent-theme-sync ]] || fail "the command the service runs is not shipped"
 if type -P systemd-analyze >/dev/null; then

@@ -5,6 +5,18 @@
 # lib/common.sh. Omarchy bakes {{ key }} and {{ mix a b 15% }} into its configs
 # at theme-set time; here the same two forms are rendered from a palette file.
 
+# theme_kdeglobals: the file Plasma keeps the active color scheme in.
+theme_kdeglobals() {
+  printf '%s\n' "${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/kdeglobals"
+}
+
+# theme_kdeglobals_state: one line that differs after every write to that file,
+# by whatever means (inode, size and nanosecond modification time); "missing"
+# when there is no file. For asking whether it changed while something ran.
+theme_kdeglobals_state() {
+  stat -c '%i %s %.9Y' -- "$(theme_kdeglobals)" 2>/dev/null || echo missing
+}
+
 # theme_render <palette-file>: expand the placeholders in stdin to stdout.
 #   {{ key }}           the palette value of key
 #   {{ mix a b 15% }}   a moved 15% of the way towards b, where a and b are

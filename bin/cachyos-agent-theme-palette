@@ -27,7 +27,7 @@ not installed either.
 USAGE
 }
 
-file=${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/kdeglobals
+file=$(theme_kdeglobals)
 while (($# > 0)); do
   case $1 in
     --file)

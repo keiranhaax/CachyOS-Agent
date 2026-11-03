@@ -7,4 +7,11 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
+# A oneshot service may run forever by default, and the path unit that starts it
+# does not watch kdeglobals again until the service has stopped: one hung
+# kreadconfig6 or jq would end the following for good. A normal run takes
+# about a tenth of a second.
+TimeoutStartSec=60
+# Writes that land while the sync runs are not seen by the path unit, so the sync
+# checks kdeglobals itself and goes again when it changed.
 ExecStart=/usr/bin/cachyos-agent-theme-sync

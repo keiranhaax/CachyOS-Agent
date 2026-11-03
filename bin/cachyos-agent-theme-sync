@@ -235,18 +235,40 @@ sync_opencode() {
 }
 
 mkdir -p "$THEME_DIR"
-# Palette first and in full: the palette command says why when it fails.
-palette=$(cachyos-agent-theme-palette) || exit 1
-printf '%s\n' "$palette" | ca_atomic_write "$THEME_DIR/palette.tsv"
 
-failed=()
-for target in "${targets[@]}"; do
-  if render "${RENDERED_FILE[$target]}" && "sync_$target"; then
-    continue
+# Plasma can write kdeglobals again while this runs, and then nobody else sees
+# it: the path unit that started the run stops watching until the service has
+# exited and, on resuming, ignores what happened in between. The palette is
+# also read key by key, so a write in the middle of it gives half of each
+# scheme. A pass therefore counts only when kdeglobals is unchanged from its
+# start to its end; otherwise it is done again, up to MAX_PASSES times. A write
+# in the few milliseconds between the last check and the exit is still missed.
+MAX_PASSES=5
+settled=0
+for ((pass = 1; pass <= MAX_PASSES; pass++)); do
+  state=$(theme_kdeglobals_state)
+  # Palette first and in full: the palette command says why when it fails.
+  palette=$(cachyos-agent-theme-palette) || exit 1
+  printf '%s\n' "$palette" | ca_atomic_write "$THEME_DIR/palette.tsv"
+  failed=()
+  for target in "${targets[@]}"; do
+    if render "${RENDERED_FILE[$target]}" && "sync_$target"; then
+      continue
+    fi
+    failed+=("$target")
+  done
+  if [[ $(theme_kdeglobals_state) == "$state" ]]; then
+    settled=1
+    break
   fi
-  failed+=("$target")
+  ((pass == MAX_PASSES)) || echo "theme sync: kdeglobals changed while syncing; going again"
 done
+
 if ((${#failed[@]} > 0)); then
   echo "theme sync failed for: ${failed[*]}" >&2
+  exit 1
+fi
+if ((settled == 0)); then
+  echo "theme sync: kdeglobals kept changing for $MAX_PASSES passes; the agents may show an older scheme, run it again" >&2
   exit 1
 fi
