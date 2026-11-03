@@ -10,6 +10,8 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 # shellcheck source=../lib/accounts.sh
 source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+# shellcheck source=../lib/launcher.sh
+source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
 
 usage() {
   cat <<'EOF'
@@ -74,10 +76,11 @@ provider=$1
 label=${*:2}
 
 # The provider's CLI does the signing in; this command only chooses where it
-# looks for and keeps the login.
-if ! ca_cmd_present "$provider"; then
+# looks for and keeps the login. Which copy runs is the launcher's rule: on
+# PATH, else the user's own install in ~/.local/bin.
+binary=$(ca_agent_binary "$provider") ||
   ca_die "$ACCT_NAME's CLI ($provider) is not installed. Install it with: cachyos-agent install $provider"
-fi
+ACCT_LOGIN[0]=$binary
 
 # Cancelling stops the CLI's login too, and leaves no half-made home behind.
 home=''

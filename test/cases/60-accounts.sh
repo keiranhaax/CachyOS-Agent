@@ -308,6 +308,26 @@ FIX_ID=u-odd FIX_EMAIL=odd@example.com "$ADD" claude -- --odd >/dev/null 2>&1 ||
 ok
 cleanup_sandbox
 
+begin "add and exec run the CLI from ~/.local/bin when PATH does not reach it, as launch does"
+setup
+sign_in claude u-main main@example.com
+# Only ~/.local/bin has claude, as in a desktop session that lacks that directory on PATH.
+mkdir -p "$HOME/.local/bin" "$SANDBOX/system"
+printf '#!/bin/bash\n%s\n' "$CLAUDE_STUB" >"$HOME/.local/bin/claude"
+chmod +x "$HOME/.local/bin/claude"
+rm "$SANDBOX/stubs/claude"
+ln -s /usr/bin/* "$SANDBOX/system/"
+rm -f "$SANDBOX/system/claude"
+PATH=$SANDBOX/stubs:$SANDBOX/system
+: >"$SANDBOX/logins"
+out=$(FIX_ID=u-work FIX_EMAIL=work@example.com "$AGENT" account add claude Work 2>&1) || fail "add did not find ~/.local/bin/claude: $out"
+[[ $out == *"Added Work"* && $(registry claude '.accounts | length') == 2 ]] || fail "no account was added: $out"
+out=$("$AGENT" account exec claude --continue) || fail "exec did not find ~/.local/bin/claude"
+[[ $out == *"args=--continue" ]] || fail "exec did not run it: $out"
+PATH=$BASE_PATH
+ok
+cleanup_sandbox
+
 begin "add explains how to install a missing CLI, and checks the provider first"
 setup
 mkdir "$SANDBOX/tools"

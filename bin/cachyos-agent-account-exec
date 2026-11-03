@@ -11,6 +11,8 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
 # shellcheck source=../lib/accounts.sh
 source "$CACHYOS_AGENT_ROOT/lib/accounts.sh"
+# shellcheck source=../lib/launcher.sh
+source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
 
 # `cachyos-agent launch` pins the selected account itself. Anything else that
 # starts a CLI, such as a shell shortcut, goes through this command to follow
@@ -33,6 +35,7 @@ if [[ -z ${!ACCT_HOME_ENV:-} ]]; then
   fi
 fi
 
-agent_binary=$(type -P "$provider") ||
+# The launcher's rule: on PATH, else the user's own install in ~/.local/bin.
+agent_binary=$(ca_agent_binary "$provider") ||
   ca_die "$ACCT_NAME's CLI ($provider) is not installed. Install it with: cachyos-agent install $provider"
 exec "$agent_binary" "$@"
