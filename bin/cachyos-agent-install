@@ -27,6 +27,13 @@ source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
 # Names that look right but are not: AUR "dsh" is the distributed shell,
 # "copilot-cli" is AWS Copilot, and AUR "ori" is not OpenRouter's Ori.
 # The remaining agents have no package, so install_plan prints the vendor's way.
+#
+# The vendors' npm commands are printed with a prefix in the home directory.
+# Arch's npm installs globally under /usr, so a bare `npm install -g` fails with
+# EACCES for a user, and the obvious retry with sudo writes root-owned files that
+# pacman does not track. With --prefix ~/.local the command lands in
+# ~/.local/bin, which ca_agent_present and the launcher already look in.
+NPM_INSTALL='npm install -g --prefix ~/.local'
 
 usage() {
   cat <<EOF2
@@ -60,11 +67,11 @@ install_plan() {
     commandcode) METHOD=aur PACKAGE=command-code ;;
     kiro-cli) METHOD=aur PACKAGE=kiro-cli ;;
     cursor-agent) METHOD=aur PACKAGE=cursor-cli ;;
-    pi) METHOD=vendor ADVICE="npm install -g --ignore-scripts @earendil-works/pi-coding-agent" ;;
-    kimi) METHOD=vendor ADVICE="npm install -g @moonshot-ai/kimi-code" ;;
-    dsh) METHOD=vendor ADVICE="npm install -g @deepseek-ai/dsh" ;;
-    mcode) METHOD=vendor ADVICE="npm install -g @minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3 --registry=https://registry.npmjs.org/" ;;
-    freebuff) METHOD=vendor ADVICE="npm install -g freebuff" ;;
+    pi) METHOD=vendor ADVICE="$NPM_INSTALL --ignore-scripts @earendil-works/pi-coding-agent" ;;
+    kimi) METHOD=vendor ADVICE="$NPM_INSTALL @moonshot-ai/kimi-code" ;;
+    dsh) METHOD=vendor ADVICE="$NPM_INSTALL @deepseek-ai/dsh" ;;
+    mcode) METHOD=vendor ADVICE="$NPM_INSTALL @minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3 --registry=https://registry.npmjs.org/" ;;
+    freebuff) METHOD=vendor ADVICE="$NPM_INSTALL freebuff" ;;
     ori) METHOD=vendor ADVICE="Ori installs with a shell script: https://openrouter.ai/docs/guides/ori/overview" ;;
     muse) METHOD=vendor ADVICE="Muse Code installs with a shell script: https://dev.meta.ai/install.sh" ;;
     devin) METHOD=vendor ADVICE="Devin installs with a shell script: https://cli.devin.ai/" ;;
@@ -90,8 +97,8 @@ install_aur() {
 
 install_vendor() {
   printf '%s has no pacman or AUR package that installs it.\n' "$CA_AGENT_NAME" >&2
-  if [[ $ADVICE == npm\ * ]]; then
-    printf 'Its vendor documents this command; run it yourself:\n  %s\n' "$ADVICE" >&2
+  if [[ $ADVICE == "$NPM_INSTALL "* ]]; then
+    printf 'Its vendor documents an npm command; run it yourself. It needs the nodejs and npm packages.\n--prefix ~/.local keeps the install in your home: the npm package installs globally under /usr,\nwhich fails without root and, with sudo, leaves files pacman does not track.\n  %s\n' "$ADVICE" >&2
   else
     printf '%s\nThe installer is a script fetched with curl. cachyos-agent never pipes one into a shell:\nread it, then run it yourself.\n' "$ADVICE" >&2
   fi

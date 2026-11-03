@@ -864,14 +864,39 @@ setup
 stub_agents sudo pacman paru npm curl
 run "$CA" install pi
 expect "$RC" 1 "exit status"
-contains "$ERR" "npm install -g --ignore-scripts @earendil-works/pi-coding-agent" "pi command"
-run "$CA" install kimi
-contains "$ERR" "npm install -g @moonshot-ai/kimi-code" "kimi command"
+contains "$ERR" "npm install -g --prefix ~/.local --ignore-scripts @earendil-works/pi-coding-agent" "pi command"
 run "$CA" install ori
 expect "$RC" 1 "ori exit status"
 contains "$ERR" "https://openrouter.ai/docs/guides/ori/overview" "ori page"
 contains "$ERR" "never pipes one into a shell" "script warning"
 for tool in sudo pacman paru npm curl; do expect "$(call_count $tool)" 0 "$tool must not run"; done
+ok
+cleanup_sandbox
+
+begin "install's npm advice installs under ~/.local, which Arch's npm needs to avoid /usr"
+setup
+# Arch's npm defaults to the prefix /usr, so the vendor's bare `npm install -g`
+# fails with EACCES, and the obvious retry with sudo writes outside pacman's
+# control. The printed line is run here as a person would paste it, to see the
+# prefix reach npm as the sandbox home.
+declare -A NPM_ARGS=(
+  [pi]="--ignore-scripts @earendil-works/pi-coding-agent"
+  [kimi]="@moonshot-ai/kimi-code"
+  [dsh]="@deepseek-ai/dsh"
+  [mcode]="@minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3 --registry=https://registry.npmjs.org/"
+  [freebuff]="freebuff"
+)
+stub npm
+for agent in "${!NPM_ARGS[@]}"; do
+  run "$CA" install "$agent"
+  expect "$RC" 1 "$agent exit status"
+  contains "$ERR" "npm install -g --prefix ~/.local ${NPM_ARGS[$agent]}" "$agent command"
+  contains "$ERR" "nodejs and npm" "$agent: npm is a package of its own on Arch"
+  line=$(grep '^  npm ' <<<"$ERR") || line=''
+  bash -c "$line"
+  expected="install|-g|--prefix|$HOME/.local|${NPM_ARGS[$agent]// /|}"
+  expect "$(last_call npm)" "$expected" "$agent: the printed line as a shell runs it"
+done
 ok
 cleanup_sandbox
 
