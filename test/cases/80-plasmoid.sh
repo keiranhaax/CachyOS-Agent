@@ -404,6 +404,20 @@ esac'
   ok
   cleanup_sandbox
 
+  begin "Launch agent returns at once, so a second click starts a second agent while the first runs"
+  make_sandbox
+  QML_LOG=$SANDBOX/qml.log
+  stub_agent
+  # An agent session lasts as long as its terminal is open: the stub does too.
+  stub systemd-run 'sleep 4'
+  out=$(app "Launch agent+Launch agent" "")
+  [[ $(calls_of systemd-run) == $'--user --scope --quiet -- cachyos-agent launch\n--user --scope --quiet -- cachyos-agent launch' ]] \
+    || fail "two clicks should start two agents, though the first is still running: $(calls_of systemd-run)"
+  check "$out" '.problem == "" and .page.buttons == [{text: "Launch agent", enabled: true}, {text: "Refresh", enabled: true}]' "the page should stay usable while an agent runs"
+  qml_log_is_clean || fail "QML reported errors: $(head -c 800 "$QML_LOG")"
+  ok
+  cleanup_sandbox
+
   begin "clicking the panel icon opens the widget and reads the records again"
   make_sandbox
   QML_LOG=$SANDBOX/qml.log
