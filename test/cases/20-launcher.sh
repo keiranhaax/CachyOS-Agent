@@ -751,6 +751,108 @@ done
 ok
 cleanup_sandbox
 
+# ---- shortcut --------------------------------------------------------------
+
+RC_FILE_NAME=kglobalshortcutsrc
+
+begin "shortcut set writes the Plasma launch entry and show reads it back"
+setup
+if ! command -v kwriteconfig6 >/dev/null; then
+  skip "kwriteconfig6 is not installed"
+else
+  run "$CA" shortcut show
+  expect "$OUT" "not set" "nothing bound yet"
+  run "$CA" shortcut set
+  expect "$RC" 0 "exit status"
+  contains "$OUT" "Meta+Ctrl+Shift+A" "message names the combo"
+  contains "$OUT" "log out" "message says when it applies"
+  expect "$(<"$XDG_CONFIG_HOME/$RC_FILE_NAME")" $'[services][cachyos-agent.desktop]\n_launch=Meta+Ctrl+Shift+A' "file content"
+  run "$CA" shortcut show
+  expect "$OUT" "Meta+Ctrl+Shift+A" "show"
+  run "$CA" shortcut
+  expect "$OUT" "Meta+Ctrl+Shift+A" "show is the default action"
+  ok
+fi
+cleanup_sandbox
+
+begin "shortcut set replaces the combo, unset removes it, other groups stay"
+setup
+if ! command -v kwriteconfig6 >/dev/null; then
+  skip "kwriteconfig6 is not installed"
+else
+  printf '[kwin]\nWindow Close=Alt+F4\n\n[services][org.kde.konsole.desktop]\n_launch=Ctrl+Alt+T\n' >"$XDG_CONFIG_HOME/$RC_FILE_NAME"
+  run "$CA" shortcut set Meta+Alt+A
+  expect "$RC" 0 "exit status"
+  run "$CA" shortcut set Ctrl+Shift+F9
+  rc_file=$(<"$XDG_CONFIG_HOME/$RC_FILE_NAME")
+  contains "$rc_file" $'[services][cachyos-agent.desktop]\n_launch=Ctrl+Shift+F9' "the new combo"
+  lacks "$rc_file" "Meta+Alt+A" "the old combo is gone"
+  contains "$rc_file" "Window Close=Alt+F4" "kwin group kept"
+  contains "$rc_file" $'[services][org.kde.konsole.desktop]\n_launch=Ctrl+Alt+T' "another application's shortcut kept"
+  run "$CA" shortcut unset
+  expect "$RC" 0 "unset exit status"
+  contains "$OUT" "Shortcut removed" "unset message"
+  rc_file=$(<"$XDG_CONFIG_HOME/$RC_FILE_NAME")
+  lacks "$rc_file" "cachyos-agent" "the entry is removed"
+  contains "$rc_file" "_launch=Ctrl+Alt+T" "konsole kept"
+  run "$CA" shortcut show
+  expect "$OUT" "not set" "show after unset"
+  run "$CA" shortcut unset
+  expect "$RC:$OUT" "0:No shortcut is set." "unset twice"
+  ok
+fi
+cleanup_sandbox
+
+begin "shortcut refuses anything that is not a modifier plus a key"
+setup
+if ! command -v kwriteconfig6 >/dev/null; then
+  skip "kwriteconfig6 is not installed"
+else
+  for combo in A F5 Meta Meta+Ctrl Super+A Meta+Alt+ Meta++A 'Meta+A B' 'Meta+A;touch x' '-h' ''; do
+    run "$CA" shortcut set "$combo"
+    [[ $RC == 1 ]] || fail "accepted [$combo]"
+  done
+  [[ ! -e $XDG_CONFIG_HOME/$RC_FILE_NAME ]] || fail "wrote the config for a bad combo"
+  run "$CA" shortcut frobnicate
+  expect "$RC" 1 "unknown action"
+  contains "$ERR" "Usage: cachyos-agent shortcut" "usage"
+  ok
+fi
+cleanup_sandbox
+
+begin "shortcut set warns when Plasma cannot find the desktop entry"
+setup
+if ! command -v kwriteconfig6 >/dev/null; then
+  skip "kwriteconfig6 is not installed"
+else
+  run "$CA" shortcut set
+  contains "$ERR" "install -Dm644 $REPO_ROOT/desktop/cachyos-agent.desktop" "install hint from a checkout"
+  mkdir -p "$XDG_DATA_HOME/applications"
+  cp "$REPO_ROOT/desktop/cachyos-agent.desktop" "$XDG_DATA_HOME/applications/"
+  run "$CA" shortcut set
+  expect "$ERR" "" "no warning once it is installed"
+  rm "$XDG_DATA_HOME/applications/cachyos-agent.desktop"
+  mkdir -p "$SANDBOX/no-data-dirs/applications"
+  cp "$REPO_ROOT/desktop/cachyos-agent.desktop" "$SANDBOX/no-data-dirs/applications/"
+  run "$CA" shortcut set
+  expect "$ERR" "" "found through XDG_DATA_DIRS"
+  ok
+fi
+cleanup_sandbox
+
+begin "shortcut needs kwriteconfig6 and says which package has it"
+setup
+mkdir "$SANDBOX/lean"
+for tool in "$TOOLS"/*; do
+  [[ ${tool##*/} == k*config6 ]] || ln -s "$tool" "$SANDBOX/lean/"
+done
+PATH=$SANDBOX/stubs:$REPO_ROOT/bin:$SANDBOX/lean
+run "$CA" shortcut set
+expect "$RC" 1 "exit status"
+contains "$ERR" "kwriteconfig6 and kreadconfig6 are needed (package kconfig)" "message"
+ok
+cleanup_sandbox
+
 # ---- desktop entry, shell functions, pi extension --------------------------
 
 begin "the pi extension registers the Ollama provider only when the launcher asks"
@@ -777,5 +879,18 @@ else
   expect "$idle" 0 "no registration without the launcher's environment"
   ok
 fi
+cleanup_sandbox
+
+begin "the desktop entry names the app and launches the picker"
+setup
+entry=$REPO_ROOT/desktop/cachyos-agent.desktop
+for line in "Type=Application" "Name=CachyOS Agent" "Exec=cachyos-agent launch --pick" "Icon=utilities-terminal" "Terminal=false" "Categories=Development;"; do
+  grep -qxF "$line" "$entry" || fail "desktop entry lacks $line"
+done
+grep -q '^Comment=.' "$entry" || fail "desktop entry has no Comment"
+if command -v desktop-file-validate >/dev/null; then
+  desktop-file-validate "$entry" || fail "desktop-file-validate rejects the entry"
+fi
+ok
 cleanup_sandbox
 

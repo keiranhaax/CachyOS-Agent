@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Desktop Entry]
+Type=Application
+Name=CachyOS Agent
+GenericName=Coding Agent
+Comment=Open your default AI coding agent in a terminal
+Exec=cachyos-agent launch --pick
+TryExec=cachyos-agent
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;
+Keywords=ai;agent;coding;assistant;claude;codex;opencode;
