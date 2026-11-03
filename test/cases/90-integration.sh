@@ -614,24 +614,67 @@ readme_commands() {
     }' "$1"
 }
 
-# unknown_commands <file> <routes> <groups>: the README commands the dispatcher
-# does not have, one per line. A command is known when it starts with a route
-# (usage schedule on starts with usage schedule), or is exactly a group, which
-# the dispatcher answers with the group's help.
+# choices <args>: the words the first argument of a command with these args
+# metadata must be one of, one per line, or nothing when it is free. Args that
+# open with a choice (<list|use|stop>, [on|off|status], [show | set [combo] |
+# unset]) fix it, unless the choice is optional and a positional follows (account
+# use [claude|codex|grok] [account|next]), where the first word may be the second
+# argument.
+choices() {
+  local re='^([<[])([a-z][a-z-]*( \[[a-z]+\])?( ?\| ?[a-z][a-z-]*( \[[a-z]+\])?)+)[]>]'
+  local args=$1 opening group rest
+  [[ $args =~ $re ]] || return 0
+  opening=${BASH_REMATCH[1]} group=${BASH_REMATCH[2]} rest=${args:${#BASH_REMATCH[0]}}
+  if [[ $opening == "[" && -n $(flagless "$rest") ]]; then return 0; fi
+  sed -E 's/ \[[a-z]+\]//g' <<<"$group" | tr '|' '\n' | tr -d ' '
+}
+
+# flagless <args>: the args metadata without its [--flag ...] groups.
+flagless() { sed -E 's/\[--[^]]*\]//g; s/[[:space:]]//g' <<<"$1"; }
+
+# first_word_ok <route> <args> <word> <catalog>: whether a README command may
+# follow <route> with the plain word <word>: one of the command's own choices, or
+# anything when it takes positional arguments, but not a word that a command with
+# subcommands or with only flags would never accept.
+first_word_ok() {
+  local -a allowed
+  mapfile -t allowed < <(choices "$2")
+  if ((${#allowed[@]} > 0)); then
+    [[ " ${allowed[*]} " == *" $3 "* ]]
+  elif [[ $'\n'$4 == *$'\n'"$1 "* ]]; then
+    return 1
+  else
+    [[ -n $(flagless "$2") ]]
+  fi
+}
+
+# unknown_commands <file> <catalog> <groups>: the README commands the dispatcher
+# does not have, one per line. The catalog is one route and its args metadata per
+# line, separated by a tab. A command is known when it is exactly a group, which
+# the dispatcher answers with the group's help, or when it starts with a route,
+# the longest one (usage update claude is usage update, not usage), and the word
+# after the route is one that route takes (local use, not local pause).
 unknown_commands() {
-  local words route group
-  local -a known_routes=() known_groups=()
-  while IFS= read -r route; do known_routes+=("$route"); done <<<"$2"
+  local words route args best best_args rest group
+  local -a known_groups=()
   while IFS= read -r group; do known_groups+=("$group"); done <<<"$3"
   while IFS= read -r words; do
-    for route in "${known_routes[@]}"; do
-      [[ $words == "$route" || $words == "$route "* ]] && continue 2
-    done
     for group in "${known_groups[@]}"; do
       [[ $words == "$group" ]] && continue 2
     done
+    best='' best_args=''
+    while IFS=$'\t' read -r route args; do
+      if [[ $words == "$route" || $words == "$route "* ]] && ((${#route} > ${#best})); then
+        best=$route best_args=$args
+      fi
+    done <<<"$2"
+    if [[ -n $best ]]; then
+      rest=${words#"$best"}
+      rest=${rest# }
+      if [[ -z $rest ]] || first_word_ok "$best" "$best_args" "${rest%% *}" "$2"; then continue; fi
+    fi
     echo "cachyos-agent $words"
-  done < <(readme_commands "$1") | sort -u
+  done < <(readme_commands "$1") | LC_ALL=C sort -u
 }
 
 begin "commands --check passes and --json lists every group and command the README documents"
@@ -652,10 +695,13 @@ while IFS= read -r route; do
   help=$("$AGENT" "${words[@]}" --help 2>&1 </dev/null) || fail "'$route --help' failed: $help"
   [[ -n $help ]] || fail "'$route --help' printed nothing"
 done < <(jq -r '.commands[] | select(.hidden | not) | .route' <<<"$all")
-routes=$(jq -r '.commands[].route | sub("^cachyos-agent "; "")' <<<"$all"; printf 'commands\nversion\n')
-bad=$(unknown_commands "$REPO_ROOT/README.md" "$routes" "$groups")
-[[ -z $bad ]] || fail "the README documents commands that do not exist: $bad"
-# The check itself has to see what it is looking for.
+catalog=$(jq -r '.commands[] | [(.route | sub("^cachyos-agent "; "")), (.args // "")] | @tsv' <<<"$all"
+  printf 'commands\t[--all] [--json] [--check]\nversion\t\n')
+bad=$(unknown_commands "$REPO_ROOT/README.md" "$catalog" "$groups")
+[[ -z $bad ]] || fail "the README documents commands or arguments that do not exist: $bad"
+# The check itself has to see what it is looking for: a command that is no
+# route, and an action a route does not take (local pause, usage schedul on),
+# while the words a route does take, free ones included, pass.
 cat >"$SANDBOX/README.md" <<'README'
 Run `cachyos-agent account use work` or `cachyos-agent crash capture on`; the `cachyos-agent` package.
 
@@ -671,11 +717,42 @@ Not commands: `cachyos-agent-launch`, `cachyos-agent package`, `cachyos-agent ac
 cachyos-agent account switch work
 cachyos-agent account
 ```
+
+Commands that take free arguments, and the actions of those that do not:
+
+```
+cachyos-agent local use best
+cachyos-agent shortcut set Meta+Ctrl+Shift+A
+cachyos-agent default claude
+cachyos-agent install claude
+cachyos-agent prompt fix the build
+cachyos-agent usage update claude codex
+cachyos-agent usage claude
+cachyos-agent usage schedule on
+cachyos-agent crash mute firefox
+cachyos-agent account mode auto 90
+cachyos-agent launch --pick
+cachyos-agent commands --check
+```
+
+Not commands:
+
+```
+cachyos-agent local pause
+cachyos-agent shortcut remove
+cachyos-agent default clude
+cachyos-agent usage schedul on
+cachyos-agent crash captur on
+cachyos-agent theme follow onn
+cachyos-agent launch pi
+cachyos-agent usage claude codex
+cachyos-agent version now
+```
 README
-seen=$(readme_commands "$SANDBOX/README.md" | sort -u | tr '\n' ',')
-expect "$seen" "account,account switch,account switch work,account use work,crash capture on,frobnicate,package,theme sync,usage," "the README reader does not see the commands it should"
-bad=$(unknown_commands "$SANDBOX/README.md" "$routes" "$groups" | tr '\n' ',')
-expect "$bad" "cachyos-agent account switch,cachyos-agent account switch work,cachyos-agent frobnicate,cachyos-agent package," "the README check does not catch a command that does not exist"
+seen=$(readme_commands "$SANDBOX/README.md" | LC_ALL=C sort -u | tr '\n' ',')
+expect "$seen" "account,account mode auto,account switch,account switch work,account use work,commands,crash captur on,crash capture on,crash mute firefox,default claude,default clude,frobnicate,install claude,launch,launch pi,local pause,local use best,package,prompt fix the build,shortcut remove,shortcut set,theme follow onn,theme sync,usage,usage claude,usage claude codex,usage schedul on,usage schedule on,usage update claude codex,version now," "the README reader does not see the commands it should"
+bad=$(unknown_commands "$SANDBOX/README.md" "$catalog" "$groups" | tr '\n' ',')
+expect "$bad" "cachyos-agent account switch,cachyos-agent account switch work,cachyos-agent crash captur on,cachyos-agent default clude,cachyos-agent frobnicate,cachyos-agent launch pi,cachyos-agent local pause,cachyos-agent package,cachyos-agent shortcut remove,cachyos-agent theme follow onn,cachyos-agent usage claude codex,cachyos-agent usage schedul on,cachyos-agent version now," "the README check does not catch exactly the commands that do not exist"
 ok
 cleanup_sandbox
 
