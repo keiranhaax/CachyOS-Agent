@@ -89,7 +89,7 @@ Two data files are checked by hand against the vendors, not against Omarchy. The
    ./bin/cachyos-agent commands --check
    ./test/run-tests
    shellcheck -x $(grep -lE '^#!/bin/bash' bin/*) lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
-   PYTHONPYCACHEPREFIX=$(mktemp -d) python3 -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
+   python3 -I -X pycache_prefix=$(mktemp -d) -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
    namcap PKGBUILD
    ```
 

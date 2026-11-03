@@ -553,6 +553,19 @@ if ca_syntax_ok "$SANDBOX/syntax/bad.py"; then fail "accepted broken Python"; fi
 [[ -z $(find "$SANDBOX/syntax" -name __pycache__) ]] || fail "bytecode was written next to the script"
 ok
 
+begin "ca_syntax_ok does not run Python that sits in the current directory"
+# python -m puts the current directory first on sys.path, so a py_compile.py
+# there would run in place of the real module and the check would pass unchecked.
+mkdir -p "$SANDBOX/untrusted"
+printf 'import pathlib\npathlib.Path("%s/marker").write_text("ran")\n' "$SANDBOX/untrusted" >"$SANDBOX/untrusted/py_compile.py"
+ok_status=0 bad_status=0
+(cd "$SANDBOX/untrusted" && ca_syntax_ok "$SANDBOX/syntax/good.py") || ok_status=$?
+(cd "$SANDBOX/untrusted" && ca_syntax_ok "$SANDBOX/syntax/bad.py") || bad_status=$?
+[[ ! -e $SANDBOX/untrusted/marker ]] || fail "the check ran the py_compile.py of the directory it was started in"
+[[ $ok_status == 0 && $bad_status != 0 ]] || fail "the check did not compile: good gave $ok_status, bad gave $bad_status"
+[[ -z $(find "$SANDBOX/untrusted" -name __pycache__) ]] || fail "bytecode was written in the current directory"
+ok
+
 begin "ca_syntax_ok treats a .py file as Python even without a shebang"
 printf 'print(1)\n' >"$SANDBOX/syntax/lib_good.py"
 printf 'def (\n' >"$SANDBOX/syntax/lib_bad.py"

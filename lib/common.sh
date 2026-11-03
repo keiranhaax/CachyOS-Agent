@@ -192,13 +192,17 @@ ca_atomic_write() {
 # ca_syntax_ok <file>: quietly check a source file's syntax, with py_compile
 # for Python (a .py name or a python shebang) and bash -n for everything else.
 # py_compile would write __pycache__ next to the file (read-only under
-# /usr/share), so its bytecode goes to a throwaway directory.
+# /usr/share), so its bytecode goes to a throwaway directory. -I keeps the
+# current directory off sys.path, where -m would otherwise look first: a
+# py_compile.py in a directory the command is run from (a checkout just
+# downloaded) must not run in its place. -I also ignores PYTHONPYCACHEPREFIX,
+# hence -X pycache_prefix.
 ca_syntax_ok() {
   local file=$1 first cache ok=0
   IFS= read -r first <"$file" || true
   if [[ $file == *.py || $first == '#!'*python* ]]; then
     cache=$(mktemp -d)
-    PYTHONPYCACHEPREFIX=$cache python3 -m py_compile "$file" 2>/dev/null || ok=1
+    python3 -I -X pycache_prefix="$cache" -m py_compile "$file" 2>/dev/null || ok=1
     rm -rf -- "$cache"
     return "$ok"
   fi

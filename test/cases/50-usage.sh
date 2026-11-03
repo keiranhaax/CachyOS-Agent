@@ -37,7 +37,7 @@ begin "every Python file compiles"
 make_sandbox
 for file in "$REPO_ROOT"/lib/*.py "$REPO_ROOT"/bin/cachyos-agent-*; do
   [[ $file == *.py ]] || head -1 "$file" | grep -q python || continue
-  PYTHONPYCACHEPREFIX=$SANDBOX/pyc python3 -m py_compile "$file" 2>&1 || fail "$file does not compile"
+  python3 -I -X pycache_prefix="$SANDBOX/pyc" -m py_compile "$file" 2>&1 || fail "$file does not compile"
 done
 ok
 cleanup_sandbox

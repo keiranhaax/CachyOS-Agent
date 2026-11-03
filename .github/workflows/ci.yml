@@ -26,7 +26,7 @@ jobs:
         run: shellcheck -x $(grep -lE '^#!/bin/bash' bin/*) lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
 
       - name: Compile the Python commands
-        run: PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
+        run: python -I -X pycache_prefix=/tmp/pycache -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
 
       - name: Validate skill tree
         run: ./bin/cachyos-agent-skills-validate

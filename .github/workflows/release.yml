@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           shellcheck -x $(grep -lE '^#!/bin/bash' bin/*) lib/*.sh test/run-tests test/lib.sh test/cases/*.sh
-          PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
+          python -I -X pycache_prefix=/tmp/pycache -m py_compile $(grep -lE '^#!/usr/bin/(env )?python' bin/*) lib/*.py
           ./bin/cachyos-agent-skills-validate
           ./test/run-tests
 
