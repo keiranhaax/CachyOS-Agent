@@ -1,0 +1,133 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# cachyos-agent:summary=Bind, show or remove the Plasma global shortcut that opens the agent
+# cachyos-agent:args=[show | set [combo] | unset]
+# cachyos-agent:examples=cachyos-agent shortcut set | cachyos-agent shortcut set Meta+Alt+A | cachyos-agent shortcut show | cachyos-agent shortcut unset
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+# Omarchy binds its keybinding in Hyprland's config. Plasma keeps global
+# shortcuts in kglobalshortcutsrc, and one that launches an application is a
+# `_launch` key under [services][<desktop file id>]:
+#
+#   [services][cachyos-agent.desktop]
+#   _launch=Meta+Ctrl+Shift+A
+#
+# (kglobalacceld, src/kserviceactioncomponent.cpp and globalshortcutsregistry.cpp:
+# the component is the desktop file's storage id and a tab separates several
+# keys; System Settings > Shortcuts > Add Application writes the same group.)
+# The file goes through kwriteconfig6, which honours XDG_CONFIG_HOME.
+#
+# The Plasma shortcut daemon reads the file when the session starts and does not
+# watch it. A running session could be told through the org.kde.KGlobalAccel
+# D-Bus interface, but that call has not been tried against a live session, so
+# the change is documented as applying at the next login.
+
+DESKTOP_ID=cachyos-agent.desktop
+DEFAULT_COMBO=Meta+Ctrl+Shift+A
+RC_FILE=kglobalshortcutsrc
+SHORTCUT_KEY=(--file "$RC_FILE" --group services --group "$DESKTOP_ID" --key _launch)
+
+usage() {
+  cat <<EOF2
+Usage: cachyos-agent shortcut [show | set [combo] | unset]
+
+Plasma global shortcut that runs 'cachyos-agent launch --pick' through
+$DESKTOP_ID.
+
+  show         print the bound shortcut, or "not set" (the default action)
+  set [combo]  bind a shortcut, $DEFAULT_COMBO by default
+  unset        remove the shortcut
+
+A combo is one or more of Meta, Ctrl, Alt, Shift and a key, joined by +:
+Meta+Alt+A, Ctrl+Shift+F9, Meta+, or Meta++ for the comma or plus key. Plasma
+reads shortcuts when you log in, so a change applies at your next login.
+EOF2
+}
+
+# The bound combo, or nothing.
+bound() {
+  local value
+  value=$(kreadconfig6 "${SHORTCUT_KEY[@]}" --default none)
+  if [[ $value != none ]]; then
+    printf '%s\n' "$value"
+  fi
+}
+
+# A modifier or more, then a key. A bare key would take that key away from
+# every application. The key is a name (F9, Return, PgUp) or one character of
+# any kind: Plasma stores keys as Qt's portable text, where ',' '/' '`' and '+'
+# itself (Meta++ is Zoom In) are keys like any other. Qt's names that hold a
+# space (Volume Up) are not accepted: a typo such as "A B" would parse to no key
+# at all and the shortcut would silently do nothing.
+valid_combo() {
+  [[ $1 =~ ^((Meta|Ctrl|Alt|Shift)\+)+([[:alnum:]]+|[^[:space:][:cntrl:]])$ ]] &&
+    [[ ! ${BASH_REMATCH[3]} =~ ^(Meta|Ctrl|Alt|Shift)$ ]]
+}
+
+# Plasma can only create the shortcut for a desktop file it finds in an
+# applications directory.
+desktop_entry_installed() {
+  local dir
+  local -a dirs
+  IFS=: read -ra dirs <<<"${XDG_DATA_HOME:-${HOME:?}/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  for dir in "${dirs[@]}"; do
+    if [[ -f $dir/applications/$DESKTOP_ID ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+cmd_show() {
+  local combo
+  combo=$(bound)
+  printf '%s\n' "${combo:-not set}"
+}
+
+cmd_set() {
+  local combo=${1-$DEFAULT_COMBO}
+  valid_combo "$combo" || ca_die "not a shortcut: $combo (use modifiers and a key, like $DEFAULT_COMBO)"
+  kwriteconfig6 "${SHORTCUT_KEY[@]}" "$combo"
+  printf '%s now opens the agent. Plasma reads shortcuts at login, so it applies after you log out and back in.\n' "$combo"
+  if ! desktop_entry_installed; then
+    printf 'Plasma needs %s in an applications directory to create the shortcut. From a Git checkout:\n  install -Dm644 %s/desktop/%s ~/.local/share/applications/%s\n' \
+      "$DESKTOP_ID" "$CACHYOS_AGENT_ROOT" "$DESKTOP_ID" "$DESKTOP_ID" >&2
+  fi
+}
+
+cmd_unset() {
+  if [[ -z $(bound) ]]; then
+    echo "No shortcut is set."
+    return 0
+  fi
+  kwriteconfig6 "${SHORTCUT_KEY[@]}" --delete
+  echo "Shortcut removed. Plasma reads shortcuts at login, so it stops working after you log out and back in."
+}
+
+main() {
+  case ${1-show} in
+    -h | --help)
+      usage
+      return 0
+      ;;
+  esac
+  (($# <= 2)) || {
+    usage >&2
+    return 1
+  }
+  ca_cmd_present kwriteconfig6 kreadconfig6 || ca_die "kwriteconfig6 and kreadconfig6 are needed (package kconfig)"
+  case ${1-show} in
+    show) cmd_show ;;
+    set) cmd_set "${@:2}" ;;
+    unset) cmd_unset ;;
+    *)
+      usage >&2
+      return 1
+      ;;
+  esac
+}
+
+main "$@"

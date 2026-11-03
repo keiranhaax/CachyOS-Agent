@@ -1,0 +1,40 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent-prompt (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Launch the default coding agent with a prompt
+# cachyos-agent:args=[--inline] [--] <prompt...>
+# cachyos-agent:examples=cachyos-agent prompt "Review this project" | cachyos-agent prompt --inline "Why does the build fail?"
+set -euo pipefail
+
+# Prompts live here rather than on `cachyos-agent launch`, where a bare prompt
+# would shadow the flags.
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+usage() {
+  echo "Usage: cachyos-agent prompt [--inline] [--] <prompt...>"
+  echo "Launch the default agent and give it the prompt. -- ends the options, for a prompt that starts with a dash."
+}
+
+inline=()
+case ${1-} in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --inline)
+    inline=(--inline)
+    shift
+    ;;
+esac
+if [[ ${1-} == -- ]]; then
+  shift
+fi
+
+if (($# == 0)); then
+  usage >&2
+  exit 1
+fi
+
+exec cachyos-agent-launch "${inline[@]}" --prompt "$*"

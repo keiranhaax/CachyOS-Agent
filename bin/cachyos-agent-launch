@@ -1,0 +1,476 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Adapted from Omarchy bin/omarchy-agent (MIT, Copyright (c) David Heinemeier Hansson); see THIRD_PARTY_NOTICES.md
+# cachyos-agent:summary=Launch the default coding agent in a terminal
+# cachyos-agent:args=[--inline] [--pick] [--local] [--local-model <name>] [--agent <id>] [--prompt <text>]
+# cachyos-agent:examples=cachyos-agent launch | cachyos-agent launch --inline | cachyos-agent launch --local | cachyos-agent launch --agent codex
+set -euo pipefail
+
+# shellcheck source=../lib/common.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+# shellcheck source=../lib/launcher.sh
+source "$CACHYOS_AGENT_ROOT/lib/launcher.sh"
+
+# Where `cachyos-agent local` serves the model: Ollama's OpenAI-compatible API.
+OLLAMA_URL=http://127.0.0.1:11434/v1
+
+inline=false
+pick=false
+use_local=false
+local_model=''
+agent_override=''
+prompt=''
+
+agent=''            # id of the agent to start
+agent_name=''       # its display name
+command=()          # argv that starts it
+auto=()             # the flags that make it run without stopping to ask
+prompt_via_clipboard='' # display name of an agent that cannot take a starting prompt
+
+usage() {
+  cat <<EOF2
+Usage: cachyos-agent launch [--inline] [--pick] [--local] [--local-model <name>] [--agent <id>] [--prompt <text>]
+
+Start the default agent (see: cachyos-agent default) in a terminal window.
+The agent runs unattended, in its own don't-stop-to-ask mode; the flags are
+printed as it starts, in the new window (to stderr with --inline).
+
+  --inline              run in this terminal instead of opening a window
+  --pick                with no default agent, list the choices
+  --local               run a local Ollama model: the one chosen with
+                        cachyos-agent local use (pi, or OpenCode without pi)
+  --local-model <name>  use this Ollama model instead of the chosen one
+  --agent <id>          start this agent instead of the default
+  --prompt <text>       give the agent a first message
+EOF2
+}
+
+# The reason is always printed in full, for the person at a terminal and for a
+# script or agent shell reading stderr. A shortcut or panel button has no one
+# reading stderr, so without a terminal the same words are also a notification.
+# ca_notify's own stderr fallback is silenced: the line is already printed.
+refuse() {
+  printf '%s: %s\n' "$1" "$2" >&2
+  if [[ ! -t 2 ]]; then
+    ca_notify -u critical -- "$1" "$2" 2>/dev/null
+  fi
+  exit 1
+}
+
+# Flags only. A bare prompt would shadow the flags, so prompts go through
+# cachyos-agent-prompt, which passes one here as --prompt.
+parse_args() {
+  while (($#)); do
+    case $1 in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --inline)
+        inline=true
+        shift
+        ;;
+      --pick)
+        pick=true
+        shift
+        ;;
+      --local)
+        use_local=true
+        shift
+        ;;
+      --local-model)
+        use_local=true
+        local_model=${2:?--local-model needs a model name}
+        shift 2
+        ;;
+      --agent)
+        agent_override=${2:?--agent needs an agent id}
+        shift 2
+        ;;
+      --prompt)
+        prompt=${2:?--prompt needs a value}
+        shift 2
+        ;;
+      *)
+        echo "Unexpected argument: $1" >&2
+        echo "To pass a prompt: cachyos-agent prompt \"$*\"" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+# Set agent and agent_name: --agent, or else the default.
+choose_agent() {
+  local name=$agent_override candidate
+  if [[ -z $name ]]; then
+    name=$(cachyos-agent-default)
+  fi
+
+  # Only agents with a launch-time overlay can be pointed at the local model.
+  # When the default can't, or none is set, the local model opens in pi, or
+  # OpenCode without pi: the agents panel launches it whether or not a default
+  # was chosen.
+  if $use_local && [[ $name != pi && $name != opencode ]]; then
+    name=''
+    for candidate in pi opencode; do
+      if ca_agent_present "$candidate"; then
+        name=$candidate
+        break
+      fi
+    done
+    if [[ -z $name ]]; then
+      refuse "No agent can run a local model" "Local models run in pi or OpenCode. Install one with: cachyos-agent install opencode"
+    fi
+  fi
+
+  # No default is chosen for you, so there is nothing to launch until one is.
+  # --pick lists the choices instead of just the error, which is what the
+  # shortcut wants: a keypress that opens nothing explains nothing.
+  if [[ -z $name ]]; then
+    local hint="Choose a default agent with: cachyos-agent default <name>"
+    if $pick; then
+      hint+=$'\n'"Agents: ${CA_AGENT_IDS[*]}"
+    fi
+    refuse "No default agent" "$hint"
+  fi
+  ca_agent_resolve "$name" || refuse "Unsupported agent: $name" "Agents: ${CA_AGENT_IDS[*]}"
+  agent=$CA_AGENT
+  agent_name=$CA_AGENT_NAME
+  if ! ca_agent_present "$agent"; then
+    refuse "$agent_name is not installed" "Install it with: cachyos-agent install $agent, or choose an installed agent with: cachyos-agent default <name>"
+  fi
+}
+
+# Add the prompt in the form the agent takes it, or nothing when there is none.
+with_prompt() {
+  [[ -z $prompt ]] || command+=("$@")
+}
+
+# Agents launched from the shortcut or menu run unattended, so each one starts
+# with its own spelling of "don't stop to ask". Pi and Ori have none to skip.
+# auto holds those flags, and is what the launcher announces.
+build_command() {
+  case $agent in
+    opencode)
+      auto=(--auto)
+      command=(opencode "${auto[@]}")
+      with_prompt --prompt "$prompt"
+      ;;
+    agy)
+      auto=(--dangerously-skip-permissions)
+      command=(agy "${auto[@]}")
+      with_prompt --prompt-interactive "$prompt"
+      ;;
+    copilot)
+      auto=(--allow-all)
+      command=(copilot "${auto[@]}")
+      with_prompt --interactive "$prompt"
+      ;;
+    crush)
+      # --yolo belongs to the interactive command only; `crush run` never prompts.
+      if [[ -n $prompt ]]; then
+        auto=(run)
+        command=(crush run "$prompt")
+      else
+        auto=(--yolo)
+        command=(crush "${auto[@]}")
+      fi
+      ;;
+    claude)
+      auto=(--permission-mode auto)
+      command=(claude "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    grok)
+      auto=(--permission-mode bypassPermissions)
+      command=(grok "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    codex)
+      auto=(--approve-for-me)
+      command=(codex "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    cursor-agent)
+      # --yolo covers commands only; the workspace trust dialog has its own flag.
+      # A one-word prompt naming a subcommand (update, login, help) still runs that
+      # subcommand after a bare --, so the agent subcommand is named outright, and
+      # -- after it keeps a prompt starting with a dash from being read as an option.
+      auto=(--yolo --trust)
+      command=(cursor-agent "${auto[@]}")
+      with_prompt agent -- "$prompt"
+      ;;
+    hermes)
+      # A session started from inside another Hermes run would otherwise inherit
+      # that run's session source and be recorded under it.
+      auto=(--yolo)
+      if [[ -n $prompt ]]; then
+        command=(env -u HERMES_SESSION_SOURCE hermes chat "${auto[@]}" --tui "--query=$prompt")
+      else
+        command=(hermes "${auto[@]}")
+      fi
+      ;;
+    muse)
+      # --approval-mode never skips the tool prompts but keeps Muse's own sandbox.
+      auto=(--approval-mode never)
+      command=(muse "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    omp)
+      auto=(--auto-approve)
+      command=(omp "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    ori)
+      # Ori is a harness launcher, and `ori code` is the agent it runs itself.
+      # A prompt alone means one headless turn there, printed after the turn ends,
+      # so --interactive is what seeds the session with it and keeps the window.
+      command=(ori code)
+      with_prompt --interactive --prompt "$prompt"
+      ;;
+    pi)
+      # -- keeps a prompt starting with a dash from being read as one of pi's options.
+      command=(pi)
+      with_prompt -- "$prompt"
+      ;;
+    kimi)
+      # --prompt is non-interactive print mode only; it cannot combine with --yolo.
+      if [[ -n $prompt ]]; then
+        auto=(--prompt)
+        command=(kimi --prompt "$prompt")
+      else
+        auto=(--yolo)
+        command=(kimi "${auto[@]}")
+      fi
+      ;;
+    qwen)
+      # Bind the value so a prompt starting with a dash stays literal.
+      auto=(--yolo)
+      command=(qwen "${auto[@]}")
+      with_prompt "--prompt-interactive=$prompt"
+      ;;
+    dsh)
+      # The browser UI has no prompt option, and the headless profile would run the
+      # prompt with full access in a window that closes with its answer, so a
+      # prompt goes to the clipboard below instead.
+      auto=(DSH_PERMISSION_MODE=danger-full-access)
+      command=(env "${auto[@]}" dsh web)
+      prompt_via_clipboard="DeepSeek Harness"
+      ;;
+    mcode)
+      # The TUI has no no-approval flag; permission options belong to exec mode.
+      command=(mcode)
+      with_prompt -- "$prompt"
+      ;;
+    kiro-cli)
+      # A positional input seeds the interactive chat; -- keeps a prompt starting
+      # with a dash literal.
+      auto=(--trust-all-tools)
+      command=(kiro-cli chat "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    freebuff)
+      # Freebuff takes no starting prompt and asks no tool permissions, so a
+      # prompt goes to the clipboard below instead.
+      command=(freebuff)
+      prompt_via_clipboard="Freebuff"
+      ;;
+    kilo)
+      # Kilo is built on OpenCode and shares its flags. Bind the prompt so one
+      # starting with a dash stays literal.
+      auto=(--auto)
+      command=(kilo "${auto[@]}")
+      with_prompt "--prompt=$prompt"
+      ;;
+    devin)
+      # A bare positional is a path that opens Devin Desktop, so the prompt
+      # always follows --, which starts an interactive session with it.
+      auto=(--permission-mode dangerous --respect-workspace-trust false)
+      command=(devin "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+    amp)
+      # Amp takes its first interactive message from piped input; a positional
+      # message is for --execute, which exits after one turn. The binary rides in
+      # as $0 so a user install below can replace it.
+      auto=(--dangerously-allow-all)
+      if [[ -n $prompt ]]; then
+        # shellcheck disable=SC2016 # $0, $1 and $@ are for the inner bash
+        command=(bash -c 'printf "%s\n" "$1" | exec "$0" "${@:2}"' amp "$prompt" "${auto[@]}")
+      else
+        command=(amp "${auto[@]}")
+      fi
+      ;;
+    commandcode)
+      # --yolo skips permission prompts and implies --trust. A positional prompt
+      # seeds the interactive session; -- keeps one starting with a dash literal.
+      auto=(--yolo)
+      command=(commandcode "${auto[@]}")
+      with_prompt -- "$prompt"
+      ;;
+  esac
+}
+
+# The model to run: --local-model, else the one `cachyos-agent local use`
+# chose, kept in the first line of local/active.
+resolve_local_model() {
+  local active=$CACHYOS_AGENT_STATE_DIR/local/active
+  if [[ -z $local_model && -f $active ]]; then
+    read -r local_model <"$active" || true
+  fi
+  if [[ -z $local_model ]]; then
+    refuse "No local model chosen" "Choose one with: cachyos-agent local use <model>"
+  fi
+}
+
+# --local points the agent at the Ollama model through a launch-time overlay
+# this launcher owns, never by editing the agent's own config. Only agents with
+# such an overlay can be pointed there.
+apply_local() {
+  local config major
+  case $agent in
+    opencode)
+      # The model and its provider ride in OPENCODE_CONFIG_CONTENT, the inline
+      # config that outranks the user's files: an OpenAI-compatible provider
+      # at the Ollama endpoint (https://opencode.ai/docs/providers/#ollama).
+      config=$(jq -nc --arg model "$local_model" --arg url "$OLLAMA_URL" '{
+        "$schema": "https://opencode.ai/config.json",
+        provider: {ollama: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Ollama (local)",
+          options: {baseURL: $url},
+          models: {($model): {name: $model}}
+        }},
+        model: ("ollama/" + $model)
+      }')
+      command=(env "OPENCODE_CONFIG_CONTENT=$config" "${command[@]}")
+      # OpenCode 2 attaches to a shared background service that never sees the
+      # inline config, so it needs a private one of its own; OpenCode 1 has no
+      # such flag and rejects it.
+      major=$(opencode --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)
+      if [[ $major != 1 ]]; then
+        command+=(--standalone)
+      fi
+      ;;
+    pi)
+      # Pi has no inline config. An extension registers the provider for this
+      # run only, leaving ~/.pi/agent/models.json alone; it reads the model and
+      # endpoint from the environment. The flags go before any -- prompt.
+      command=(env "CACHYOS_AGENT_LOCAL_MODEL=$local_model" "CACHYOS_AGENT_LOCAL_URL=$OLLAMA_URL"
+        pi --extension "$CACHYOS_AGENT_ROOT/data/pi-ollama.ts" --provider ollama --model "$local_model"
+        "${command[@]:1}")
+      ;;
+  esac
+}
+
+# An agent with no way to take a starting prompt still opens, with the prompt
+# on the clipboard to paste as its first message, so a prompted launch from the
+# panel or a crash report is not lost. With no clipboard tool the prompt is
+# shown in the agent's own window instead, ahead of the agent.
+hand_over_prompt() {
+  if ca_cmd_present wl-copy && printf '%s' "$prompt" | wl-copy; then
+    :
+  elif ca_cmd_present qdbus6 && qdbus6 org.kde.klipper /klipper setClipboardContents "$prompt" >/dev/null; then
+    :
+  else
+    # shellcheck disable=SC2016 # $1, $2 and $@ are for the inner bash
+    command=(bash -c 'printf "%s has no way to take a starting prompt. Paste this as your first message:\n\n%s\n\nPress Enter to start. " "$1" "$2"; read -r _; shift 2; exec "$@"' _ "$prompt_via_clipboard" "$prompt" "${command[@]}")
+    return 0
+  fi
+  ca_notify -i edit-paste -- "Prompt copied to the clipboard" "Paste it as your first message in $prompt_via_clipboard."
+}
+
+# The user's own install in ~/.local/bin, which counts as installed, is run by
+# path when PATH does not reach it (a desktop session often lacks it).
+use_user_install() {
+  local user_install=$HOME/.local/bin/$agent i
+  if ca_cmd_present "$agent" || [[ ! -x $user_install ]]; then
+    return 0
+  fi
+  for i in "${!command[@]}"; do
+    if [[ ${command[i]} == "$agent" ]]; then
+      command[i]=$user_install
+      break
+    fi
+  done
+}
+
+# A new session uses the current account selection rather than its parent's
+# account pin. Explicit provider homes still override the selection. Carry the
+# new pin in the command, since terminals started from a desktop session don't
+# inherit our environment. Skipped while no accounts command is installed.
+pin_account() {
+  local home_env account_pin home
+  local -a account_env
+  case $agent in
+    claude) home_env=CLAUDE_CONFIG_DIR ;;
+    codex) home_env=CODEX_HOME ;;
+    grok) home_env=GROK_HOME ;;
+    *) return 0 ;;
+  esac
+  ca_cmd_present cachyos-agent-account-home || return 0
+  account_pin=CACHYOS_AGENT_${agent^^}_HOME
+  if [[ -v $account_pin && ${!home_env:-} == "${!account_pin}" ]]; then
+    unset "$home_env"
+  fi
+  unset "$account_pin"
+  if [[ -z ${!home_env:-} ]]; then
+    home=$(cachyos-agent-account-home "$agent")
+    account_env=(env -u "$home_env" "$account_pin=$home")
+    if [[ -n $home ]]; then
+      account_env+=("$home_env=$home")
+    fi
+    command=("${account_env[@]}" "${command[@]}")
+  fi
+}
+
+# The unattended modes are the point, so they are never silent: one line naming
+# the agent and the flags that stop it asking.
+announcement() {
+  local what=$agent_name
+  if $use_local; then
+    what+=" on local model $local_model ($OLLAMA_URL)"
+  fi
+  if ((${#auto[@]})); then
+    printf 'cachyos-agent: starting %s with %s, which does not stop to ask before acting\n' "$what" "${auto[*]}"
+  else
+    printf 'cachyos-agent: starting %s (it has no auto-approve flag)\n' "$what"
+  fi
+}
+
+main() {
+  parse_args "$@"
+
+  # Agents refuse to remember trust for $HOME, so launches from the shortcut or
+  # menu start in the work directory instead of re-asking on every session.
+  if [[ $PWD == "$HOME" && -d $HOME/Work ]]; then
+    cd "$HOME/Work"
+  fi
+
+  if $use_local; then
+    resolve_local_model
+  fi
+  choose_agent
+  build_command
+  if $use_local; then
+    apply_local
+  fi
+  if [[ -n $prompt && -n $prompt_via_clipboard ]]; then
+    hand_over_prompt
+  fi
+  use_user_install
+  pin_account
+
+  if $inline; then
+    announcement >&2
+    exec "${command[@]}"
+  fi
+  # The shortcut, the panel button and the crash watcher run this with stderr
+  # in the journal or /dev/null, so the line is printed in the new window, just
+  # ahead of the agent, where the person it concerns is looking.
+  # shellcheck disable=SC2016 # $1 and $@ are for the inner bash
+  ca_terminal_exec --title "CachyOS Agent" bash -c 'printf "%s\n" "$1" >&2; shift; exec "$@"' _ "$(announcement)" "${command[@]}"
+}
+
+main "$@"
