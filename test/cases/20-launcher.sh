@@ -991,12 +991,32 @@ else
 fi
 cleanup_sandbox
 
+begin "shortcut takes a punctuation key and stores it the way Plasma reads it"
+setup
+if ! command -v kwriteconfig6 >/dev/null; then
+  skip "kwriteconfig6 is not installed"
+else
+  # Plasma writes keys as Qt's portable text, so ',' '/' '`' and the '+' key itself
+  # are keys like any other (the Zoom In shortcut ships as Meta++). kglobalacceld
+  # reads _launch as one string and splits it on tabs only, so no key needs
+  # escaping.
+  for combo in 'Meta+,' 'Ctrl+Alt+/' 'Meta+`' 'Meta++' 'Meta+Ctrl++' 'Meta+;' 'Meta+=' 'Ctrl+Alt+[' 'Meta+.' 'Meta+Return' 'Meta+Ctrl+Shift+A' 'Alt+F9'; do
+    run "$CA" shortcut set "$combo"
+    [[ $RC == 0 ]] || fail "refused [$combo]: $ERR"
+    run "$CA" shortcut show
+    expect "$OUT" "$combo" "show reads back $combo"
+    expect "$(<"$XDG_CONFIG_HOME/$RC_FILE_NAME")" $'[services][cachyos-agent.desktop]\n_launch='"$combo" "file holds $combo"
+  done
+  ok
+fi
+cleanup_sandbox
+
 begin "shortcut refuses anything that is not a modifier plus a key"
 setup
 if ! command -v kwriteconfig6 >/dev/null; then
   skip "kwriteconfig6 is not installed"
 else
-  for combo in A F5 Meta Meta+Ctrl Super+A Meta+Alt+ Meta++A 'Meta+A B' 'Meta+A;touch x' '-h' ''; do
+  for combo in A F5 , Meta Meta+Ctrl Shift+Alt Meta+Meta Super+A Meta+Alt+ Meta++A 'Meta+A+' 'Meta+ ' $'Meta+\t' $'Meta+A\nB' 'Meta+A B' 'Meta+A;touch x' '-h' ''; do
     run "$CA" shortcut set "$combo"
     [[ $RC == 1 ]] || fail "accepted [$combo]"
   done

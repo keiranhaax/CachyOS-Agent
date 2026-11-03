@@ -42,8 +42,8 @@ $DESKTOP_ID.
   unset        remove the shortcut
 
 A combo is one or more of Meta, Ctrl, Alt, Shift and a key, joined by +:
-Meta+Alt+A, Ctrl+Shift+F9. Plasma reads shortcuts when you log in, so a change
-applies at your next login.
+Meta+Alt+A, Ctrl+Shift+F9, Meta+, or Meta++ for the comma or plus key. Plasma
+reads shortcuts when you log in, so a change applies at your next login.
 EOF2
 }
 
@@ -57,10 +57,14 @@ bound() {
 }
 
 # A modifier or more, then a key. A bare key would take that key away from
-# every application.
+# every application. The key is a name (F9, Return, PgUp) or one character of
+# any kind: Plasma stores keys as Qt's portable text, where ',' '/' '`' and '+'
+# itself (Meta++ is Zoom In) are keys like any other. Qt's names that hold a
+# space (Volume Up) are not accepted: a typo such as "A B" would parse to no key
+# at all and the shortcut would silently do nothing.
 valid_combo() {
-  local combo=$1 key=${1##*+}
-  [[ $combo =~ ^((Meta|Ctrl|Alt|Shift)\+)+[[:alnum:]]+$ && ! $key =~ ^(Meta|Ctrl|Alt|Shift)$ ]]
+  [[ $1 =~ ^((Meta|Ctrl|Alt|Shift)\+)+([[:alnum:]]+|[^[:space:][:cntrl:]])$ ]] &&
+    [[ ! ${BASH_REMATCH[3]} =~ ^(Meta|Ctrl|Alt|Shift)$ ]]
 }
 
 # Plasma can only create the shortcut for a desktop file it finds in an
