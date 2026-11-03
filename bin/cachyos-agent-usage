@@ -162,7 +162,9 @@ JQ
 )
 
 main() {
-  local LC_COLLATE=C json=false named=false agent file
+  # LC_ALL beats LC_COLLATE, so it is the one to set for the same file order in
+  # every locale; nothing else here depends on the locale.
+  local LC_ALL=C json=false named=false agent file report
   local -a want=() files=() valid=() missing=()
 
   while (($# > 0)); do
@@ -210,8 +212,10 @@ main() {
   if $json; then
     if ((${#valid[@]} > 0)); then jq -cs . "${valid[@]}"; else echo '[]'; fi
   elif ((${#valid[@]} > 0)); then
-    jq -rs --argjson now "$(date +%s)" --argjson old_seconds "$RECORD_OLD_SECONDS" \
-      --argjson named "$named" "$JQ_REPORT" "${valid[@]}"
+    report=$(jq -rs --argjson now "$(date +%s)" --argjson old_seconds "$RECORD_OLD_SECONDS" \
+      --argjson named "$named" "$JQ_REPORT" "${valid[@]}")
+    # Every record can say the agent is not in use, which the report leaves out.
+    printf '%s\n' "${report:-No agent is in use on this machine (run: cachyos-agent usage update after signing in to one)}"
   elif ((${#want[@]} == 0)); then
     echo "No usage records yet. Run: cachyos-agent usage update"
   fi

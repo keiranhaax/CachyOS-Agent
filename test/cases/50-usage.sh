@@ -465,6 +465,34 @@ out=$("$REPORT")
 ok
 cleanup_sandbox
 
+begin "the report says so when records exist but no agent is in use"
+make_sandbox
+write_record kimi '{schemaVersion: 1, id: "kimi", name: "Kimi", ready: false, limits: []}'
+write_record zai '{schemaVersion: 1, id: "zai", name: "Z.ai", ready: false, limits: []}'
+out=$("$REPORT")
+[[ $out == "No agent is in use on this machine"* ]] || fail "expected the not-in-use message, got: $(printf '%q' "$out")"
+[[ $("$REPORT" --json | jq length) == 2 ]] || fail "--json lost the unused records"
+[[ $("$REPORT" kimi) == "Kimi: not in use on this machine" ]] || fail "a named unused agent is no longer reported by name"
+ok
+cleanup_sandbox
+
+begin "the file order is byte order whatever LC_ALL says"
+make_sandbox
+# Most locales ignore punctuation when collating, which puts grokbot.json
+# before grok.json; byte order puts the dot first.
+for agent in hermes grokbot grok claude; do
+  # shellcheck disable=SC2016 # $id is a jq variable
+  write_record "$agent" --arg id "$agent" '{schemaVersion: 1, id: $id, name: $id, ready: true, limits: []}'
+done
+for locale in C en_US.utf8 C.utf8; do
+  got=$(LC_ALL=$locale "$REPORT" --json | jq -c 'map(.id)')
+  [[ $got == '["claude","grok","grokbot","hermes"]' ]] || fail "LC_ALL=$locale gave $got"
+  got=$(LC_ALL=$locale "$REPORT" | grep -v '^$' | tr '\n' ' ')
+  [[ $got == 'claude grok grokbot hermes ' ]] || fail "LC_ALL=$locale text report order: $got"
+done
+ok
+cleanup_sandbox
+
 begin "the report copes with a record of the wrong shapes"
 make_sandbox
 mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"

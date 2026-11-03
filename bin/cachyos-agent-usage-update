@@ -92,9 +92,10 @@ wanted() {
   in_list "$1" "${ONLY[@]}"
 }
 
-# Fill AGENTS from the collectors beside this script.
+# Fill AGENTS from the collectors beside this script, in byte order in every
+# locale. LC_ALL overrides LC_COLLATE, so it is LC_ALL that has to be set.
 discover() {
-  local LC_COLLATE=C file agent skip
+  local LC_ALL=C file agent skip
   for file in "$CACHYOS_AGENT_BIN"/cachyos-agent-usage-*; do
     [[ -f $file && -x $file ]] || continue
     agent=${file##*/cachyos-agent-usage-}
