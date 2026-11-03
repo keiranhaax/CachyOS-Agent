@@ -256,6 +256,15 @@ files_joined() {
   return 0
 }
 
+# toast_summaries: the summary of every toast sent, sorted, one per line.
+toast_summaries() {
+  local f
+  for f in "$SANDBOX"/toast.*; do
+    [[ -e $f ]] && awk 'f { print; exit } $0 == "--" { f = 1 }' "$f"
+  done | sort
+  return 0
+}
+
 begin "the watcher announces one crash per program, to its owner, and hands a click to the agent"
 make_sandbox
 watch_stubs
@@ -280,7 +289,7 @@ CACHYOS_AGENT_CRASH_IGNORE='^ignore' run_watcher
 wait_for 1 "$SANDBOX/diagnosis.*"
 [[ $(call_args journalctl 1) == $'-f\n-n\n0\n-o\njson\nMESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1' ]] \
   || fail "journalctl follows the wrong thing: $(call_args journalctl 1)"
-toasts=$(for f in "$SANDBOX"/toast.*; do awk 'f { print; exit } $0 == "--" { f = 1 }' "$f"; done | sort)
+toasts=$(toast_summaries)
 [[ $toasts == $'Process crashed: bytes\nProcess crashed: firefox\nProcess crashed: odd\nProcess crashed: zed' ]] \
   || fail "announced the wrong crashes: $toasts"
 firefox_toast=$(grep -lx 'Process crashed: firefox' "$SANDBOX"/toast.*)
@@ -290,6 +299,34 @@ firefox_toast=$(grep -lx 'Process crashed: firefox' "$SANDBOX"/toast.*)
   || fail "the click did not become exactly one diagnosis: $(files_joined "$SANDBOX/diagnosis.*")"
 [[ $(calls_text systemd-run) == $'--user\n--scope\n--quiet\n--description=Diagnose crash of firefox\n--\ncachyos-agent-crash\n1001\nfirefox\n/usr/lib/firefox/firefox\nSIGSEGV' ]] \
   || fail "the diagnosis does not run in a scope of its own: $(calls_text systemd-run)"
+ok
+cleanup_sandbox
+
+begin "mutes and the ignore pattern follow the executable's name, not the truncated comm"
+make_sandbox
+watch_stubs
+me=$(id -u)
+# Firefox's content processes are named by thread, and comm keeps 15 characters.
+# The kate crash after it is a sentinel: the loop reads in order, so once kate
+# has its toast, the crash before it has been decided.
+{
+  journal_entry "$me" 'Isolated Web Co' 1001 /usr/lib/firefox/firefox SIGSEGV
+  journal_entry "$me" kate 1002 /usr/bin/kate SIGSEGV
+} >"$SANDBOX/journal.jsonl"
+run_watcher
+wait_for 2 "$SANDBOX/toast.*"
+[[ $(toast_summaries) == $'Process crashed: firefox\nProcess crashed: kate' ]] || fail "the crash is not named by its executable: $(toast_summaries)"
+rm -f "$SANDBOX"/toast.*
+"$AGENT" crash mute /usr/lib/firefox/firefox >/dev/null
+[[ -e $XDG_STATE_HOME/cachyos-agent/toggles/crash-ignore/firefox ]] || fail "muting a path did not write the flag under its basename"
+run_watcher
+wait_for 1 "$SANDBOX/toast.*"
+[[ $(toast_summaries) == 'Process crashed: kate' ]] || fail "a mute on the executable's name did not silence the crash with another comm: $(toast_summaries)"
+"$AGENT" crash mute /usr/lib/firefox/firefox off >/dev/null
+rm -f "$SANDBOX"/toast.*
+CACHYOS_AGENT_CRASH_IGNORE='^firefox$' run_watcher
+wait_for 1 "$SANDBOX/toast.*"
+[[ $(toast_summaries) == 'Process crashed: kate' ]] || fail "a pattern for the executable's name did not silence the crash with another comm: $(toast_summaries)"
 ok
 cleanup_sandbox
 
@@ -308,7 +345,7 @@ run_watcher
 wait_for 4 "$SANDBOX/diagnosis.*"
 [[ $(files_joined "$SANDBOX/diagnosis.*") == $'1006|unknown|/opt/some app/bin/odd|SIGILL\n1008|x/y/zed|unknown|SIGTRAP\n1011|unknown|/usr/bin/bytes|SIGSEGV\n1012|unknown|unknown|unknown' ]] \
   || fail "unexpected diagnoses: $(files_joined "$SANDBOX/diagnosis.*")"
-toasts=$(for f in "$SANDBOX"/toast.*; do awk 'f { print; exit } $0 == "--" { f = 1 }' "$f"; done | sort)
+toasts=$(toast_summaries)
 [[ $toasts == $'Process crashed: bytes\nProcess crashed: odd\nProcess crashed: unknown\nProcess crashed: zed' ]] \
   || fail "crashes were named wrongly: $toasts"
 ok
