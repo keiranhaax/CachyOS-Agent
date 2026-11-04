@@ -63,6 +63,9 @@ ok() {
 # That includes everything the product itself exports into the agent sessions it
 # launches (the CACHYOS_AGENT_ pins and local model), so the suite gives the same
 # result inside such a session, and what a systemd unit or a CLI's login sets.
+# The GIT_ variables go too: a Git hook in a linked worktree exports GIT_DIR and
+# GIT_INDEX_FILE, and the cases that run git would then commit into the
+# caller's repository.
 make_sandbox() {
   SANDBOX=$(cd "$(mktemp -d)" && pwd -P) # canonical, so paths compare equal to readlink -f
   SANDBOXES+=("$SANDBOX")
@@ -74,7 +77,7 @@ make_sandbox() {
   export XDG_RUNTIME_DIR=$SANDBOX/run
   unset HERMES_HOME CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME TERMINAL \
     CACHYOS_SKILLS_SRC DBUS_SESSION_BUS_ADDRESS "${!CACHYOS_AGENT_@}" \
-    INVOCATION_ID BROWSER PI_CODING_AGENT_DIR OPENCODE_CONFIG_CONTENT
+    INVOCATION_ID BROWSER PI_CODING_AGENT_DIR OPENCODE_CONFIG_CONTENT "${!GIT_@}"
   PATH=$SANDBOX/stubs:$BASE_PATH
 }
 

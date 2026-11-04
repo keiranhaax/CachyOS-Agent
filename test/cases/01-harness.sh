@@ -39,6 +39,16 @@ done
 ok
 cleanup_sandbox
 
+begin "make_sandbox clears the GIT_ variables a Git hook exports, so git in a case cannot reach the caller's repository"
+# A pre-commit hook in a linked worktree gets GIT_DIR and an absolute GIT_INDEX_FILE.
+for var in GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_AUTHOR_NAME GIT_CONFIG_NOSYSTEM; do export "$var=/leaked"; done
+make_sandbox
+for var in GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_AUTHOR_NAME GIT_CONFIG_NOSYSTEM; do
+  [[ -z ${!var+set} ]] || fail "$var survived make_sandbox"
+done
+ok
+cleanup_sandbox
+
 begin "a case exits nonzero after a failed assertion, with nothing to call at the end"
 make_sandbox
 if run_case 'begin "deliberate"; make_sandbox; [[ 1 == 2 ]] || fail "must fail"; ok; cleanup_sandbox'; then
