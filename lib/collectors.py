@@ -2752,7 +2752,7 @@ def codex_rollout_cache(agent_id: str | None = None) -> Path | None:
     return None
 
 
-def codex_rollouts(cache_file: Path | None, reuse: bool = True, native: bool = False) -> tuple[dict[str, dict[str, Any]], bool]:
+def codex_rollouts(reuse: bool = True, native: bool = False) -> tuple[dict[str, dict[str, Any]], bool]:
   """Every Codex rollout of the last CODEX_WINDOW_DAYS, as
   read_codex_rollout() reads it, keyed by path, and whether every one was
   read in full. Those on the built-in provider are read only with `native`,
@@ -2767,15 +2767,14 @@ def codex_rollouts(cache_file: Path | None, reuse: bool = True, native: bool = F
   forces read every rollout once between them, whenever each starts. A
   record keeps every turn whatever its provider, so the caller decides which
   providers and models are its own, and every caller shares the cache
-  codex_rollout_cache() names: any `cache_file` stands for it, and None
-  reads with no cache at all. Every collector reading Codex runs at once,
-  so one of them brings the cache up to date under its `.lock` while the
-  others wait and then find nothing left to read; a cache that already
-  answers for every rollout is read without waiting. Only the files a scan
-  saw are written back, so deleted rollouts and ones past the window leave
-  the cache.
+  codex_rollout_cache() names, none when that cannot be made. Every
+  collector reading Codex runs at once, so one of them brings the cache up
+  to date under its `.lock` while the others wait and then find nothing left
+  to read; a cache that already answers for every rollout is read without
+  waiting. Only the files a scan saw are written back, so deleted rollouts
+  and ones past the window leave the cache.
   """
-  shared = None if cache_file is None else codex_rollout_cache()
+  shared = codex_rollout_cache()
 
   def rollouts() -> list[tuple[str, Path, os.stat_result]]:
     found = []
@@ -3036,7 +3035,7 @@ def scan_codex_routed(owner: str, reuse: bool = True) -> tuple[list[UsageRow], b
   urls = codex_provider_urls()
   if owner != "ollama" and not any(endpoint_owner(url) == owner for url in urls.values()):
     return [], True
-  records, complete = codex_rollouts(codex_rollout_cache(), reuse=reuse, native=codex_native_routed(urls))
+  records, complete = codex_rollouts(reuse=reuse, native=codex_native_routed(urls))
   rows = [
     UsageRow(day, record["session"], owner, model, *totals[:4], prompts=totals[4])
     for record in records.values()

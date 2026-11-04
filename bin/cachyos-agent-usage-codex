@@ -35,8 +35,8 @@ from collectors import (  # noqa: E402
   account_entry,
   base_record,
   cached_scan,
+  codex_home,
   codex_provider_urls,
-  codex_rollout_cache,
   codex_rollouts,
   codex_route_owner,
   codex_scan_match,
@@ -147,7 +147,7 @@ def scan_native_codex_sessions(reuse):
   are this subscription's; the models codex_route_owner() gives another
   collector are left to it, each with the prompts it answered."""
   urls = codex_provider_urls()
-  records, complete = codex_rollouts(codex_rollout_cache(), reuse=reuse, native=True)
+  records, complete = codex_rollouts(reuse=reuse, native=True)
   owners = {}
   for record in records.values():
     if record["provider"] not in ("", NATIVE_PROVIDER):
