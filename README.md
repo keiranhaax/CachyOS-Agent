@@ -220,7 +220,7 @@ cachyos-agent crash capture off
 cachyos-agent crash 1516893          # diagnose a crash by hand: any PID from coredumpctl list
 ```
 
-With the watcher on, a crash raises a "Process crashed" notification with a Diagnose button. Choosing it opens your default agent in a new terminal, unattended like any other launch, with the [`diagnose-crash`](agents/skills/diagnose-crash/SKILL.md) skill. The skill walks the agent through establishing the facts from the core dump and deciding whether the crash is worth reporting upstream. The names and paths in the prompt come from the crashed program, so they are cut to one line and the agent is told they are data. Nothing is announced until a default agent is chosen.
+With the watcher on, a crash raises a "Process crashed" notification with a Diagnose button. Choosing it opens your default agent in a new terminal, unattended like any other launch, with the [`diagnose-crash`](agents/skills/diagnose-crash/SKILL.md) skill. The skill walks the agent through establishing the facts from the core dump and deciding whether the crash is worth reporting upstream. The names and paths in the prompt come from the crashed program, so they are cut to one line and the agent is told they are data. Nothing is announced until a default agent is chosen, and the watcher only sees the saved choice: `CACHYOS_AGENT_DEFAULT` exported from a shell does not reach a service of the user manager (put it in `~/.config/environment.d/` if you want it there).
 
 Silence one program at a time, which is what the diagnosis offers at its end:
 

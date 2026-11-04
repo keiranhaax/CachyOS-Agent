@@ -829,6 +829,12 @@ run "$AGENT" crash capture on
 stub cachyos-agent-default
 run "$AGENT" crash capture on
 ((status == 0)) && [[ $out == *"No default agent is set"*"cachyos-agent default <name>"* ]] || fail "no hint about choosing an agent ($status): $out"
+# The watcher runs in the user manager, which does not have what the user's shell exports:
+# a default only the caller's environment names is none for it, and the hint must say so.
+# shellcheck disable=SC2016 # a stub body, not a string to expand here
+stub cachyos-agent-default 'echo "${CACHYOS_AGENT_DEFAULT-}"'
+CACHYOS_AGENT_DEFAULT=claude run "$AGENT" crash capture on
+((status == 0)) && [[ $out == *"No default agent is set"* ]] || fail "no hint although only the shell's environment names an agent ($status): $out"
 rm -f "$SANDBOX/calls/systemctl" "$SANDBOX/stubs/notify-send" "$HOME/$UNIT_DIR_REL/$UNIT"
 mkdir "$SANDBOX/minimal"
 ln -s "$(type -P dirname)" "$(type -P readlink)" "$SANDBOX/minimal/"

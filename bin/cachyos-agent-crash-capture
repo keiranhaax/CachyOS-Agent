@@ -99,8 +99,11 @@ capture_on() {
   systemctl --user enable --now "$UNIT"
   echo "Crash capture is on."
   # The watcher announces nothing until an agent is chosen; say so now, while
-  # the user is looking, rather than leave them waiting for a toast.
-  if ca_cmd_present cachyos-agent-default && [[ -z $(cachyos-agent-default) ]]; then
+  # the user is looking, rather than leave them waiting for a toast. The service
+  # runs in the user manager's environment, which never sees a
+  # CACHYOS_AGENT_DEFAULT exported from a shell rc file, so only the saved choice
+  # counts here.
+  if ca_cmd_present cachyos-agent-default && [[ -z $(env -u CACHYOS_AGENT_DEFAULT cachyos-agent-default) ]]; then
     echo "No default agent is set, so crashes are not announced yet: run 'cachyos-agent default <name>'."
   fi
 }
