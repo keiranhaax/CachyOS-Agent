@@ -222,6 +222,8 @@ journal_entry() {
 #   refuse-first         the next call writes ID 0, as when the server refuses
 #                        the toast, then waits for ever (up to 30 s here) and
 #                        records its PID in refused.pid
+#   stay-open            a diagnosis stays running until release, as an agent's
+#                        terminal does that does not fork
 # busctl names the notification server's owner as :1.<contents of the file
 # "server">, 1 without one, so a case restarts the server by writing a new number.
 # shellcheck disable=SC2016 # stub bodies are scripts for the stub's own shell
@@ -258,7 +260,13 @@ if [[ -r $sb/click-on && $summary == *"$(<"$sb/click-on")"* ]]; then echo diagno
   stub busctl 'sb=${self%/stubs/*}
 if [[ $* == *GetNameOwner* ]]; then printf "s \":1.%s\"\n" "$(cat "$sb/server" 2>/dev/null || echo 1)"; fi'
   stub systemd-run 'while [[ $1 != -- ]]; do shift; done; shift; exec "$@"'
-  stub cachyos-agent-crash 'printf "%s\n" "$@" >"${self%/stubs/*}/diagnosis.$$"'
+  stub cachyos-agent-crash 'sb=${self%/stubs/*}
+printf "%s\n" "$@" >"$sb/diagnosis.$$"
+# A terminal that does not fork stays in the foreground for as long as its window is open.
+if [[ -e $sb/stay-open ]]; then
+  i=0
+  while [[ ! -e $sb/release ]] && ((i++ < 300)); do sleep 0.1; done
+fi'
   stub cachyos-agent-default 'echo claude'
 }
 
@@ -367,6 +375,33 @@ wait_for 14 "$SANDBOX/toast.*"
 touch "$SANDBOX/release"
 [[ $(count_files "$SANDBOX/toast.*") == 10 ]] || fail "expected ten toasts, got $(count_files "$SANDBOX/toast.*")"
 grep -q '10 crash notifications are waiting' "$SANDBOX/watch.log" || fail "the dropped crashes were not reported: $(<"$SANDBOX/watch.log")"
+ok
+cleanup_sandbox
+
+begin "a toast that has been answered no longer counts toward the ten that wait, whatever its diagnosis does"
+make_sandbox
+watch_stubs
+me=$(id -u)
+for ((i = 1; i <= 14; i++)); do journal_entry "$me" "prog$i" "$((3000 + i))" "/usr/bin/prog$i" SIGSEGV; done >"$SANDBOX/journal.jsonl"
+# The first ten crashes are answered at once and their diagnoses stay open, as an agent's
+# terminal does; the last four arrive after that.
+# shellcheck disable=SC2016 # a stub body, not a string to expand here
+stub journalctl 'sb=${self%/stubs/*}
+head -n 10 "$sb/journal.jsonl"
+for ((i = 0; i < 100; i++)); do
+  files=("$sb"/diagnosis.*)
+  ((${#files[@]} >= 10)) && break
+  sleep 0.1
+done
+tail -n +11 "$sb/journal.jsonl"'
+printf 'Process crashed' >"$SANDBOX/click-on"
+: >"$SANDBOX/stay-open"
+run_watcher
+((status == 0)) || fail "the watcher did not end cleanly with the journal ($status): $(<"$SANDBOX/watch.log")"
+wait_for 14 "$SANDBOX/toast.*"
+touch "$SANDBOX/release"
+[[ $(count_files "$SANDBOX/toast.*") == 14 ]] || fail "expected 14 toasts, got $(count_files "$SANDBOX/toast.*"): $(<"$SANDBOX/watch.log")"
+if grep -q 'waiting for an answer' "$SANDBOX/watch.log"; then fail "answered toasts still held their places: $(<"$SANDBOX/watch.log")"; fi
 ok
 cleanup_sandbox
 

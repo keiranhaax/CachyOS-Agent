@@ -143,8 +143,13 @@ diagnose_when_chosen() {
   # transient service: it runs the command as a child of this background job, in
   # this environment, and ends when the last process in it does, so a terminal
   # that forks and lets its first process exit is not cut down with it.
+  #
+  # In the background, because a scope runs its command in the foreground, and a
+  # terminal that does not fork (alacritty, kitty, foot, ghostty, xterm) lives as
+  # long as its window. The toast is answered by now, so this job, which counts
+  # toward MAX_WAITING for as long as it runs, must not.
   systemd-run --user --scope --quiet --description="Diagnose crash of $name" -- \
-    cachyos-agent-crash "$pid" "$comm" "$exe" "$signal"
+    cachyos-agent-crash "$pid" "$comm" "$exe" "$signal" &
 }
 
 # Returns 0 once the notification server has the toast, without waiting for the
