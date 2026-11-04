@@ -81,8 +81,7 @@ class DeepSeekError(Exception):
 
 
 def model_name(raw: Any) -> str:
-  value = str(raw or AGENT_ID)
-  return value if value else AGENT_ID
+  return str(raw or AGENT_ID)
 
 
 # ---------------------------------------------------- pi, omp, and opencode

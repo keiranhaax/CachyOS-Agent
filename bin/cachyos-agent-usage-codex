@@ -81,8 +81,7 @@ TRANSPORT_ERRORS = (
 
 
 def model_name(raw):
-  value = str(raw or "codex")
-  return value if value else "codex"
+  return str(raw or "codex")
 
 
 
