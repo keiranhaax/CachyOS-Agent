@@ -82,6 +82,11 @@ main() {
     # A menu, shortcut or panel button has no terminal for pacman's prompts, so
     # the install gets one of its own and carries on there with --install.
     if ! $installing && [[ ! -t 0 ]]; then
+      if ! ca_terminal_find >/dev/null; then
+        # No one is reading stderr when this comes from a shortcut or a button.
+        ca_notify -u critical -- "No terminal found" "Installing $name needs a terminal window: set TERMINAL, or install konsole or alacritty." 2>/dev/null
+        ca_die "no terminal found; set TERMINAL or install konsole or alacritty"
+      fi
       ca_terminal_exec --title "CachyOS Agent" cachyos-agent-default --install "$agent"
     fi
     if ! cachyos-agent-install "$agent"; then

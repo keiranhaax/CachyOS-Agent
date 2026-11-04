@@ -493,6 +493,10 @@ main() {
     resolve_local_model
   fi
   choose_agent
+  # The window is the one thing a shortcut or panel button cannot do without, and
+  # its stderr is the journal: say it in a notification, before the prompt is put
+  # on the clipboard or anything is started.
+  $inline || ca_terminal_find >/dev/null || refuse "No terminal found" "The agent opens in a terminal window: set TERMINAL, or install konsole or alacritty."
   build_command
   if $use_local; then
     apply_local

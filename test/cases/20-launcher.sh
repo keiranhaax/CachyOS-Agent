@@ -548,6 +548,33 @@ contains "$ERR" "Agents: pi omp opencode" "--pick lists the agents on stderr"
 ok
 cleanup_sandbox
 
+begin "launch and default tell the person without a terminal window that none could be opened"
+setup
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+stub notify-send
+stub_agents claude cachyos-agent-install
+mkdir -p "$XDG_CONFIG_HOME/cachyos-agent"
+echo claude >"$XDG_CONFIG_HOME/cachyos-agent/default-agent"
+# No $TERMINAL, no konsole or any other terminal on this PATH, and no one reading stderr.
+run "$CA" launch
+expect "$RC" 1 "launch: exit status"
+contains "$(last_call notify-send)" "No terminal found" "launch: notification summary"
+contains "$(last_call notify-send)" "install konsole or alacritty" "launch: notification body"
+contains "$ERR" "No terminal found" "launch: stderr, for a script or an agent shell"
+expect "$(call_count claude)" 0 "launch started the agent without a window"
+rm -f "$SANDBOX/calls/notify-send"
+run "$CA" default codex
+expect "$RC" 1 "default: exit status"
+contains "$(last_call notify-send)" "No terminal found" "default: notification summary"
+contains "$ERR" "no terminal found" "default: stderr"
+expect "$(call_count cachyos-agent-install)" 0 "default installed without a window to show pacman's questions in"
+# --inline needs none.
+run "$CA" launch --inline
+expect "$RC" 0 "launch --inline: exit status"
+expect "$(call_count claude)" 1 "launch --inline did not start the agent"
+ok
+cleanup_sandbox
+
 begin "launch prints a refusal once when there is no bus to notify"
 setup
 run "$CA" launch --pick

@@ -112,16 +112,32 @@ ca_flag() {
   esac
 }
 
+# ca_terminal_find
+# Print the terminal ca_terminal_exec would use: $TERMINAL, then konsole,
+# alacritty, kitty, foot, ghostty, xterm. Fails when none is installed, which a
+# caller that has no one watching its stderr can check first and say in a
+# notification.
+ca_terminal_find() {
+  local candidate
+  for candidate in "${TERMINAL:-}" konsole alacritty kitty foot ghostty xterm; do
+    if [[ -n $candidate ]] && ca_cmd_present "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ca_terminal_exec [--title <title>] cmd args...
-# Replace this process with `cmd args...` in a new terminal window. Tries
-# $TERMINAL, then konsole, alacritty, kitty, foot, ghostty, xterm. The command
+# Replace this process with `cmd args...` in a new terminal window, in the
+# terminal ca_terminal_find names. The command
 # is always passed as separate argv words, never one string, so no shell parses
 # it a second time. Each terminal gets its own documented way to run a command:
 # -e for konsole, alacritty, ghostty and xterm, plain positional words for
 # kitty and foot. An unknown $TERMINAL is assumed to take -e like xterm does,
 # and gets no title because there is no portable flag for one.
 ca_terminal_exec() {
-  local title='' term='' candidate
+  local title='' term=''
   local -a prefix=()
   if [[ ${1-} == --title ]]; then
     title=${2:?ca_terminal_exec: --title needs a value}
@@ -129,13 +145,7 @@ ca_terminal_exec() {
   fi
   (( $# > 0 )) || ca_die "ca_terminal_exec: no command given"
 
-  for candidate in "${TERMINAL:-}" konsole alacritty kitty foot ghostty xterm; do
-    if [[ -n $candidate ]] && ca_cmd_present "$candidate"; then
-      term=$candidate
-      break
-    fi
-  done
-  [[ -n $term ]] || ca_die "no terminal found; set TERMINAL or install konsole or alacritty"
+  term=$(ca_terminal_find) || ca_die "no terminal found; set TERMINAL or install konsole or alacritty"
 
   case ${term##*/} in
     konsole)
