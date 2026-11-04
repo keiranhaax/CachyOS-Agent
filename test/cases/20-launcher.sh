@@ -658,34 +658,46 @@ cleanup_sandbox
 
 begin "dsh runs with full access and the prompt goes to the clipboard"
 setup
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+stub notify-send
 stub dsh 'printf "%s" "${DSH_PERMISSION_MODE-}" >"${self%/stubs/*}/mode"'
 stub wl-copy 'cat >"${self%/stubs/*}/clip"'
 run "$CA" launch --inline --agent dsh --prompt "do -the thing"
 expect "$(last_call dsh)" "web" "dsh arguments"
 expect "$(<"$SANDBOX/mode")" "danger-full-access" "permission mode"
 expect "$(<"$SANDBOX/clip")" "do -the thing" "clipboard"
+# The shortcut and the panel discard stderr, so this notification is the only sign that the
+# prompt is waiting on the clipboard.
+expect "$(last_call notify-send)" "--app-name=cachyos-agent|-i|edit-paste|--|Prompt copied to the clipboard|Paste it as your first message in DeepSeek Harness." "the notification"
 run "$CA" launch --inline --agent dsh
 expect "$(call_count wl-copy)" 1 "no clipboard write without a prompt"
+expect "$(call_count notify-send)" 1 "a notification without a prompt"
 ok
 cleanup_sandbox
 
 begin "a prompt for an agent that cannot take one goes to Klipper without wl-copy"
 setup
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+stub notify-send
 stub_agents freebuff qdbus6
 run "$CA" launch --inline --agent freebuff --prompt "-hello there"
 expect "$(last_call qdbus6)" "org.kde.klipper|/klipper|setClipboardContents|-hello there" "qdbus6 arguments"
 expect "$(call_count freebuff)" 1 "freebuff started"
+expect "$(last_call notify-send)" "--app-name=cachyos-agent|-i|edit-paste|--|Prompt copied to the clipboard|Paste it as your first message in Freebuff." "the notification"
 ok
 cleanup_sandbox
 
 begin "with no clipboard tool the prompt is shown in the agent's own window"
 setup
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+stub notify-send
 stub_agents freebuff
 run "$CA" launch --inline --agent freebuff --prompt "paste me"
 expect "$RC" 0 "exit status"
 contains "$OUT" "paste me" "the prompt is printed"
 contains "$OUT" "Freebuff has no way to take a starting prompt" "explanation"
 expect "$(last_call freebuff)" "" "freebuff still starts"
+expect "$(call_count notify-send)" 0 "the prompt is not on the clipboard, so no notification says so"
 ok
 cleanup_sandbox
 
