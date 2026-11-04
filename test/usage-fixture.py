@@ -52,11 +52,10 @@ def load(path: str, name: str):
 
 
 class Response:
-  """What urlopen hands back: a body to read, with no Content-Length owed."""
+  """What urlopen hands back: open_json uses it as a context manager and reads it."""
 
-  def __init__(self, url: str, body: bytes) -> None:
-    self.body, self.url, self.status, self.length = io.BytesIO(body), url, 200, None
-    self.headers = Message()
+  def __init__(self, body: bytes) -> None:
+    self.body = io.BytesIO(body)
 
   def __enter__(self):
     return self
@@ -66,9 +65,6 @@ class Response:
 
   def read(self, size: int = -1) -> bytes:
     return self.body.read(size)
-
-  def geturl(self) -> str:
-    return self.url
 
 
 def serve(routes, requests):
@@ -89,7 +85,7 @@ def serve(routes, requests):
       body = value if isinstance(value, bytes) else json.dumps(value).encode()
       if status >= 400:
         raise urllib.error.HTTPError(request.full_url, status, "fixture", Message(), io.BytesIO(body))
-      return Response(request.full_url, body)
+      return Response(body)
     raise urllib.error.URLError("the fixture has no route for " + request.full_url)
 
   return urlopen
