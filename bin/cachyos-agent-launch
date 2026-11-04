@@ -112,17 +112,23 @@ choose_agent() {
   # When the default can't, or none is set, the local model opens in pi, or
   # OpenCode without pi: the agents panel launches it whether or not a default
   # was chosen. The name is read as the agent it means first, so open-code is
-  # OpenCode.
-  if $use_local && ! { ca_agent_resolve "$name" && [[ $CA_AGENT == pi || $CA_AGENT == opencode ]]; }; then
-    name=''
-    for candidate in pi opencode; do
-      if ca_agent_present "$candidate"; then
-        name=$candidate
-        break
+  # OpenCode. A name that is no agent at all is refused here as it is without
+  # --local, not swapped for pi: a typo must not start something else.
+  if $use_local; then
+    if [[ -n $name ]]; then
+      ca_agent_resolve "$name" || refuse "Unsupported agent: $name" "Agents: ${CA_AGENT_IDS[*]}"
+    fi
+    if [[ -z $name || ( $CA_AGENT != pi && $CA_AGENT != opencode ) ]]; then
+      name=''
+      for candidate in pi opencode; do
+        if ca_agent_present "$candidate"; then
+          name=$candidate
+          break
+        fi
+      done
+      if [[ -z $name ]]; then
+        refuse "No agent can run a local model" "Local models run in pi or OpenCode. Install one with: cachyos-agent install opencode"
       fi
-    done
-    if [[ -z $name ]]; then
-      refuse "No agent can run a local model" "Local models run in pi or OpenCode. Install one with: cachyos-agent install opencode"
     fi
   fi
 

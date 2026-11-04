@@ -900,6 +900,26 @@ expect "$(last_call opencode)" "--auto|--standalone" "OpenCode started again"
 ok
 cleanup_sandbox
 
+begin "launch --local refuses a name that is no agent, as launch does, instead of starting pi"
+setup
+stub_agents pi
+stub_opencode 2.2.5
+choose_local_model 'qwen3:8b'
+run "$CA" launch --inline --local --agent calude
+expect "$RC" 1 "a mistyped --agent"
+contains "$ERR" "Unsupported agent: calude" "the refusal names it"
+CACHYOS_AGENT_DEFAULT=garbage run "$CA" launch --inline --local
+expect "$RC" 1 "a default that is no agent"
+contains "$ERR" "Unsupported agent: garbage" "the refusal names the default"
+mkdir -p "$XDG_CONFIG_HOME/cachyos-agent"
+echo garbage-saved >"$XDG_CONFIG_HOME/cachyos-agent/default-agent"
+run "$CA" launch --inline --local
+expect "$RC" 1 "a saved default that is no agent"
+contains "$ERR" "Unsupported agent: garbage-saved" "the refusal names the saved default"
+expect "$(call_count pi)$(call_count opencode)" 00 "something was started for a name that is no agent"
+ok
+cleanup_sandbox
+
 begin "launch --local asks the OpenCode that will run which version it is"
 setup
 # Only ~/.local/bin has OpenCode, as in a desktop session without that
