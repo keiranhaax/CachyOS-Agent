@@ -229,7 +229,10 @@ main() {
   done
 
   if $json; then
-    if ((${#valid[@]} > 0)); then jq -cs . "${valid[@]}"; else echo '[]'; fi
+    # -a: the records hold vendor text, and jq writes a C1 control character (U+009B
+    # is an escape on some terminals) as raw bytes. Every non-ASCII character is
+    # written as a \u escape instead, which the widget's JSON.parse reads back.
+    if ((${#valid[@]} > 0)); then jq -acs . "${valid[@]}"; else echo '[]'; fi
   elif ((${#valid[@]} > 0)); then
     report=$(jq -rs --argjson now "$(date +%s)" --argjson old_seconds "$RECORD_OLD_SECONDS" \
       --argjson named "$named" "$JQ_REPORT" "${valid[@]}")

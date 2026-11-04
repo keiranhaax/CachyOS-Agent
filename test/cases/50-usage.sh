@@ -792,6 +792,20 @@ out=$("$REPORT")
 ok
 cleanup_sandbox
 
+begin "usage --json writes no raw control byte, though the report's text would not show one"
+make_sandbox
+mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"
+# The collectors write records with json.dumps, which escapes every non-ASCII character, so the
+# file holds \u009b; jq -c would turn it into the two bytes of U+009B on the way out.
+printf '%s\n' '{"schemaVersion":1,"id":"evil","name":"Evil","ready":true,"limits":[],"authHelpText":"(retry after \u009b2J\u009b0;pwned\u0007s) caf\u00e9"}' \
+  >"$XDG_STATE_HOME/cachyos-agent/usage/evil.json"
+raw=$("$REPORT" --json)
+leftover=$(printf '%s' "$raw" | LC_ALL=C tr -d '\11\12\40-\176')
+[[ -z $leftover ]] || fail "a byte outside printable ASCII reached the output: $(printf '%s' "$raw" | cat -v)"
+jq -e '.[0].authHelpText == "(retry after \u009b2J\u009b0;pwned\u0007s) caf\u00e9"' <<<"$raw" >/dev/null || fail "the record was not kept as it is: $raw"
+ok
+cleanup_sandbox
+
 begin "the report copes with a record of the wrong shapes"
 make_sandbox
 mkdir -p "$XDG_STATE_HOME/cachyos-agent/usage"
