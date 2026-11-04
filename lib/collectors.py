@@ -726,7 +726,7 @@ def pi_session_roots() -> list[Path]:
       # No profiles directory, or it is unreadable: the default root stands.
       pass
   if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
-    agent_dirs.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser())
+    agent_dirs.append(pi_agent_dir())
   roots = [agent_dir / "sessions" for agent_dir in agent_dirs]
   for agent_dir in agent_dirs:
     configured = read_json(agent_dir / "settings.json").get("sessionDir")
