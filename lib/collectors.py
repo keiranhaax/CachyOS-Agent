@@ -3644,18 +3644,16 @@ class HttpError(Exception):
   `transport` means the connection failed or dropped before any reply (DNS,
   no route, a refused or reset connection, a timeout), which is the only
   failure worth retryAdvised. Otherwise the server answered, with a body
-  that isn't JSON or is too large to be an answer (`invalid`), or with a
-  reply cut short or garbled on the way (`cut_short`, invalid too): an
-  answer all the same, so no reason to ask again sooner.
+  that isn't JSON or is too large to be an answer, or with a reply cut short
+  or garbled on the way (`cut_short`): an answer all the same, so no reason
+  to ask again sooner.
   """
 
-  def __init__(self, status: int = 0, transport: bool = False, body: bytes = b"", headers: Any = None, cut_short: bool = False) -> None:
+  def __init__(self, status: int = 0, transport: bool = False, headers: Any = None, cut_short: bool = False) -> None:
     super().__init__(f"HTTP {status}" if status else ("unreachable" if transport else ("reply cut short" if cut_short else "invalid answer")))
     self.status = status
     self.transport = transport
-    self.invalid = not status and not transport
     self.cut_short = cut_short
-    self.body = body
     self.headers = headers
 
 
@@ -3691,12 +3689,7 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
       # its Content-Length, with the rest still owed.
       owed = getattr(response, "length", None)
   except urllib.error.HTTPError as error:
-    # An error's body drips like any other; past the deadline it is left out.
-    try:
-      body = _read_by(error.fp, limit, deadline) if error.fp else b""
-    except Exception:
-      body = b""
-    raise HttpError(status=error.code, body=body, headers=error.headers) from error
+    raise HttpError(status=error.code, headers=error.headers) from error
   except _TooSlow as error:
     # The server answered, just never finished: a reply cut short, so no
     # reason to ask again sooner.
