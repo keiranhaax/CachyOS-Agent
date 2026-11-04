@@ -405,6 +405,12 @@ if grep -q 'waiting for an answer' "$SANDBOX/watch.log"; then fail "answered toa
 ok
 cleanup_sandbox
 
+# alive <pid>: the process is still running. kill -0 would also say yes to a
+# zombie, and the notify-send stubs are orphans by the time a case looks: where
+# PID 1 does not reap them (GitHub's job containers run tail -f /dev/null as
+# init) a stub that was killed stays one.
+alive() { [[ -r /proc/$1/status ]] && ! grep -q '^State:[[:space:]]*Z' "/proc/$1/status"; }
+
 begin "a toast left unanswered when the notification server restarts is closed"
 make_sandbox
 watch_stubs
@@ -418,15 +424,15 @@ toast_files=("$SANDBOX"/toast.*)
 waiter=${toast_files[0]##*.}
 # It checks on the server every few seconds: while the same one runs, the toast stays.
 "$REAL_SLEEP" 6
-kill -0 "$waiter" 2>/dev/null || fail "a toast was closed although its notification server never changed"
+alive "$waiter" || fail "a toast was closed although its notification server never changed"
 # Plasma's shell restarting is a new owner of the name. The old toast can no longer be
 # answered, and its notify-send never learns that.
 echo 6 >"$SANDBOX/server"
 for ((i = 0; i < 100; i++)); do
-  kill -0 "$waiter" 2>/dev/null || break
+  alive "$waiter" || break
   "$REAL_SLEEP" 0.1
 done
-if kill -0 "$waiter" 2>/dev/null; then fail "the notify-send of a toast the restarted server never heard of was left waiting"; fi
+if alive "$waiter"; then fail "the notify-send of a toast the restarted server never heard of was left waiting"; fi
 touch "$SANDBOX/release"
 ok
 cleanup_sandbox
