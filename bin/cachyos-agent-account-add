@@ -86,9 +86,15 @@ ACCT_LOGIN[0]=$binary
 home=''
 browser=''
 snapshot=''
+put_back_home='' # an added home whose own files wait in $snapshot until its new login is accepted
 cleanup() {
   if [[ -n $browser ]]; then
     rm -f -- "$browser"
+  fi
+  if [[ -n $put_back_home ]]; then
+    # Interrupted, or stopped before the new login was judged.
+    put_back
+    printf '%s\n' "$BACK" >&2
   fi
   if [[ -n $snapshot ]]; then
     rm -rf -- "$snapshot"
@@ -98,6 +104,21 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# Puts an added home's own files back from the snapshot, once a new login was
+# refused, did not finish or was interrupted. BACK says what happened; when
+# even that copy fails the snapshot stays where it is, and BACK says where.
+put_back() {
+  local account_home=$put_back_home
+  put_back_home=''
+  if find "$account_home" -maxdepth 1 -type f -delete && cp -a -- "$snapshot"/. "$account_home"/; then
+    BACK="The account's earlier sign-in is back as it was."
+  else
+    BACK="The account's earlier sign-in could not be put back; its files are kept in $snapshot."
+    snapshot=''
+  fi
+}
+
 # Before a login runs pkill finds nothing to stop, and the status it returns
 # for that must not end the script ahead of the exit below.
 trap 'pkill -TERM -P $$ || true; exit 130' TERM INT
@@ -205,9 +226,10 @@ EOF
 # window. Its home is never recreated or removed. The login has to be the
 # account's own: a private window still signed in to someone else would write
 # that login over this one. An added home's own files are copied aside first
-# and put back when the login is refused. The primary's login also lives in
-# ~/.claude.json and beside the history the CLI keeps in ~/.claude, so that
-# one is left as the login wrote it and the refusal says so.
+# and put back when the login is refused, fails or is interrupted, and no
+# login starts on a copy that could not take everything. The primary's login
+# also lives in ~/.claude.json and beside the history the CLI keeps in
+# ~/.claude, so that one is left as the login wrote it and the refusal says so.
 reauthenticate() {
   local account_home refusal before=''
   if [[ $reauth == primary ]]; then
@@ -225,19 +247,24 @@ reauthenticate() {
   else
     before=$(cachyos-agent-account-state accountid "$provider" "$reauth")
     snapshot=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/cachyos-agent-reauth.XXXXXX")
-    find "$account_home" -maxdepth 1 -type f -exec cp -p -- {} "$snapshot" \;
-    private_login "$account_home" "the account you're signing in again" ||
-      ca_die "signing in to $ACCT_NAME did not finish"
+    # With `+`, find fails when a copy does; with `;` it would not.
+    find "$account_home" -maxdepth 1 -type f -exec cp -p -t "$snapshot" -- {} + ||
+      ca_die "could not copy $ACCT_NAME's sign-in aside, so nothing was changed."
+    put_back_home=$account_home
+    if ! private_login "$account_home" "the account you're signing in again"; then
+      put_back
+      ca_die "signing in to $ACCT_NAME did not finish. $BACK"
+    fi
   fi
 
   if ! refusal=$(cachyos-agent-account-state reauth-check "$provider" "$reauth" "$before" 2>&1); then
     if [[ -n $snapshot ]]; then
-      find "$account_home" -maxdepth 1 -type f -delete
-      cp -a -- "$snapshot"/. "$account_home"/
-      ca_die "$refusal Its earlier sign-in is back as it was. Close any private window that is signed in, and try again."
+      put_back
+      ca_die "$refusal $BACK Close any private window that is signed in, and try again."
     fi
     ca_die "$refusal $ACCT_NAME is now signed in as the account you just used; sign in again as the one you meant."
   fi
+  put_back_home=''
   acct_usage_refresh --force "$provider"
   printf '\nSigned in to %s again.\n' "$ACCT_NAME"
 }

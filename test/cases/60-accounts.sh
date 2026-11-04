@@ -216,6 +216,32 @@ done
 ok
 cleanup_sandbox
 
+begin "--reauth puts an added account's sign-in back when the login fails half-way, and starts none it cannot copy aside"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+work=$STATE/accounts/claude/work
+creds=$(cat "$work/.credentials.json" "$work/.claude.json")
+# the CLI wrote over the account's files before it failed
+# shellcheck disable=SC2016 # a program for the stub's own bash
+stub claude ': >"${CLAUDE_CONFIG_DIR:?}/.credentials.json"; echo broken >"$CLAUDE_CONFIG_DIR/.claude.json"; exit 1'
+if out=$("$AGENT" account add --reauth work claude 2>&1); then fail "a login that failed was accepted: $out"; fi
+[[ $out == *"signing in to Claude did not finish. The account's earlier sign-in is back as it was."* ]] || fail "--reauth said: $out"
+[[ $creds == "$(cat "$work/.credentials.json" "$work/.claude.json")" && -L $work/settings.json ]] || fail "Work's own sign-in was not put back after a failed login"
+# the files cannot be copied aside: no login starts and nothing changes
+stub claude "$CLAUDE_STUB"
+stub cp 'exit 1'
+: >"$SANDBOX/logins"
+if out=$(FIX_ID=u-work FIX_EMAIL=work@example.com "$AGENT" account add --reauth work claude 2>&1); then fail "a sign-in started without a snapshot: $out"; fi
+rm "$SANDBOX/stubs/cp"
+hash -r
+[[ $out == *"could not copy Claude's sign-in aside, so nothing was changed."* ]] || fail "--reauth without a snapshot said: $out"
+[[ ! -s $SANDBOX/logins ]] || fail "the login ran without a snapshot: $(<"$SANDBOX/logins")"
+[[ $creds == "$(cat "$work/.credentials.json" "$work/.claude.json")" ]] || fail "Work's sign-in changed without a snapshot"
+[[ -z $(ls -A "$XDG_RUNTIME_DIR") ]] || fail "a snapshot was left behind: $(ls -A "$XDG_RUNTIME_DIR")"
+ok
+cleanup_sandbox
+
 begin "a login that wrote nothing adds no account"
 setup
 sign_in claude u-main main@example.com
@@ -281,6 +307,26 @@ wait "$adding" || status=$?
 eventually gone "$(<"$SANDBOX/cli.pid")" || fail "the CLI's login is still running"
 [[ -z $(ls -A "$STATE/accounts/claude/.pending") && $("$AGENT" account list claude --json | jq '.[0].accounts | length') == 1 ]] || fail "state was left behind"
 ! compgen -G "$XDG_RUNTIME_DIR/cachyos-agent-browser.*" >/dev/null || fail "the browser script was left behind"
+ok
+cleanup_sandbox
+
+begin "interrupting --reauth puts the added account's sign-in back"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+work=$STATE/accounts/claude/work
+creds=$(cat "$work/.credentials.json" "$work/.claude.json")
+# shellcheck disable=SC2016 # a program for the stub's own bash
+stub claude 'echo $$ >"$SANDBOX/cli.pid"; : >"${CLAUDE_CONFIG_DIR:?}/.credentials.json"; exec sleep 30'
+"$AGENT" account add --reauth work claude >"$SANDBOX/out" 2>&1 </dev/null &
+adding=$!
+eventually test -s "$SANDBOX/cli.pid" || fail "the sign-in never started"
+kill -TERM "$adding"
+wait "$adding" || true
+eventually gone "$(<"$SANDBOX/cli.pid")" || fail "the CLI's login is still running"
+[[ $creds == "$(cat "$work/.credentials.json" "$work/.claude.json")" ]] || fail "Work's own sign-in was not put back: $(<"$SANDBOX/out")"
+[[ $(<"$SANDBOX/out") == *"The account's earlier sign-in is back as it was."* ]] || fail "the interrupted --reauth said: $(<"$SANDBOX/out")"
+[[ -z $(ls -A "$XDG_RUNTIME_DIR") ]] || fail "a snapshot or script was left behind: $(ls -A "$XDG_RUNTIME_DIR")"
 ok
 cleanup_sandbox
 
