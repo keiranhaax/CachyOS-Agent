@@ -97,6 +97,25 @@ EOF
   hash -r # a command this shell already ran stays cached at its old path otherwise
 }
 
+# colors_file <path> <bg> <fg> <negative> <positive> <neutral> <active> <link> <visited> <window-bg> <selection-bg> <selection-fg> [accent]
+# A kdeglobals/scheme file in KDE's "r,g,b" syntax with only the groups the palette reads.
+colors_file() {
+  local path=$1
+  mkdir -p "$(dirname "$path")"
+  {
+    printf '[Colors:View]\nBackgroundNormal=%s\nForegroundNormal=%s\nForegroundNegative=%s\n' "$2" "$3" "$4"
+    printf 'ForegroundPositive=%s\nForegroundNeutral=%s\nForegroundActive=%s\nForegroundLink=%s\n' "$5" "$6" "$7" "$8"
+    printf 'ForegroundVisited=%s\nDecorationFocus=61,174,233\n' "$9"
+    printf '[Colors:Window]\nBackgroundNormal=%s\n' "${10}"
+    printf '[Colors:Selection]\nBackgroundNormal=%s\nForegroundNormal=%s\n' "${11}" "${12}"
+    if [[ -n ${13-} ]]; then printf '[General]\nAccentColor=%s\n' "${13}"; fi
+  } >"$path"
+}
+
+# Breeze Dark's colors with a custom accent, and Breeze Light's without one.
+dark_colors() { colors_file "$1" 20,22,24 252,252,252 218,68,83 39,174,96 246,116,0 61,174,233 29,153,243 155,89,182 32,35,38 61,174,233 252,252,252 146,110,214; }
+light_colors() { colors_file "$1" 255,255,255 35,38,41 218,68,83 39,174,96 246,116,0 61,174,233 41,128,185 155,89,182 239,240,241 61,174,233 255,255,255; }
+
 # cleanup_sandbox: remove the current sandbox and restore PATH. Sandboxes a case
 # forgot are removed when it exits.
 cleanup_sandbox() {

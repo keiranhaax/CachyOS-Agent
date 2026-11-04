@@ -431,8 +431,11 @@ else
   staged_env=(env -i HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" PATH=/usr/bin:/bin)
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
   # theme sync reads the Plasma scheme through kreadconfig6 (kconfig, an optional dependency).
+  # Without a kdeglobals it would fall back to the BreezeDark scheme file of the breeze
+  # package, which a bare container does not have, so the sandbox brings its own.
   if PATH=/usr/bin:/bin type -P kreadconfig6 >/dev/null; then
-    "${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" theme sync >/dev/null 2>&1 || fail "the staged theme sync failed"
+    dark_colors "$XDG_CONFIG_HOME/kdeglobals"
+    "${staged_env[@]}" "$pkg/usr/bin/cachyos-agent" theme sync >"$SANDBOX/staged-sync.err" 2>&1 || fail "the staged theme sync failed: $(<"$SANDBOX/staged-sync.err")"
     for rendered in claude.json hermes.yaml opencode.json pi.json; do
       [[ -s $XDG_STATE_HOME/cachyos-agent/theme/$rendered ]] || fail "the staged theme sync rendered no $rendered: it needs data/themed/ and the shell helpers"
     done
