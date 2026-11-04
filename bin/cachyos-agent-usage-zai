@@ -52,6 +52,7 @@ from collectors import (  # noqa: E402
   scan_opencode,
   scan_pi_sessions,
   scan_routed,
+  warn,
 )
 
 AGENT_ID = "zai"
@@ -251,12 +252,10 @@ def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
       # A list or an object for a tag can't name a window.
       label = None
     if not label:
-      # A window Z.ai adds later would vanish silently otherwise.
-      print(
-        f"cachyos-agent-usage-zai: unmapped limit window (unit={item.get('unit')}, "
-        f"number={item.get('number')})",
-        file=sys.stderr,
-      )
+      # A window Z.ai adds later would vanish silently otherwise. The tags are
+      # the vendor's, and stderr is a terminal: repr() writes a control character
+      # as an escape, and the cut keeps a long one from filling the screen.
+      warn(f"unmapped limit window (unit={item.get('unit')!r:.40}, number={item.get('number')!r:.40})")
       continue
     raw = item.get("percentage")
     # A missing or unparseable percentage is skipped: a false 0% meter reads

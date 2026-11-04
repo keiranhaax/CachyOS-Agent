@@ -271,6 +271,28 @@ None -> ''"
 ok
 cleanup_sandbox
 
+begin "zai names a limit window it cannot map without the control characters its tags may hold"
+make_sandbox
+# The tags come from Z.ai's answer and the warning goes to a terminal.
+err=$(python3 -I - "$REPO_ROOT/bin/cachyos-agent-usage-zai" 2>&1 >/dev/null <<'PY'
+import importlib.machinery, importlib.util, sys
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("zai_collector", sys.argv[1])
+module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+loader.exec_module(module)
+hostile = {"type": "TOKENS_LIMIT", "unit": "\x1b]0;pwned\x07", "number": "\x9b31m", "percentage": 5}
+long_tag = {"type": "CREDIT_LIMIT", "unit": "u" * 500, "number": [1, 2], "percentage": 5}
+module.open_json = lambda request, timeout=0: {"data": {"limits": [hostile, long_tag]}}
+module.fetch_limits("key", "zai")
+PY
+)
+leftover=$(printf '%s' "$err" | tr -d '\n' | LC_ALL=C tr -d '[:print:]')
+[[ -z $leftover ]] || fail "stderr holds control characters: $(printf '%s' "$err" | cat -v)"
+[[ $err == *"unmapped limit window (unit='\\x1b]0;pwned\\x07', number='\\x9b31m')"* ]] || fail "the hostile window was not named: $err"
+[[ $(wc -c <<<"$err") -lt 400 ]] || fail "a long tag was not cut: ${#err} bytes"
+ok
+cleanup_sandbox
+
 begin "claude reads the plan from a lapsed credential without asking the service"
 make_sandbox
 mkdir "$SANDBOX/empty"
