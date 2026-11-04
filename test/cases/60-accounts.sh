@@ -556,21 +556,6 @@ leftover=$(printf '%s' "$out" | tr -d '\n' | LC_ALL=C tr -d '[:print:]')
 ok
 cleanup_sandbox
 
-begin "the registry keeps Omarchy's schema, which the usage collectors read"
-setup
-sign_in claude u-main main@example.com
-sign_in claude u-work work@example.com Work
-jq -e 'keys == ["accounts","active","alert","switch","threshold"]
-       and all(.accounts[]; keys == ["accountId","email","home","id","label","org","plan","primary"])' "$STATE/accounts/claude.json" >/dev/null \
-  || fail "unexpected registry: $(<"$STATE/accounts/claude.json")"
-sign_in codex u-cx cx@example.com
-sign_in codex u-cx2 cx2@example.com Second
-[[ $(registry codex '.accounts[1] | [.plan, .email] | join(",")') == "Plus,cx2@example.com" ]] || fail "codex identity: $(registry codex '.accounts[1]')"
-ok
-cleanup_sandbox
-
-# ---- rename, remove ------------------------------------------------------------
-
 begin "list names a limit by its title, as the usage report does, so a model's window is not the account's"
 setup
 sign_in claude u-main main@example.com
@@ -587,6 +572,21 @@ leftover=$(printf '%s' "$out" | tr -d '\n' | LC_ALL=C tr -d '[:print:]')
 [[ -z $leftover ]] || fail "a title brought a control character into the listing: $(printf '%s' "$out" | cat -v)"
 ok
 cleanup_sandbox
+
+begin "the registry keeps Omarchy's schema, which the usage collectors read"
+setup
+sign_in claude u-main main@example.com
+sign_in claude u-work work@example.com Work
+jq -e 'keys == ["accounts","active","alert","switch","threshold"]
+       and all(.accounts[]; keys == ["accountId","email","home","id","label","org","plan","primary"])' "$STATE/accounts/claude.json" >/dev/null \
+  || fail "unexpected registry: $(<"$STATE/accounts/claude.json")"
+sign_in codex u-cx cx@example.com
+sign_in codex u-cx2 cx2@example.com Second
+[[ $(registry codex '.accounts[1] | [.plan, .email] | join(",")') == "Plus,cx2@example.com" ]] || fail "codex identity: $(registry codex '.accounts[1]')"
+ok
+cleanup_sandbox
+
+# ---- rename, remove ------------------------------------------------------------
 
 begin "rename changes the label and the id but leaves the home where sessions are using it"
 setup
