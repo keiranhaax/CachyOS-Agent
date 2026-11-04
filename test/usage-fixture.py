@@ -9,6 +9,9 @@ use, and what its service says. It may define:
 
   ENV      environment variables to set (a dict).
   ARGS     the collector's arguments (default: ["--force"]).
+  NEEDS    programs the collector runs and the machine may lack, such as ("rg",):
+           linked into `bin` from the caller's PATH. Exit status 77 when one is
+           missing, which is a skip, not a failure.
   setup(home, bin)
            write credential and session files under `home`, and any program
            the collector runs (codex's app-server) into `bin`, the only
@@ -35,6 +38,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -42,6 +46,9 @@ from email.message import Message
 from pathlib import Path
 
 sys.dont_write_bytecode = True
+
+# The exit status of a fixture whose NEEDS are missing here: not a failure.
+SKIPPED = 77
 
 
 def load(path: str, name: str):
@@ -96,6 +103,15 @@ def run(collector: str, fixture_path: str) -> int:
   home = Path(os.environ["HOME"])
   bin_dir = home.parent / "fixture-bin"
   bin_dir.mkdir(exist_ok=True)
+  # A program the collector runs that the machine may not have (ripgrep, an optional
+  # dependency): found on the caller's PATH and linked into the one directory the
+  # collector sees, or the fixture is not run.
+  for tool in getattr(fixture, "NEEDS", ()):
+    found = shutil.which(tool)
+    if not found:
+      print(f"{tool} is not installed", file=sys.stderr)
+      return SKIPPED
+    (bin_dir / tool).symlink_to(found)
   keep = {name: os.environ[name] for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME") if name in os.environ}
   os.environ.clear()
   os.environ.update(keep, PATH=str(bin_dir), **getattr(fixture, "ENV", {}))

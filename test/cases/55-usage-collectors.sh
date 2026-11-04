@@ -12,7 +12,7 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib.sh"
 FIXTURES=$REPO_ROOT/test/usage
 DRIVER=$REPO_ROOT/test/usage-fixture.py
 # The collectors whose in-use path 50-usage runs with a fixture of its own.
-COVERED_IN_50_USAGE=(claude hermes local zai agy)
+COVERED_IN_50_USAGE=(hermes local)
 
 # fixture_run <collector> <fixture>: the driver's verdict, with its message on stderr.
 fixture_run() { python3 -I "$DRIVER" "$1" "$2"; }
@@ -41,7 +41,13 @@ for fixture in "$FIXTURES"/*.py; do
   agent=${name%%-*}
   begin "the $agent collector reports the machine in test/usage/$name.py"
   make_sandbox
-  fixture_run "$REPO_ROOT/bin/cachyos-agent-usage-$agent" "$fixture" 2>"$SANDBOX/err" || fail "$(head -c 1200 "$SANDBOX/err")"
+  status=0
+  fixture_run "$REPO_ROOT/bin/cachyos-agent-usage-$agent" "$fixture" 2>"$SANDBOX/err" || status=$?
+  if ((status == 77)); then
+    echo "UNVERIFIED $CURRENT_TEST: $(head -c 200 "$SANDBOX/err")"
+  elif ((status != 0)); then
+    fail "$(head -c 1200 "$SANDBOX/err")"
+  fi
   ok
   cleanup_sandbox
 done
