@@ -980,9 +980,14 @@ grep -qxF "ExecStart=\"$SANDBOX/my checkout 50%%/a\$b/bin/cachyos-agent-usage-up
   "$units/cachyos-agent-usage-update.service" || fail "the path was not escaped: $(<"$units/cachyos-agent-usage-update.service")"
 if command -v systemd-analyze >/dev/null; then
   # What systemd reads is what counts: a line that looks right can name a path that does not exist.
-  problems=$(systemd-analyze --user verify "$units/cachyos-agent-usage-update.service" "$units/cachyos-agent-usage-update.timer" 2>&1 \
-    | grep cachyos-agent-usage-update || true)
-  [[ -z $problems ]] || fail "systemd rejects the generated unit: $problems"
+  verify_status=0
+  verdict=$(systemd-analyze --user verify "$units/cachyos-agent-usage-update.service" "$units/cachyos-agent-usage-update.timer" 2>&1) || verify_status=$?
+  problems=$(grep cachyos-agent-usage-update <<<"$verdict" || true)
+  if [[ -n $problems ]]; then
+    fail "systemd rejects the generated unit: $problems"
+  elif ((verify_status != 0)); then
+    printf 'note %s: systemd-analyze could not verify the units here (%s)\n' "$CURRENT_TEST" "${verdict//$'\n'/ }"
+  fi
 fi
 ok
 cleanup_sandbox

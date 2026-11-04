@@ -640,8 +640,14 @@ for file in "${unit_files[@]}"; do
   sed "s|^ExecStart=/usr/bin/|ExecStart=$SANDBOX/shipped-bin/|" "$file" >"$SANDBOX/units/$name"
 done
 if type -P systemd-analyze >/dev/null; then
-  verdict=$(cd "$SANDBOX/units" && systemd-analyze --user verify ./* 2>&1 || true)
-  [[ $verdict != *cachyos-agent* ]] || fail "systemd rejects a unit: $verdict"
+  verify_status=0
+  verdict=$(cd "$SANDBOX/units" && systemd-analyze --user verify ./* 2>&1) || verify_status=$?
+  if [[ $verdict == *cachyos-agent* ]]; then
+    fail "systemd rejects a unit: $verdict"
+  elif ((verify_status != 0)); then
+    # A sandbox without a user manager verifies nothing: say so rather than pass.
+    printf 'note %s: systemd-analyze could not verify the units here (%s), so only the sections and commands were checked\n' "$CURRENT_TEST" "${verdict//$'\n'/ }"
+  fi
 else
   printf 'note %s: systemd-analyze is not installed, so only the sections and commands were checked\n' "$CURRENT_TEST"
 fi

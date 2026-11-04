@@ -795,9 +795,12 @@ grep -qxF "ExecStart=\"$SANDBOX/odd dir %%h \$x/bin/cachyos-agent-crash-watch\""
 # systemd is the authority on its own syntax, so ask it when it is here: it
 # finds the executable only if it read the path back as the file in the tree.
 if type -P systemd-analyze >/dev/null; then
-  verdict=$(systemd-analyze --user verify "$HOME/$UNIT_DIR_REL/$UNIT" 2>&1 || true)
+  verify_status=0
+  verdict=$(systemd-analyze --user verify "$HOME/$UNIT_DIR_REL/$UNIT" 2>&1) || verify_status=$?
   if grep -qE 'special characters|not executable|bad unit file|fatal error' <<<"$verdict"; then
     fail "systemd does not accept the generated unit: $verdict"
+  elif ((verify_status != 0)); then
+    printf 'note %s: systemd-analyze could not verify the unit here (%s)\n' "$CURRENT_TEST" "${verdict//$'\n'/ }"
   fi
 fi
 ok
