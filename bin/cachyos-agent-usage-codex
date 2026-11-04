@@ -90,10 +90,6 @@ ENV = runtime_env()
 
 
 
-def codex_home():
-  return Path(ENV.get("CODEX_HOME") or (Path.home() / ".codex"))
-
-
 # Every source folds into one run's totals.
 STATS = Stats()
 
